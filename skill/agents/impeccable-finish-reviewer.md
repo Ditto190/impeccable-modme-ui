@@ -24,7 +24,7 @@ Expect: the original request; the confirmed user answers; the artifact path(s); 
 
 1. **Persistence.** On a new or replacement world: PRODUCT.md and DESIGN.md exist, and DESIGN.md matches the built world. A missing or mismatched file is the first material fix, ahead of any craft point.
 2. **Ceiling.** Against the QUALITY BAR card and the approved comp, name the world's native devices the build left unused: frame, depth, lettering treatment, ornament density, motion. Compare commitment and finish, never composition; the card is a bar, not a layout.
-3. **Contract, promise by promise.** For each of the five blocks, does the render keep the promise? Apply the memory test to the first viewport: what would a visitor describe an hour later, and is it the thesis or a mood?
+3. **Contract, promise by promise.** First verify FORM carries the seed key the concept roll printed; a contract with no seed key, or one the parent cannot corroborate, means the roll was skipped and that is a material fix ahead of any craft point. Then, for each of the five blocks, does the render keep the promise? Apply the memory test to the first viewport: what would a visitor describe an hour later, and is it the thesis or a mood?
 4. **Truth.** Demonstration data authored and labeled synthetic; no invented commercial claims; unanswered claims present as marked placeholders, not omissions.
 
 Do not run a second detector pass; mechanical findings belong to the parent's hooks.
