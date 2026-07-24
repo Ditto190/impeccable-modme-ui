@@ -112,6 +112,15 @@ describe('detectUrl — browser-only fixtures', () => {
     }
   });
 
+  it('shadowed form.id: a <form> with <input name="id"> does not crash the scan (issue #407)', async () => {
+    // HTMLFormElement named-property shadowing makes form.id / form.className
+    // return the child input element, whose .startsWith throws. Every Shopify
+    // product form ships <input name="id">, so this crashed the URL scan. The
+    // scan must complete and return an array of findings instead of throwing.
+    const f = await detectUrl(`${baseUrl}/fixtures/antipatterns/shadowed-form-id.html`);
+    assert.ok(Array.isArray(f), 'detectUrl must return findings without throwing on a shadowed form.id');
+  });
+
   it('line-length: flag column triggers, pass column adds none', async () => {
     const f = await detectUrl(`${baseUrl}/fixtures/antipatterns/quality.html`);
     assert.equal(f.filter(r => r.antipattern === 'line-length').length, 1);

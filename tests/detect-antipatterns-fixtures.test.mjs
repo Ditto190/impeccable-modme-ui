@@ -281,6 +281,43 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     );
   });
 
+  it('color: gradient-clipped text is not contrast-checked against its own fill (issue #409 Case A)', async () => {
+    // background-clip: text with a transparent fill paints the glyphs with the
+    // gradient; the inherited `color` is never painted, so measuring it against
+    // the element's own gradient stops (#6d8cff / #a78bfa) is a false positive.
+    // The gradient-text pattern flag still fires; the backdrop-contrast rules
+    // (low-contrast / gray-on-color) must stay silent for the clipped element.
+    const f = await detectHtml(path.join(FIXTURES, 'color.html'));
+    const clippedContrastFP = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#6d8cff|#a78bfa/i.test(r.snippet || '')
+    );
+    assert.equal(
+      clippedContrastFP.length, 0,
+      `gradient-clipped text must not be contrast-checked against its own fill, got: ${clippedContrastFP.map(r => `${r.antipattern}:${r.snippet}`).join('; ')}`
+    );
+    // The pattern itself must still be surfaced.
+    assert.ok(
+      f.some(r => r.antipattern === 'gradient-text'),
+      'gradient-text pattern flag must still fire'
+    );
+  });
+
+  it('color: alpha gradient-glow stops composite against the surface beneath (issue #409 Case B)', async () => {
+    // A 9%-alpha teal glow stop (rgba(52,192,168,0.09)) over a dark section
+    // composites to ~near-black, not the full-opacity #34c0a8. Text on it is
+    // high-contrast; treating the stop as opaque flagged every text child.
+    const f = await detectHtml(path.join(FIXTURES, 'color.html'));
+    const glowFP = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#34c0a8/i.test(r.snippet || '')
+    );
+    assert.equal(
+      glowFP.length, 0,
+      `alpha glow stops must composite against the underlying surface, got: ${glowFP.map(r => `${r.antipattern}:${r.snippet}`).join('; ')}`
+    );
+  });
+
   it('legitimate-borders: zero findings', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'legitimate-borders.html'));
     assert.equal(f.length, 0, `expected no findings, got: ${f.map(r => `${r.antipattern}:${r.snippet}`).join('; ')}`);
@@ -594,6 +631,32 @@ describe('detectHtml — undersized-ui-text', () => {
     for (const text of SHOULD_PASS) {
       assert.ok(!flagged.has(text), `"${text}" should NOT be flagged as undersized-ui-text`);
     }
+  });
+});
+
+describe('detectHtml — non-rendered text (issue #408)', () => {
+  // On sites that set `html { font-size: 62.5% }` the root computes to 10px, so
+  // <script>/<style>/<title>/<noscript> and display:none / visibility:hidden
+  // blocks — whose JS/CSS/JSON-LD text clears the hasDirectText gate — report a
+  // 10px size and used to produce dozens of phantom "10px body text" findings.
+  // Both text-size floors (tiny-text and undersized-ui-text) must skip them and
+  // measure only genuinely rendered text.
+  it('tiny-text / undersized-ui-text: non-rendered elements produce no findings, rendered text still flags', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'nonrendered-text.html'));
+    const tiny = f.filter(r => r.antipattern === 'tiny-text');
+    const undersized = f.filter(r => r.antipattern === 'undersized-ui-text');
+
+    // Exactly the two genuinely rendered elements flag: the 10px body <p>
+    // (tiny-text) and the 9px interactive nav link (undersized-ui-text).
+    assert.equal(
+      tiny.length, 1,
+      `expected exactly 1 tiny-text finding (rendered body copy), got ${tiny.length}: ${tiny.map(r => r.snippet).join('; ')}`
+    );
+    assert.equal(
+      undersized.length, 1,
+      `expected exactly 1 undersized-ui-text finding (rendered nav link), got ${undersized.length}: ${undersized.map(r => r.snippet).join('; ')}`
+    );
+    assert.match(undersized[0].snippet || '', /Rendered Nav Link/, 'the one undersized finding must be the rendered nav link');
   });
 });
 
