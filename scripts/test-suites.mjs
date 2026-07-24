@@ -154,6 +154,7 @@ export const SUITES = {
           'tests/live-session-store.test.mjs',
           'tests/live-source-lock.test.mjs',
           'tests/live-source-search.test.mjs',
+          'tests/live-tanstack-adapter.test.mjs',
           'tests/live-target-context.test.mjs',
           'tests/live-wrap.test.mjs',
           'tests/live-wrap-buffer-aware.test.mjs',
