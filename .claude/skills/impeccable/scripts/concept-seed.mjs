@@ -470,6 +470,8 @@ channel: when a browser can open, present the direction on the decision page
 the no-browser fallback.
 ${authorityInstruction}
 A user- or brief-pinned decision beats the roll, always.
+ASSIGNED INDEX (restated for truncated readers): ${buildIndex}. Build candidate
+${buildIndex} of your own grounded list; seed key ${key}.
 `;
   }
 
@@ -510,6 +512,8 @@ never as a mockup to copy; your surface serves this product, not that render.
 ${authorityInstruction}
 ${richnessInstruction}
 ${telemetryBlock}A user- or brief-pinned decision beats the roll, always.
+ASSIGNED INDEX (restated for truncated readers): ${buildIndex}. Build candidate
+${buildIndex} of your own grounded list; seed key ${key}.
 `;
 }
 
