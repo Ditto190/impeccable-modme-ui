@@ -902,9 +902,21 @@ function checkColors(opts) {
   const findings = [];
 
   if (hasDirectText && textColor && !isEmojiOnly) {
+    // Gradient-clipped text (`background-clip: text`, typically with a
+    // transparent text-fill) paints its glyphs *with* the element's own
+    // gradient. The `color` value the cascade still reports is never painted,
+    // and the gradient is the fill, not a backdrop — so measuring `color`
+    // against that gradient (which resolveGradientStops picks up as the
+    // element's own background-image) is a guaranteed false positive
+    // (issue #409 Case A). Skip the backdrop-contrast checks; the gradient-text
+    // rule below still flags the pattern itself. Skipping a rule beats a false
+    // positive here — the true painted contrast can't be measured from `color`.
+    const isGradientClippedText = bgClip === 'text';
     // Run background-dependent checks against either a solid bg or, if the
     // ancestor is a gradient, against every gradient stop (use the worst case).
-    const bgs = effectiveBg ? [effectiveBg] : (effectiveBgStops && effectiveBgStops.length ? effectiveBgStops : null);
+    const bgs = isGradientClippedText
+      ? null
+      : (effectiveBg ? [effectiveBg] : (effectiveBgStops && effectiveBgStops.length ? effectiveBgStops : null));
     if (bgs) {
       // Gray on colored background — flag if every stop is chromatic
       const textLum = relativeLuminance(textColor);
@@ -2462,27 +2474,52 @@ function resolveBackground(el, win, customPropMap) {
 // Walk parents looking for a gradient background and return its color stops.
 // Used as a fallback when resolveBackground() returns null because the
 // effective background is a gradient (no single solid color to compare against).
-function resolveGradientStops(el, win) {
+function resolveGradientStops(el, win, customPropMap) {
   let current = el;
   while (current && current.nodeType === 1) {
     const style = DETECTOR_IS_BROWSER ? getComputedStyle(current) : win.getComputedStyle(current);
     const bgImage = style.backgroundImage || '';
+    let stops = null;
     if (bgImage && bgImage !== 'none' && /gradient/i.test(bgImage)) {
-      const stops = parseGradientColors(bgImage);
-      if (stops.length > 0) return stops;
+      const parsed = parseGradientColors(bgImage);
+      if (parsed.length > 0) stops = parsed;
     }
-    if (!DETECTOR_IS_BROWSER) {
+    if (!stops && !DETECTOR_IS_BROWSER) {
       // jsdom doesn't decompose `background:` shorthand — peek at the raw inline style
       const rawStyle = current.getAttribute?.('style') || '';
       const bgMatch = rawStyle.match(/background(?:-image)?\s*:\s*([^;]+)/i);
       if (bgMatch && /gradient/i.test(bgMatch[1])) {
-        const stops = parseGradientColors(bgMatch[1]);
-        if (stops.length > 0) return stops;
+        const parsed = parseGradientColors(bgMatch[1]);
+        if (parsed.length > 0) stops = parsed;
       }
     }
+    if (stops) return compositeGradientStops(stops, current, win, customPropMap);
     current = current.parentElement;
   }
   return null;
+}
+
+// A translucent gradient stop (e.g. a faint `rgba(52,192,168,0.09)` accent
+// glow) paints over whatever surface sits beneath the gradient — the browser
+// composites it, so its effective color is far closer to the base than to the
+// full-opacity accent. Treating the stop as opaque flags every text child of a
+// softly-glowing section as low-contrast (issue #409 Case B). Composite each
+// alpha stop over the resolved surface beneath the gradient element. When that
+// surface isn't resolvable (another gradient above, no opaque ancestor), drop
+// the translucent stop rather than guess: a dropped stop can't manufacture a
+// false finding, and skipping beats a wrong ratio.
+function compositeGradientStops(stops, gradientEl, win, customPropMap) {
+  const hasAlpha = stops.some(s => (s.a ?? 1) < 0.99);
+  if (!hasAlpha) return stops;
+  const base = resolveBackground(gradientEl.parentElement || gradientEl, win, customPropMap);
+  const out = [];
+  for (const s of stops) {
+    const a = s.a ?? 1;
+    if (a >= 0.99) { out.push(s); continue; }
+    if (base) out.push(compositeColorOver(s, base));
+    // else: unresolvable base — drop the translucent stop (skip, don't guess).
+  }
+  return out.length ? out : null;
 }
 
 // Parse a single CSS length token to pixels. Accepts "12px", "50%", a
@@ -3664,6 +3701,34 @@ function isVisuallyHidden(el, style) {
   return false;
 }
 
+// Elements whose text is never painted: document metadata and script/style
+// payloads. Their JS / CSS / JSON-LD text satisfies `hasDirectText`, and on
+// sites that set `html { font-size: 62.5% }` their inherited computed size is
+// 10px — so the text-size floors flag them as tiny body copy even though
+// nothing renders (issue #408: dozens of phantom "10px body text" findings on
+// every Shopify page). Exclude them, plus anything the cascade resolves to
+// display:none / visibility:hidden. The jsdom path can't lay out, so the
+// tag/attribute-based exclusions carry the weight there; the display checks are
+// computed-style reads that resolve without layout in both adapters.
+const NON_RENDERED_TAGS = new Set([
+  'script', 'style', 'title', 'noscript', 'template', 'head',
+  'meta', 'link', 'base', 'param', 'source', 'track', 'datalist',
+  'col', 'colgroup', 'map', 'area',
+]);
+function isNonRenderedText(el, tag, style) {
+  const t = (tag || '').toLowerCase();
+  if (NON_RENDERED_TAGS.has(t)) return true;
+  // Descendants of <head> never render even when the tag itself would
+  // (some sites nest <noscript>/<template> content there).
+  if (el && el.closest && el.closest('head')) return true;
+  if (style) {
+    if (style.display === 'none') return true;
+    const vis = style.visibility;
+    if (vis === 'hidden' || vis === 'collapse') return true;
+  }
+  return false;
+}
+
 // Pure quality checks. Most run on computed CSS and DOM-only inputs (work in
 // jsdom and the browser). Two checks (line-length, cramped-padding) gate on
 // element rect dimensions, which jsdom can't compute — pass `rect: null` from
@@ -3674,8 +3739,13 @@ function isVisuallyHidden(el, style) {
 function checkQuality(opts) {
   const { el, tag, style, hasDirectText, textLen, fontSize, lineHeightPx, letterSpacingPx, rect, lineMax = 80, viewportWidth = 0, win = null } = opts;
   const findings = [];
-  // Skip browser extension injected elements
-  const elId = el.id || '';
+  // Skip browser extension injected elements. Read the id via getAttribute
+  // whenever `el.id` is not a string: on a <form> (and other
+  // [LegacyOverrideBuiltIns] hosts) a named control like <input name="id">
+  // shadows the builtin `id` getter and returns the control element, whose
+  // `.startsWith` is undefined and throws (issue #407 — every Shopify product
+  // form ships an <input name="id">).
+  const elId = typeof el.id === 'string' ? el.id : (el.getAttribute?.('id') || '');
   if (elId.startsWith('claude-') || elId.startsWith('cic-')) return findings;
 
   // --- Line length too long --- (browser-only: needs rect.width)
@@ -3943,7 +4013,7 @@ function checkQuality(opts) {
     const skipTags = ['sub', 'sup', 'code', 'kbd', 'samp', 'var', 'caption', 'figcaption'];
     const inUIContext = el.closest && el.closest('button, a, label, summary, pre, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], nav, footer, [aria-hidden="true"], [class*="badge" i], [class*="caption" i], [class*="chip" i], [class*="code" i], [class*="console" i], [class*="diff" i], [class*="label" i], [class*="meta" i], [class*="mock" i], [class*="pill" i], [class*="preview" i], [class*="tag" i], [class*="terminal" i], [class*="writes" i]');
     const isUppercase = style.textTransform === 'uppercase';
-    if (!skipTags.includes(tag) && !inUIContext && !isUppercase) {
+    if (!skipTags.includes(tag) && !inUIContext && !isUppercase && !isNonRenderedText(el, tag, style)) {
       findings.push({ id: 'tiny-text', snippet: `${fontSize}px body text` });
     }
   }
@@ -3973,13 +4043,15 @@ function checkQuality(opts) {
       .replace(/\s+/g, ' ')
       .trim();
     const dtLen = directText.length;
-    const UI_SKIP_TAGS = new Set(['sub', 'sup', 'script', 'style', 'title', 'option']);
-    const notRendered = style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse';
+    // `option` renders (in native select popups) so it stays a local skip;
+    // script/style/title/noscript/head-descendants and display:none /
+    // visibility:hidden are handled by isNonRenderedText (shared with tiny-text).
+    const UI_SKIP_TAGS = new Set(['sub', 'sup', 'option']);
     // jsdom resolves the parent chain in resolveFontSizePx, so em/rem/%-sized
     // text that computes at or above the floor never reaches here. The browser
     // adapter additionally catches values only resolvable with real layout
     // (e.g. viewport-relative units, cascade winners set in linked sheets).
-    if (fontSize > 0 && fontSize < 11 && dtLen >= 2 && !UI_SKIP_TAGS.has(tag) && !notRendered) {
+    if (fontSize > 0 && fontSize < 11 && dtLen >= 2 && !UI_SKIP_TAGS.has(tag) && !isNonRenderedText(el, tag, style)) {
       const EXEMPT_CONTEXT = 'pre, code, kbd, samp, var, svg, [aria-hidden="true"], [class*="terminal" i], [class*="console" i], [class*="code" i], [class*="mock" i], [class*="editor" i], [class*="syntax" i], [class*="diff" i]';
       const isExemptContext = (el.matches && el.matches(EXEMPT_CONTEXT)) || (el.closest && el.closest(EXEMPT_CONTEXT));
       if (!isExemptContext && !isVisuallyHidden(el, style)) {
@@ -4192,7 +4264,7 @@ function checkElementColors(el, style, tag, window, customPropMap, hasAnchorInhe
     textColor,
     bgColor: ownBg,
     effectiveBg: finalEffectiveBg,
-    effectiveBgStops: finalEffectiveBg ? null : resolveGradientStops(el, window),
+    effectiveBgStops: finalEffectiveBg ? null : resolveGradientStops(el, window, customPropMap),
     fontSize: parseFloat(style.fontSize) || 16,
     fontWeight: parseInt(style.fontWeight) || 400,
     hasDirectText,
@@ -6497,7 +6569,11 @@ if (IS_BROWSER) {
   function generateSelector(el) {
     if (el === document.body) return 'body';
     if (el === document.documentElement) return 'html';
-    if (el.id) return '#' + CSS.escape(el.id);
+    // Read via getAttribute when `el.id` is not a string — a <form> with a
+    // named control (e.g. <input name="id">) shadows the builtin getter and
+    // returns the element, producing a garbage `#[object …]` selector (#407).
+    const elId = typeof el.id === 'string' ? el.id : (el.getAttribute('id') || '');
+    if (elId) return '#' + CSS.escape(elId);
 
     const parts = [];
     let current = el;
@@ -7434,8 +7510,11 @@ if (IS_BROWSER) {
     for (const el of document.querySelectorAll('*')) {
       // Skip impeccable's own elements and any descendants (overlays, labels, banner, nav buttons)
       if (el.closest('.impeccable-overlay, .impeccable-label, .impeccable-banner, .impeccable-tooltip')) continue;
-      // Skip browser extension elements (Claude, etc.)
-      const elId = el.id || '';
+      // Skip browser extension elements (Claude, etc.). Use getAttribute when
+      // `el.id` is not a string: a <form> with a named control like
+      // <input name="id"> shadows the builtin `id` getter and returns the
+      // element, whose `.startsWith` throws (issue #407).
+      const elId = typeof el.id === 'string' ? el.id : (el.getAttribute('id') || '');
       if (elId.startsWith('claude-') || elId.startsWith('cic-')) continue;
       // Skip the impeccable live-mode overlay (highlight, tooltip, bar, picker, toast).
       // These are inspector chrome, not part of the user's design.
