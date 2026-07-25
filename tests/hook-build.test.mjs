@@ -231,11 +231,12 @@ describe('generated hook artifacts in repo', () => {
     expectCommand(handler.command, '.codex/skills/impeccable/scripts/hook.mjs');
     assert.ok(!handler.command.includes('.agents/skills'));
 
-    // The self-consistent Codex bundle ships the payload the manifest targets.
-    assert.ok(fs.existsSync(path.join(REPO_ROOT, 'dist/codex/.codex/skills/impeccable/SKILL.md')));
-    assert.ok(fs.existsSync(path.join(REPO_ROOT, 'dist/codex/.codex/skills/impeccable/scripts/hook.mjs')));
+    // The self-consistent Codex bundle at `dist/codex/.codex/skills/` is a build
+    // artifact, not a tracked repo file; `bun run build` emits it and
+    // build.test.js verifies it there. This suite runs before the build (CI's
+    // `test:core` precedes the Build step), so it asserts only tracked outputs.
 
-    // The repo also ships the Codex skill payload at `.agents/skills` (the
+    // The repo ships the Codex skill payload at `.agents/skills` (the
     // layout CLI installs use, and where the rewritten command resolves).
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.agents/skills/impeccable/SKILL.md')));
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.agents/skills/impeccable/scripts/hook.mjs')));
