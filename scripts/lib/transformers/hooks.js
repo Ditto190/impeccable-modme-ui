@@ -54,7 +54,13 @@ const CLAUDE_PROJECT_HOOK = '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scr
 const guardedNode = (hookPath) => `[ ! -f "${hookPath}" ] || node "${hookPath}"`;
 const CLAUDE_PLUGIN_HOOK = '${CLAUDE_PLUGIN_ROOT}/skills/impeccable/scripts/hook.mjs';
 const CODEX_PLUGIN_HOOK = '${PLUGIN_ROOT}/skills/impeccable/scripts/hook.mjs';
-const CODEX_PROJECT_HOOK = '.agents/skills/impeccable/scripts/hook.mjs';
+// Codex reads project hooks from `.codex/hooks.json`, but the skill payload the
+// hook invokes lives under the install's own skills dir: a `.codex`-directory
+// install keeps it at `.codex/skills/...`, while a `.agents` (Codex repo-skills)
+// install keeps it at `.agents/skills/...`. Derive the path from the install dir
+// so each generated manifest points at its own payload rather than a hardcoded
+// `.agents` — otherwise the guarded hook silently no-ops on `.codex` installs.
+const codexProjectHook = (skillDir) => `${skillDir}/skills/impeccable/scripts/hook.mjs`;
 const CURSOR_BEFORE_EDIT_SCRIPT = '.cursor/skills/impeccable/scripts/hook-before-edit.mjs';
 const GITHUB_PROJECT_HOOK = '$(git rev-parse --show-toplevel)/.github/skills/impeccable/scripts/hook.mjs';
 // Grok project hooks are relative to the git/workspace root. Claude tool names
@@ -134,7 +140,11 @@ export function buildCodexPluginHooksManifest() {
   };
 }
 
-export function buildCodexHooksManifest() {
+// `skillDir` is the install's own dot-directory (a provider's configDir), so the
+// emitted command points at that install's payload. Defaults to `.codex` for the
+// Codex provider, whose self-consistent bundle keeps the skill at `.codex/skills`.
+export function buildCodexHooksManifest(skillDir = '.codex') {
+  const hookPath = codexProjectHook(skillDir);
   return {
     hooks: {
       PostToolUse: [
@@ -143,14 +153,14 @@ export function buildCodexHooksManifest() {
           hooks: [
             {
               type: 'command',
-              command: guardedNode(CODEX_PROJECT_HOOK),
+              command: guardedNode(hookPath),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(guardedNode(CODEX_PROJECT_HOOK))],
+      Stop: [stopEntry(guardedNode(hookPath))],
     },
   };
 }
@@ -222,12 +232,12 @@ export function buildGrokHooksManifest() {
   };
 }
 
-export function hooksJsonFor(provider) {
+export function hooksJsonFor(provider, options = {}) {
   switch (provider) {
     case 'claude':
       return buildClaudeSettingsManifest();
     case 'codex':
-      return buildCodexHooksManifest();
+      return buildCodexHooksManifest(options.configDir || '.codex');
     case 'cursor':
       return buildCursorHooksManifest();
     case 'github':

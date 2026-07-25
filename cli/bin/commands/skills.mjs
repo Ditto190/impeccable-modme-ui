@@ -1179,6 +1179,19 @@ function hookArtifactsForProvider(bundleDir, root, provider) {
   });
 }
 
+// The project-relative hook command path for a provider, used for project-scope
+// installs (skillRoot === root). Derived rather than copied from the bundle: the
+// Codex bundle ships a `.codex/skills/...` command (correct for a `.codex`-
+// directory install), but the CLI lays Codex's skill down at `.agents/skills/`,
+// so preserving the bundle token would point the hook at a nonexistent file and
+// silently no-op it. Claude keeps its ${CLAUDE_PROJECT_DIR} token so a manifest
+// read from a nested cwd (or copied into settings.local.json) still resolves.
+function hookScriptRelPathForProvider(provider) {
+  const script = provider === '.cursor' ? 'hook-before-edit.mjs' : 'hook.mjs';
+  const rel = `${provider}/skills/impeccable/scripts/${script}`;
+  return provider === '.claude' ? '${CLAUDE_PROJECT_DIR}/' + rel : rel;
+}
+
 function hookScriptPathForProvider(skillRoot, provider) {
   // `.github` is intentionally absent: its hook manifest (`.github/hooks/
   // impeccable.json`) is a committed, team-shared file that the Copilot cloud
@@ -1228,9 +1241,10 @@ function rewriteHookCommandsForSkillRoot(value, provider, { skillRoot, absolute 
     if (absolute) {
       quotedPath = JSON.stringify(hookScript);
     } else {
-      // Preserve the bundle's own path token (e.g. ${CLAUDE_PROJECT_DIR}/...).
-      const match = value.match(/"([^"]+)"/);
-      quotedPath = match ? JSON.stringify(match[1]) : JSON.stringify(hookScript);
+      // Project-scope install: derive the provider's own project-relative path
+      // rather than trusting the bundle token, which for Codex points at
+      // `.codex/skills/...` while the CLI installs the skill at `.agents/skills/`.
+      quotedPath = JSON.stringify(hookScriptRelPathForProvider(provider));
     }
     return guardHookCommand(quotedPath);
   }

@@ -400,7 +400,7 @@ function syncRootHookManifests(rootDir) {
   const synced = [];
   for (const config of Object.values(PROVIDERS)) {
     if (!config.emitHooks) continue;
-    const manifest = hooksJsonFor(config.emitHooks);
+    const manifest = hooksJsonFor(config.emitHooks, { configDir: config.configDir });
     if (!manifest) continue;
     const rel = config.hooksManifestRel || path.join('hooks', 'hooks.json');
     const dest = path.join(rootDir, config.configDir, rel);

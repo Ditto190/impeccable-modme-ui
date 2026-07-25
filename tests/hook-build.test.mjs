@@ -63,6 +63,9 @@ describe('hook manifest builders', () => {
   });
 
   it('builds Codex project-local hooks for the real detector hook', () => {
+    // Default install dir is `.codex`: a `.codex`-directory install keeps the
+    // skill payload at `.codex/skills/...`, so the hook must point there (not at
+    // a hardcoded `.agents`, which no-ops on such installs).
     const manifest = buildCodexHooksManifest();
     assert.equal(manifest.description, undefined);
     const group = manifest.hooks.PostToolUse[0];
@@ -72,7 +75,7 @@ describe('hook manifest builders', () => {
     assert.equal(handler.type, 'command');
     assert.equal(handler.timeout, 5);
     assert.equal(handler.statusMessage, 'Checking UI changes');
-    expectCommand(handler.command, '.agents/skills/impeccable/scripts/hook.mjs');
+    expectCommand(handler.command, '.codex/skills/impeccable/scripts/hook.mjs');
     assert.ok(!handler.command.includes('git rev-parse --show-toplevel'));
     assert.ok(!handler.command.includes('${PLUGIN_ROOT}'));
     assert.equal(manifest.hooks.SessionStart, undefined);
@@ -81,7 +84,31 @@ describe('hook manifest builders', () => {
     // pass too.
     const stop = manifest.hooks.Stop[0].hooks[0];
     assert.equal(stop.timeout, 30);
-    expectCommand(stop.command, '.agents/skills/impeccable/scripts/hook.mjs');
+    expectCommand(stop.command, '.codex/skills/impeccable/scripts/hook.mjs');
+  });
+
+  it('derives the Codex hook payload path from the install dir', () => {
+    // Each install dir gets a manifest pointing at its own skills payload: a
+    // `.codex`-directory install at `.codex/skills`, a `.agents` (Codex repo
+    // skills) install at `.agents/skills`.
+    const codexDir = buildCodexHooksManifest('.codex');
+    expectCommand(codexDir.hooks.PostToolUse[0].hooks[0].command, '.codex/skills/impeccable/scripts/hook.mjs');
+    expectCommand(codexDir.hooks.Stop[0].hooks[0].command, '.codex/skills/impeccable/scripts/hook.mjs');
+
+    const agentsDir = buildCodexHooksManifest('.agents');
+    expectCommand(agentsDir.hooks.PostToolUse[0].hooks[0].command, '.agents/skills/impeccable/scripts/hook.mjs');
+    expectCommand(agentsDir.hooks.Stop[0].hooks[0].command, '.agents/skills/impeccable/scripts/hook.mjs');
+    assert.ok(!agentsDir.hooks.PostToolUse[0].hooks[0].command.includes('.codex/skills'));
+
+    // hooksJsonFor threads the provider's configDir through to the builder.
+    expectCommand(
+      hooksJsonFor('codex', { configDir: '.agents' }).hooks.PostToolUse[0].hooks[0].command,
+      '.agents/skills/impeccable/scripts/hook.mjs',
+    );
+    expectCommand(
+      hooksJsonFor('codex').hooks.PostToolUse[0].hooks[0].command,
+      '.codex/skills/impeccable/scripts/hook.mjs',
+    );
   });
 
   it('builds one Cursor pre-write blocking hook', () => {
@@ -192,11 +219,24 @@ describe('generated hook artifacts in repo', () => {
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.cursor/skills/impeccable/scripts/detector/detect-antipatterns.mjs')));
   });
 
-  it('Codex project hooks reference hook.mjs in the .agents skill payload', () => {
+  it('Codex project hooks reference hook.mjs in the .codex skill payload', () => {
+    // The committed `.codex/hooks.json` is the distribution artifact for a
+    // `.codex`-directory install, whose skill payload lives at `.codex/skills/`
+    // (issue: it previously hardcoded `.agents/skills`, so the guarded hook
+    // no-opped on `.codex` installs). CLI installs that lay the skill down at
+    // `.agents/skills` rewrite the command to that path at install time.
     const manifest = readJson('.codex/hooks.json');
     const handler = manifest.hooks.PostToolUse[0].hooks[0];
 
-    expectCommand(handler.command, '.agents/skills/impeccable/scripts/hook.mjs');
+    expectCommand(handler.command, '.codex/skills/impeccable/scripts/hook.mjs');
+    assert.ok(!handler.command.includes('.agents/skills'));
+
+    // The self-consistent Codex bundle ships the payload the manifest targets.
+    assert.ok(fs.existsSync(path.join(REPO_ROOT, 'dist/codex/.codex/skills/impeccable/SKILL.md')));
+    assert.ok(fs.existsSync(path.join(REPO_ROOT, 'dist/codex/.codex/skills/impeccable/scripts/hook.mjs')));
+
+    // The repo also ships the Codex skill payload at `.agents/skills` (the
+    // layout CLI installs use, and where the rewritten command resolves).
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.agents/skills/impeccable/SKILL.md')));
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.agents/skills/impeccable/scripts/hook.mjs')));
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.agents/skills/impeccable/scripts/hook-lib.mjs')));

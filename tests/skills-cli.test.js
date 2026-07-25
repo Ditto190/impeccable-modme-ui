@@ -98,8 +98,11 @@ function createFakeUniversalBundle(root, providers = ['.claude', '.agents', '.cu
   }
   if (providers.includes('.agents')) {
     mkdirSync(join(bundleRoot, '.codex'), { recursive: true });
+    // Mirror production: the Codex bundle's `.codex/hooks.json` targets its own
+    // `.codex/skills` payload. The CLI installs the skill at `.agents/skills`, so
+    // the installer must rewrite this command to `.agents/skills` (see below).
     writeFileSync(join(bundleRoot, '.codex', 'hooks.json'), JSON.stringify({
-      hooks: { PostToolUse: [{ matcher: 'apply_patch', hooks: [{ type: 'command', command: 'node ".agents/skills/impeccable/scripts/hook.mjs"' }] }] },
+      hooks: { PostToolUse: [{ matcher: 'apply_patch', hooks: [{ type: 'command', command: 'node ".codex/skills/impeccable/scripts/hook.mjs"' }] }] },
     }, null, 2));
   }
   return bundleRoot;
@@ -675,6 +678,12 @@ describe('skills install/update: local universal bundle e2e', () => {
     expect(existsSync(join(tmp, '.claude', 'settings.local.json'))).toBe(true);
     expect(existsSync(join(tmp, '.cursor', 'hooks.json'))).toBe(true);
     expect(existsSync(join(tmp, '.codex', 'hooks.json'))).toBe(true);
+    // The CLI puts Codex's skill at `.agents/skills`, so the project-scope hook
+    // command must point there — not at the bundle's own `.codex/skills` path,
+    // which would resolve to a nonexistent file and silently no-op the hook.
+    const codexHooks = readFileSync(join(tmp, '.codex', 'hooks.json'), 'utf8');
+    expect(codexHooks).toContain('.agents/skills/impeccable/scripts/hook.mjs');
+    expect(codexHooks).not.toContain('.codex/skills/impeccable/scripts/hook.mjs');
 
     rmSync(tmp, { recursive: true, force: true });
   }, 15000);

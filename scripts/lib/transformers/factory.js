@@ -308,7 +308,7 @@ export function createTransformer(config) {
     // `.codex/hooks.json`, and Cursor uses `.cursor/hooks.json`.
     let hooksEmitted = false;
     if (config.emitHooks) {
-      const manifest = hooksJsonFor(config.emitHooks);
+      const manifest = hooksJsonFor(config.emitHooks, { configDir });
       if (manifest) {
         const hooksRel = config.hooksManifestRel || path.join('hooks', 'hooks.json');
         writeFile(path.join(providerDir, configDir, hooksRel), JSON.stringify(manifest, null, 2) + '\n');
