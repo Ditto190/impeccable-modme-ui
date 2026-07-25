@@ -592,6 +592,47 @@ describe('detectHtml — icon-tile-stack', () => {
   });
 });
 
+describe('detectHtml — radial-spotlight-glow', () => {
+  // Two-column fixture convention: left col = should-flag, right col = should-pass.
+  // The rule's snippet embeds the element's data-name in quotes, e.g.
+  //   radial-gradient spotlight glow "Hero Spotlight Blue" (#506fff a0.26 → transparent).
+  const SHOULD_FLAG = [
+    'Hero Spotlight Blue',
+    'Section Glow Violet',
+    'Overlay Glow Cyan',
+    'Two Stop Soft Glow',
+    'Hex Alpha Glow',
+  ];
+  const SHOULD_PASS = [
+    'Opaque Radial Background',
+    'Small Accent Badge',
+    'Avatar Glow Light',
+    'Neutral Vignette',
+    'White Vignette',
+    'Rich Radial Composition',
+    'Rich Transparent Composition',
+    'Opaque Center Glow',
+    'Linear Gradient Wash',
+  ];
+
+  it('radial-spotlight-glow: flags only the should-flag column', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'radial-spotlight-glow.html'));
+    const flagged = new Set();
+    for (const r of f) {
+      if (r.antipattern !== 'radial-spotlight-glow') continue;
+      const m = (r.snippet || '').match(/"([^"]+)"/);
+      if (m) flagged.add(m[1]);
+    }
+
+    for (const text of SHOULD_FLAG) {
+      assert.ok(flagged.has(text), `expected "${text}" to be flagged as radial-spotlight-glow`);
+    }
+    for (const text of SHOULD_PASS) {
+      assert.ok(!flagged.has(text), `"${text}" should NOT be flagged as radial-spotlight-glow`);
+    }
+  });
+});
+
 describe('detectHtml — undersized-ui-text', () => {
   // Two-column fixture: left col = should-flag, right col = should-pass.
   // The rule's snippet embeds the element's direct text in quotes, e.g.
