@@ -11,6 +11,7 @@
   "skills": "./skills/",
   "agents": [
     "./agents/impeccable-asset-producer.md",
+    "./agents/impeccable-documenter.md",
     "./agents/impeccable-finish-reviewer.md",
     "./agents/impeccable-manual-edit-applier.md"
   ]

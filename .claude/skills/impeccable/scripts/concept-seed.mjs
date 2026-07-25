@@ -458,7 +458,9 @@ ASSIGNED INDEX: ${buildIndex}
   The assignment exists to refuse the model's ranking rut, never to outrank
   the user or the brief. Never expose assignment metadata in user-facing labels.
 No challengers this run: the roll service was unreachable and no local
-catalog exists. A sandboxed shell without network egress is the most common
+catalog exists. A sandboxed exec tool with no network access causes exactly
+this; before accepting degradation, rerun this command once through the
+harness's network-enabled command tool. A sandboxed shell without network egress is the most common
 cause: if this harness can rerun the command with network access granted,
 do that once before proceeding. Otherwise proceed with the grounded
 candidates alone; the assignment
