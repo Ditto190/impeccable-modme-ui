@@ -1490,6 +1490,7 @@ if (IS_BROWSER) {
         ...checkElementMotionDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementGlowDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementAIPaletteDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
+        ...checkElementRadialSpotlightDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementIconTileDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementItalicSerifDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementQualityDOM(el).map(f => ({ type: f.id, detail: f.snippet })),

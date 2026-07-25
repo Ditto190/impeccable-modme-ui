@@ -261,6 +261,15 @@ const ANTIPATTERNS = [
     skillGuideline: 'dark mode with glowing accents',
   },
   {
+    id: 'radial-spotlight-glow',
+    category: 'slop',
+    name: 'Decorative radial spotlight glow',
+    description:
+      'A soft, low-opacity accent-colored radial gradient fading to transparent, dropped behind a hero or section as a "spotlight." It is a reflex AI decoration — the translucent cousin of the saturated radial halo. Let the surface stand on its own, or light the composition with a deliberate material accent rather than a floating colored haze.',
+    skillSection: 'Color & Contrast',
+    skillGuideline: 'dark mode with glowing accents',
+  },
+  {
     id: 'marquee',
     category: 'slop',
     name: 'Auto-scrolling marquee',
@@ -3557,6 +3566,131 @@ function checkElementAIPaletteDOM(el) {
   }
 
   return findings;
+}
+
+// ─── Decorative radial spotlight glow ───────────────────────────────────────
+// A soft, low-opacity chromatic radial-gradient fading to transparent, painted
+// as a decorative wash behind a hero or section. The translucent sibling of the
+// `radial-halo` tell: `radial-halo` requires a saturated, near-opaque center on
+// a dark page; this catches the low-alpha "spotlight" the halo gate lets slip
+// (e.g. `radial-gradient(circle at 52% 38%, rgba(80,111,255,0.26),
+// transparent 44%)`). The two alpha bands are disjoint, so they never
+// double-report the same declaration.
+const SPOTLIGHT_COLOR_TOKEN_RE = /(?:rgba?|hsla?|oklch|oklab|lab|lch|hwb|color-mix)\([^)]*(?:\([^)]*\))?[^)]*\)|#[0-9a-f]{3,8}\b|\btransparent\b/i;
+
+// Parse the FIRST non-repeating radial-gradient in a background value into its
+// ordered color stops. Each stop is { color: {r,g,b,a} | null, transparent }.
+// Returns null when there is no plain radial-gradient to read.
+function parseRadialGradientStops(value) {
+  if (!value || !/radial-gradient/i.test(value)) return null;
+  const gradRe = /(repeating-)?radial-gradient\(/gi;
+  let g;
+  while ((g = gradRe.exec(value)) !== null) {
+    if (g[1]) continue; // repeating-* is a pattern, not a spotlight
+    let depth = 0, end = -1;
+    const open = value.indexOf('(', g.index);
+    for (let i = open; i < value.length; i++) {
+      if (value[i] === '(') depth++;
+      else if (value[i] === ')') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end < 0) return null;
+    const args = splitTopLevelCommas(value.slice(open + 1, end));
+    // The optional prelude (shape / size / `at <pos>`) carries no color token.
+    const stopArgs = args.filter(a => SPOTLIGHT_COLOR_TOKEN_RE.test(a));
+    if (stopArgs.length < 2) return null;
+    return stopArgs.map(a => {
+      const tok = a.match(SPOTLIGHT_COLOR_TOKEN_RE);
+      if (!tok) return { color: null, transparent: false };
+      if (/^transparent$/i.test(tok[0])) return { color: null, transparent: true };
+      const color = parseAnyColor(tok[0]);
+      return { color, transparent: !!color && (color.a ?? 1) <= 0.05 };
+    });
+  }
+  return null;
+}
+
+// Pure gate. `label` is a stable identifier the fixture test keys on.
+function checkRadialSpotlight({ gradientValue, width, height, label }) {
+  const stops = parseRadialGradientStops(gradientValue);
+  if (!stops || stops.length < 2) return [];
+
+  // Must fade OUT: the last stop is transparent / near-zero alpha. A gradient
+  // between two visible surfaces is a real background, not a floating glow.
+  const last = stops[stops.length - 1];
+  const lastAlpha = last.transparent ? 0 : (last.color ? (last.color.a ?? 1) : 1);
+  if (lastAlpha > 0.05) return [];
+
+  // The visible (non-transparent, parseable) color stops.
+  const colored = stops.filter(s => !s.transparent && s.color && (s.color.a ?? 1) > 0.05);
+  if (colored.length === 0) return [];
+  // One soft glow, not a multi-color composition: at most two visible stops.
+  if (colored.length > 2) return [];
+  // Every visible stop must be LOW opacity. Any opaque stop means a real fill
+  // or a saturated halo (`radial-halo`'s job), not this translucent spotlight.
+  if (colored.some(s => (s.color.a ?? 1) >= 0.45)) return [];
+  // At least one visible stop must be chromatic. A neutral (grayscale)
+  // near-black / near-white vignette is a legitimate lighting move, exempt.
+  const chromatic = colored.find(s => hasChroma(s.color, 24));
+  if (!chromatic) return [];
+
+  // Decorative-scale gate. Badges, avatars, and actual small "lights" are
+  // exempt; a spotlight glow only reads as slop when it washes a large surface.
+  if (!(width >= 240 && height >= 160)) return [];
+
+  const alpha = (chromatic.color.a ?? 1).toFixed(2);
+  const name = label || 'section';
+  return [{
+    id: 'radial-spotlight-glow',
+    snippet: `radial-gradient spotlight glow "${name}" (${colorToHex(chromatic.color)} a${alpha} → transparent) on ${Math.round(width)}x${Math.round(height)} surface`,
+  }];
+}
+
+// Read the raw radial-gradient source off an element's computed style, with a
+// fallback to the `background` shorthand and the inline style attribute for
+// engines that don't decompose the shorthand into backgroundImage.
+function elementGradientValue(style, el) {
+  const bgImage = style.backgroundImage && style.backgroundImage !== 'none' ? style.backgroundImage : '';
+  if (/radial-gradient/i.test(bgImage)) return bgImage;
+  const bg = style.background || '';
+  if (/radial-gradient/i.test(bg)) return bg;
+  const rawStyle = el?.getAttribute?.('style') || '';
+  const m = rawStyle.match(/background(?:-image)?\s*:\s*([^;]+)/i);
+  if (m && /radial-gradient/i.test(m[1])) return m[1];
+  return '';
+}
+
+function spotlightLabel(el) {
+  const dataName = el.getAttribute?.('data-name');
+  if (dataName) return dataName;
+  if (typeof el.id === 'string' && el.id) return el.id;
+  const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] : '';
+  if (cls) return cls;
+  return el.tagName ? el.tagName.toLowerCase() : 'section';
+}
+
+function checkElementRadialSpotlightDOM(el) {
+  const style = getComputedStyle(el);
+  const gradientValue = elementGradientValue(style, el);
+  if (!gradientValue) return [];
+  const rect = el.getBoundingClientRect();
+  return checkRadialSpotlight({
+    gradientValue,
+    width: rect.width,
+    height: rect.height,
+    label: spotlightLabel(el),
+  });
+}
+
+function checkElementRadialSpotlight(el, style, tag, window) {
+  const gradientValue = elementGradientValue(style, el);
+  if (!gradientValue) return [];
+  // Static engine does no layout — read explicit pixel dimensions from CSS.
+  return checkRadialSpotlight({
+    gradientValue,
+    width: parseFloat(style.width) || 0,
+    height: parseFloat(style.height) || 0,
+    label: spotlightLabel(el),
+  });
 }
 
 const QUALITY_TEXT_TAGS = new Set(['p', 'li', 'td', 'th', 'dd', 'blockquote', 'figcaption']);
@@ -7529,6 +7663,7 @@ if (IS_BROWSER) {
         ...checkElementMotionDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementGlowDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementAIPaletteDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
+        ...checkElementRadialSpotlightDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementIconTileDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementItalicSerifDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementQualityDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
