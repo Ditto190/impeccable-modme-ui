@@ -86,8 +86,27 @@ function gitSignals(cwd) {
     return { isRepo: false, branch: null, base: null, changedFiles: [], changedCount: 0 };
   }
   const branch = run(['rev-parse', '--abbrev-ref', 'HEAD']);
+  // The merge target is detected, not assumed. A hardcoded main/master list
+  // diffed develop-based repos against the wrong base, so git.changedFiles
+  // carried the whole develop/main divergence into scan.targets (issue
+  // #302). Signals, most specific first: the branch's configured upstream
+  // (@{u}; a branch pushed with -u tracks itself and is skipped by the
+  // self-check), then the remote's default-branch symref (origin/HEAD),
+  // then the conventional integration names. The conventional fallbacks
+  // are withheld when the current branch IS one of them: sitting on main
+  // in a repo that also has develop must not diff the two integration
+  // branches against each other.
+  const stripOrigin = (ref) => (ref && ref.startsWith('origin/') ? ref.slice('origin/'.length) : null);
+  const upstreamBase = stripOrigin(run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']));
+  const remoteHeadBase = stripOrigin(run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']));
+  const conventional = ['develop', 'main', 'master'];
+  const candidates = new Set([
+    ...[upstreamBase, remoteHeadBase].filter(Boolean),
+    ...(conventional.includes(branch) ? [] : conventional),
+  ]);
   let base = null;
-  for (const b of ['main', 'master']) {
+  for (const b of candidates) {
+    if (b === branch) continue;
     if (run(['rev-parse', '--verify', '--quiet', b]) !== null) {
       base = b;
       break;

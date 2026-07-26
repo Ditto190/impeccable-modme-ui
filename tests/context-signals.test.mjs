@@ -185,6 +185,105 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.scan.targets, ['src']);
   });
 
+  it('diffs a feature branch against a develop integration branch (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'develop');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('checkout', '-q', '-b', 'feature/x');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    // The hardcoded main/master candidate list found no base here, so the
+    // committed feature work was invisible to the scan targets.
+    assert.equal(s.git.base, 'develop');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+    assert.deepEqual(s.scan.targets, ['src/Hero.tsx']);
+  });
+
+  it('prefers the remote default branch (origin/HEAD) as the diff base (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'trunk');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    // Fabricate the remote's default-branch symref without a network remote.
+    git('update-ref', 'refs/remotes/origin/trunk', 'HEAD');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
+    git('checkout', '-q', '-b', 'feature/y');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, 'trunk');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
+  it('a branch tracking the integration branch diffs against its upstream (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'release');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    // A self-pointing remote gives git the fetch refspec it needs to map
+    // refs/heads/release -> refs/remotes/origin/release; no network involved.
+    git('remote', 'add', 'origin', '.');
+    git('update-ref', 'refs/remotes/origin/release', 'HEAD');
+    git('checkout', '-q', '-b', 'feature/z');
+    git('branch', '-q', '--set-upstream-to=origin/release');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, 'release');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
+  it('sitting on the integration branch itself falls back to the working tree', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'develop');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    write('src/App.tsx', 'export default 2;\n'); // dirty, uncommitted
+    const s = await gatherSignals(scratch);
+    // No self-diff: base must be null and the dirty working tree is the scope.
+    assert.equal(s.git.base, null);
+    assert.deepEqual(s.git.changedFiles, ['src/App.tsx']);
+  });
+
+  it('never diffs one integration branch against another (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('branch', '-q', 'develop'); // both integration branches exist
+    write('src/App.tsx', 'export default 2;\n'); // dirty on main
+    const s = await gatherSignals(scratch);
+    // Sitting on main must not pick develop as a base; the dirty working
+    // tree is the scope, exactly as before this change.
+    assert.equal(s.git.base, null);
+    assert.deepEqual(s.git.changedFiles, ['src/App.tsx']);
+  });
+
   it('has empty scan.targets only when there is no code at all', async () => {
     const s = await gatherSignals(scratch);
     assert.deepEqual(s.scan.targets, []);
