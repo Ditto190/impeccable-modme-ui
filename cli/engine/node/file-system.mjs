@@ -5,9 +5,15 @@ import path from 'node:path';
 // File walker
 // ---------------------------------------------------------------------------
 
+// Hidden directories are skipped wholesale during recursion (below), which
+// covers .git / .next / .nuxt / .svelte-kit / .turbo / .vercel and — the
+// issue #303 class — every vendored AI-harness install (.claude, .cursor,
+// .codex, .agents, .impeccable, ...) whose bundled detector source would
+// otherwise be reported as findings on a root scan. Only the non-hidden
+// build/dependency dirs need naming. An explicitly passed hidden target
+// still scans: walkDir name-checks children, never the root it's given.
 const SKIP_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', '.next', '.nuxt', '.output',
-  '.svelte-kit', '__pycache__', '.turbo', '.vercel',
+  'node_modules', 'dist', 'build', '__pycache__',
 ]);
 
 const SCANNABLE_EXTENSIONS = new Set([
@@ -24,6 +30,7 @@ function walkDir(dir) {
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return files; }
   for (const entry of entries) {
     if (SKIP_DIRS.has(entry.name)) continue;
+    if (entry.isDirectory() && entry.name.startsWith('.')) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...walkDir(full));
     else if (SCANNABLE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) files.push(full);

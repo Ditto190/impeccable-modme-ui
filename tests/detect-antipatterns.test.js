@@ -1828,6 +1828,44 @@ describe('walkDir', () => {
   test('returns empty for nonexistent dir', () => {
     expect(walkDir('/nonexistent/path/12345')).toHaveLength(0);
   });
+
+  // Issue #303: when impeccable (or any agent tool) is installed into a
+  // project's .claude/.cursor/etc. tree, a root scan descended into the
+  // vendored skill code and reported the detector's own example strings as
+  // findings. Hidden directories are never app source — skip them all.
+  test('skips hidden dirs (AI-harness installs) during recursion', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-walk-'));
+    try {
+      const write = (rel) => {
+        const abs = path.join(tmp, rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, '/* fixture */');
+      };
+      write('src/app.css');
+      write('.claude/skills/impeccable/scripts/detector.js');
+      write('.cursor/skills/impeccable/example.css');
+      write('.impeccable/live/preview.html');
+      write('node_modules/pkg/index.js');
+      const files = walkDir(tmp);
+      expect(files).toEqual([path.join(tmp, 'src', 'app.css')]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('still scans a hidden dir passed as the explicit target', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-walk-'));
+    try {
+      const abs = path.join(tmp, '.claude', 'page.html');
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, '<html></html>');
+      // Only child entries are name-checked; naming the hidden dir directly
+      // is an explicit user intent and must keep working.
+      expect(walkDir(path.join(tmp, '.claude'))).toEqual([abs]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
