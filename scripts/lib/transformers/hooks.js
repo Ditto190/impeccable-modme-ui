@@ -47,63 +47,48 @@ function stopEntry(command) {
   };
 }
 const CLAUDE_PROJECT_HOOK = '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scripts/hook.mjs';
+// The Node major the hook runtime requires, kept equal to the engines floor in
+// package.json. The probe and the notice both derive from it so they cannot
+// disagree about the supported version.
+const NODE_MAJOR_FLOOR = 22;
 // A hook manifest can be copied into a user-level settings file (issue #399:
 // user-level hooks fire in every project, where a project-relative path may
 // not exist). Guard node invocations so a missing file exits 0 without
 // swallowing node's real exit code when the file is present.
 //
-// The runtime is guarded too (issue #410): a `node` on PATH too old for ESM,
-// or no node at all, kills the hook script while it is still being parsed,
-// before the script's own always-exit-0 contract can run. Nothing written in
-// ESM can report that, the doctor and the sub-commands included, so the command
-// string carries the probe, and no-ops at exit 0 when it fails.
+// The runtime is guarded too (issue #410): a `node` on PATH too old for the
+// hook's ESM syntax dies while hook.mjs is still being parsed, before the
+// script's own always-exit-0 contract can run, so the harness reported a hook
+// error on every edit and every Stop. Nothing written in ESM can report that
+// condition, so the command string itself checks the version floor first, in
+// ES5-only syntax that parses on any node old enough to fail it, and exits 0
+// when the runtime is unsupported or missing.
 //
-// The probe imports `node:fs` rather than `fs` because that is what the hook
-// closure actually imports, and the `node:` scheme needs 14.18: a bare `fs`
-// probe passes on 12 and 13, which then die on the real import. `.catch` with an
-// explicit exit is required, not decoration, because before Node 15 an unhandled
-// rejection is only a warning and the process still exits 0, so a rejected probe
-// would read as a pass. What the probe does NOT do is enforce the engines floor
-// of 22. That is deliberate: it asks whether this runtime can load our code, not
-// whether it is supported, so a 14.18-to-21 runtime that works today keeps
-// working instead of being silently switched off. The notice names 22 because
-// that is the version to install, and it is only ever shown to someone whose
-// runtime already failed the probe.
-//
-// `notice` is the shell that reports the dead runtime to the user, and it is
-// passed in rather than baked in because only some harnesses have a channel for
-// it. Checked against each harness's hook reference, on the events we hook:
-//
-//   Claude Code  PostToolUse + Stop: `systemMessage` is a universal field shown
-//                to the user, parsed on exit 0.                    -> notice
-//   Codex        PostToolUse + Stop: `systemMessage` is documented as text shown
-//                as a warning in the UI or event stream.            -> notice
-//   Cursor       preToolUse: output is permission-shaped, and its `user_message`
-//                is shown only when the action is DENIED. Warning would mean
-//                blocking the edit, which is worse than silence.    -> probe only
-//   Grok Build   PostToolUse + Stop are passive events: stdout is ignored
-//                outright, so a notice cannot reach anyone.         -> probe only
-//   Copilot      postToolUse: output contract not confirmed. Silence is the
-//                conservative read; do not guess a shape.           -> probe only
-//
-// A harness with no channel still gets the probe, so an unsupported runtime stays
-// as quiet there as it was before the probe existed.
+// `notice` reports the dead runtime to the user. It is passed per harness
+// because only some have a channel for it, checked against each harness's own
+// hook reference on the events we hook:
+//   Claude Code / Codex: `systemMessage` on stdout is shown to the user -> notice
+//   Cursor: preToolUse output is permission-shaped and its `user_message`
+//     renders only on DENY, so warning would block the edit    -> probe only
+//   Grok Build: PostToolUse/Stop stdout is ignored outright    -> probe only
+//   Copilot: output contract unconfirmed; do not guess a shape -> probe only
+const NODE_PROBE = `node -e "process.exit(parseInt(process.versions.node,10)>=${NODE_MAJOR_FLOOR}?0:1)" 2>/dev/null`;
 const guardedNode = (hookPath, notice = '') => {
   const probe = notice
-    ? `! { node -e "import('node:fs').catch(()=>process.exit(1))" 2>/dev/null || { ${notice}; exit 0; }; }`
-    : `! node -e "import('node:fs').catch(()=>process.exit(1))" 2>/dev/null`;
+    ? `! { ${NODE_PROBE} || { ${notice}; exit 0; }; }`
+    : `! ${NODE_PROBE}`;
   return `[ ! -f "${hookPath}" ] || ${probe} || node "${hookPath}"`;
 };
-// The message says `on PATH` deliberately: the common cause is a hook shell whose
-// PATH misses the version manager, so a user already running Node 22 needs to know
-// the hook's PATH is at issue and not their install. Apostrophes cannot appear in
-// it, since it travels inside a single-quoted shell string. The marker under
-// ~/.impeccable holds it to one notice per machine rather than one per edit.
-const NODE_NOTICE_TEXT = 'The impeccable design hook is not running: no Node 22 or newer on PATH. '
+// The message says `on PATH` deliberately: the common cause is a hook shell
+// whose PATH misses the version manager, so a user already running Node 22
+// needs to know the hook's PATH is at issue and not their install. Apostrophes
+// cannot appear in it, since it travels inside a single-quoted shell string.
+const NODE_NOTICE_TEXT = `The impeccable design hook is not running: no Node ${NODE_MAJOR_FLOOR} or newer on PATH. `
   + 'Install one, or remove the impeccable hook from your harness settings.';
 // Claude Code and Codex both read `systemMessage`, so one payload serves both.
-// The marker is per machine, not per harness: a machine running both should be
-// told once, not once each.
+// The marker under ~/.impeccable holds it to one notice per machine (not per
+// harness or per edit), and printf runs only after the marker write succeeds,
+// so an unwritable HOME degrades to silence rather than a notice on every edit.
 const SYSTEM_MESSAGE_NOTICE = 'D="$HOME/.impeccable"; [ -f "$D/node-unsupported" ] || '
   + '{ mkdir -p "$D" 2>/dev/null && : > "$D/node-unsupported" 2>/dev/null && '
   + `printf '%s' '{"systemMessage":"${NODE_NOTICE_TEXT}"}'; }`;
