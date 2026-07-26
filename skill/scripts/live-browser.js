@@ -6490,10 +6490,12 @@
           // The deterministic accept has already committed the reviewed DOM
           // and fenced generation. Carbonize may continue in the background;
           // it must not hold the foreground picker hostage.
-          // Any agent_done naming the awaited id post-accept is accept-side
-          // work reporting back (accept ack or carbonize), so the awaited
-          // failure window closes here too.
-          if (awaitingAcceptResult?.id && msg.id === awaitingAcceptResult.id) awaitingAcceptResult = null;
+          // Only a carbonize agent_done is provably accept-side: accept
+          // unlocks at the first variant, so a late generation agent_done
+          // for the same session id can still arrive after Accept and must
+          // not close the awaited failure window early (the SSE broadcast
+          // carries no sourceEventType to tell the two apart).
+          if (msg.data?.carbonize === true && awaitingAcceptResult?.id && msg.id === awaitingAcceptResult.id) awaitingAcceptResult = null;
           if (msg.data?.carbonize === true && maybeCompleteAcceptedSession(msg)) break;
           break;
         case 'discarded':
@@ -6518,7 +6520,12 @@
           if (awaitingAcceptResult?.id && msg.id === awaitingAcceptResult.id) {
             awaitingAcceptResult = null;
             console.error('[impeccable] Accept failed after teardown:', msg.message);
-            showToast('Accept failed: ' + msg.message + ' The variant was not saved; pick the element and generate again.', 8000);
+            // Hedged on purpose: a carbonize-phase failure raises this same
+            // error after the source WAS promoted, so "was not saved" would
+            // overclaim. Normalize the server message's terminal punctuation
+            // so the two sentences don't run together.
+            const acceptFailDetail = String(msg.message || 'unknown error').trim().replace(/[.!?]?$/, '.');
+            showToast('Accept failed: ' + acceptFailDetail + ' The variant may not have been saved. If the change is missing, pick the element and generate again.', 8000);
             break;
           }
           if (maybeCompleteSteer(msg)) break;

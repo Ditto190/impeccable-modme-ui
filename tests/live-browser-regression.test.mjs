@@ -318,8 +318,18 @@ describe('live-browser.js regression guards', () => {
     assert.ok(errorCase, 'expected an SSE case \'error\' handler in live-browser.js');
     assert.match(
       errorCase[0],
-      /if \(awaitingAcceptResult\?\.id && msg\.id === awaitingAcceptResult\.id\) \{[\s\S]{0,400}?awaitingAcceptResult = null;[\s\S]{0,400}?not saved[\s\S]{0,200}?break;/,
-      'an error naming the awaited accept must clear the marker and tell the user the variant was not saved',
+      /if \(awaitingAcceptResult\?\.id && msg\.id === awaitingAcceptResult\.id\) \{[\s\S]{0,700}?awaitingAcceptResult = null;[\s\S]{0,700}?may not have been saved[\s\S]{0,300}?break;/,
+      'an error naming the awaited accept must clear the marker and warn that the variant may not have been saved (hedged: a carbonize-phase failure fires this after the source WAS promoted)',
+    );
+    // Accept unlocks at the first variant, so a late generation agent_done
+    // for the same session id can arrive after Accept; only a carbonize
+    // agent_done is provably accept-side and may close the window.
+    const agentDoneCase = SOURCE.match(/case 'agent_done':[\s\S]{0,1200}?break;/);
+    assert.ok(agentDoneCase, 'expected an SSE case \'agent_done\' handler in live-browser.js');
+    assert.match(
+      agentDoneCase[0],
+      /msg\.data\?\.carbonize === true && awaitingAcceptResult\?\.id && msg\.id === awaitingAcceptResult\.id/,
+      'agent_done must only release the awaited accept marker for carbonize completions, or a late generation agent_done reopens the #384 hole',
     );
     const cleanupFn = SOURCE.match(/function cleanupAcceptedSession\(\) \{[\s\S]{0,1200}?\n  \}/);
     assert.ok(cleanupFn, 'expected cleanupAcceptedSession in live-browser.js');
