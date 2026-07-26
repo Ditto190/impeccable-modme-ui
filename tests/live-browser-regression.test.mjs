@@ -298,6 +298,38 @@ describe('live-browser.js regression guards', () => {
     );
   });
 
+  it('a late accept failure is recognized after the optimistic teardown (#384)', () => {
+    // Accept is optimistic: POST /events acknowledging the intent schedules
+    // cleanupAcceptedSession(), which nulls pendingAcceptedSession before
+    // live-accept.mjs has actually run. When the accept later fails (missing
+    // markers, preview error, receipt conflict, source_locked), the SSE
+    // 'error' guard keyed on pendingAcceptedSession could no longer match,
+    // so the user got only the generic error toast with no hint that their
+    // variant was never written. An awaitingAcceptResult id must be set on
+    // the optimistic success path, survive cleanupAcceptedSession, be
+    // matched in the 'error' case with an explicit not-saved message, and
+    // be released when the real accept result arrives.
+    assert.match(
+      SOURCE,
+      /awaitingAcceptResult = \{ id: acceptedSessionId \};[\s\S]{0,400}?scheduleAcceptCleanup\(pending\);/,
+      'the optimistic POST-success path must record awaitingAcceptResult before scheduling the teardown',
+    );
+    const errorCase = SOURCE.match(/case 'error':[\s\S]{0,2600}?setLiveState\('PICKING'\);\s*break;/);
+    assert.ok(errorCase, 'expected an SSE case \'error\' handler in live-browser.js');
+    assert.match(
+      errorCase[0],
+      /if \(awaitingAcceptResult\?\.id && msg\.id === awaitingAcceptResult\.id\) \{[\s\S]{0,400}?awaitingAcceptResult = null;[\s\S]{0,400}?not saved[\s\S]{0,200}?break;/,
+      'an error naming the awaited accept must clear the marker and tell the user the variant was not saved',
+    );
+    const cleanupFn = SOURCE.match(/function cleanupAcceptedSession\(\) \{[\s\S]{0,1200}?\n  \}/);
+    assert.ok(cleanupFn, 'expected cleanupAcceptedSession in live-browser.js');
+    assert.doesNotMatch(
+      cleanupFn[0],
+      /awaitingAcceptResult\s*=/,
+      'cleanupAcceptedSession must not clear awaitingAcceptResult - surviving the teardown is the point',
+    );
+  });
+
   it('handleServerLost preserves the current recoverable phase', () => {
     assert.doesNotMatch(
       SOURCE,

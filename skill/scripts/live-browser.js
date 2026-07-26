@@ -175,6 +175,14 @@
   let pickedAnchorViewportTop = null;
   let pendingVariantAnchorRetryObserver = null;
   let pendingAcceptedSession = null;
+  // Survives cleanupAcceptedSession on purpose: the id of an accept whose
+  // POST was acknowledged (intent durable, epoch fenced) but whose actual
+  // source promotion hasn't reported back yet. Accept is optimistic, so the
+  // teardown nulls pendingAcceptedSession long before live-accept.mjs runs;
+  // this marker is what lets the SSE 'error' branch still recognize a late
+  // accept failure and say the variant was not saved (issue #384). Released
+  // when the real accept result arrives or a new session starts.
+  let awaitingAcceptResult = null;
   let variantObserver = null;
   let variantSelectionInFlight = false;
   let variantSelectionPromise = null;
@@ -6474,12 +6482,18 @@
           break;
         case 'complete':
         case 'accept':
+          // The real accept result arrived: the awaited failure window closed.
+          if (awaitingAcceptResult?.id && msg.id === awaitingAcceptResult.id) awaitingAcceptResult = null;
           if (maybeCompleteAcceptedSession(msg)) break;
           break;
         case 'agent_done':
           // The deterministic accept has already committed the reviewed DOM
           // and fenced generation. Carbonize may continue in the background;
           // it must not hold the foreground picker hostage.
+          // Any agent_done naming the awaited id post-accept is accept-side
+          // work reporting back (accept ack or carbonize), so the awaited
+          // failure window closes here too.
+          if (awaitingAcceptResult?.id && msg.id === awaitingAcceptResult.id) awaitingAcceptResult = null;
           if (msg.data?.carbonize === true && maybeCompleteAcceptedSession(msg)) break;
           break;
         case 'discarded':
@@ -6491,9 +6505,20 @@
         case 'error':
           if (pendingAcceptedSession?.id && msg.id === pendingAcceptedSession.id) {
             pendingAcceptedSession = null;
+            awaitingAcceptResult = null;
             setLiveState('CYCLING');
             updateBarContent('cycling');
             showToast('Could not complete accept cleanup. Try Accept again.', 5000);
+            break;
+          }
+          // The optimistic teardown already released the session, so the
+          // CYCLING recovery above can no longer match; without this branch
+          // the failure fell through to the generic toast and the user had
+          // no hint their variant was never written (issue #384).
+          if (awaitingAcceptResult?.id && msg.id === awaitingAcceptResult.id) {
+            awaitingAcceptResult = null;
+            console.error('[impeccable] Accept failed after teardown:', msg.message);
+            showToast('Accept failed: ' + msg.message + ' The variant was not saved; pick the element and generate again.', 8000);
             break;
           }
           if (maybeCompleteSteer(msg)) break;
@@ -6958,6 +6983,9 @@
     stripManualEditRuntimeState(selectedElement);
 
     pendingAcceptedSession = null;
+    // A new session supersedes any accept still awaiting its result; a late
+    // failure toast for the previous session would only mislead here.
+    awaitingAcceptResult = null;
     currentSessionId = id8();
     expectedVariants = selectedCount;
     arrivedVariants = 0;
@@ -7037,6 +7065,9 @@
 
     stopVoice({ suppressSubmit: true });
     pendingAcceptedSession = null;
+    // A new session supersedes any accept still awaiting its result; a late
+    // failure toast for the previous session would only mislead here.
+    awaitingAcceptResult = null;
     currentSessionId = id8();
     expectedVariants = selectedCount;
     arrivedVariants = 0;
@@ -7868,6 +7899,7 @@ void main() {
         markSessionHandled();
         setLiveState('CONFIRMED');
         document.documentElement.dataset.impeccableAcceptToPickingMs = String(Date.now() - acceptPayload.clientSentAt);
+        awaitingAcceptResult = { id: acceptedSessionId };
         scheduleAcceptCleanup(pending);
       })
       .catch(() => {

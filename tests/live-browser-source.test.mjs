@@ -320,7 +320,7 @@ describe('live-browser source contracts', () => {
     );
     assert.match(
       SOURCE,
-      /case 'complete':\s*case 'accept':\s*if \(maybeCompleteAcceptedSession\(msg\)\) break;/,
+      /case 'complete':\s*case 'accept':[\s\S]{0,400}?if \(maybeCompleteAcceptedSession\(msg\)\) break;/,
       'final accepted DOM cleanup should be driven by explicit complete or harness accept replies',
     );
     assert.match(
@@ -340,8 +340,8 @@ describe('live-browser source contracts', () => {
     assert.match(agentDoneSource, /maybeCompleteAcceptedSession\(msg\)/);
     assert.match(
       SOURCE,
-      /function handleGo\(\)[\s\S]{0,900}?pendingAcceptedSession = null;[\s\S]{0,80}?currentSessionId = id8\(\);/,
-      'starting a new generation should clear any stale accepted-session sentinel first',
+      /function handleGo\(\)[\s\S]{0,900}?pendingAcceptedSession = null;[\s\S]{0,400}?awaitingAcceptResult = null;[\s\S]{0,120}?currentSessionId = id8\(\);/,
+      'starting a new generation should clear any stale accepted-session sentinel (and the awaited accept-result marker, #384) first',
     );
     const handleAcceptStart = SOURCE.indexOf('function handleAccept()');
     const maybeCompleteStart = SOURCE.indexOf('function maybeCompleteAcceptedSession', handleAcceptStart);
