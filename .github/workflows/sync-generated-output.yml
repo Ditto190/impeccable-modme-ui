@@ -80,18 +80,42 @@ jobs:
       - name: Commit generated output
         if: steps.drift.outputs.changed == 'true'
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add $GENERATED_PATHS
-          git commit -m "Sync generated provider output"
 
-          git fetch origin main
-          if ! git merge-base --is-ancestor origin/main HEAD; then
-            echo "::error::main advanced while generated output was building; rerun this workflow on the latest main."
-            exit 1
-          fi
+          # A push can lose the race against a human commit landing on main
+          # during the ~30s build window (issue #388: ~10% of runs). Instead
+          # of aborting and waiting for an unrelated push to re-trigger the
+          # sync, re-sync to the latest main, rebuild against the current
+          # source, and push again, with backoff. Every attempt builds from
+          # a fresh origin/main, so pushed output always matches the source
+          # state it lands on.
+          for attempt in 1 2 3 4 5; do
+            git add $GENERATED_PATHS
+            if git diff --cached --quiet; then
+              # The race that beat us was another sync (or the rebuilt output
+              # matches the new main); nothing left to push.
+              echo "No generated output drift after rebuild (attempt $attempt); nothing to push."
+              exit 0
+            fi
+            git commit -m "Sync generated provider output"
 
-          git push origin HEAD:main
+            git fetch origin main
+            if git merge-base --is-ancestor origin/main HEAD && git push origin HEAD:main; then
+              echo "Pushed generated output on attempt $attempt."
+              exit 0
+            fi
+
+            echo "main advanced during attempt $attempt; re-syncing and rebuilding."
+            git reset --hard origin/main
+            bun install --frozen-lockfile
+            bun run build:release
+            sleep $((attempt * 5))
+          done
+
+          echo "::error::main kept advancing through 5 sync attempts; rerun this workflow on the latest main."
+          exit 1
 
       - name: Summarize generated output commit
         if: steps.drift.outputs.changed == 'true'
