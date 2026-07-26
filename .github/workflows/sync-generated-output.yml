@@ -107,14 +107,19 @@ jobs:
               exit 0
             fi
 
-            echo "main advanced during attempt $attempt; re-syncing and rebuilding."
+            # The recovery work is pointless on the final attempt: nothing
+            # would consume the rebuild, and the backoff would only delay
+            # the failure.
+            if [ "$attempt" = 5 ]; then break; fi
+
+            echo "Push did not land on attempt $attempt (main advanced, or the push itself failed); re-syncing and rebuilding."
             git reset --hard origin/main
             bun install --frozen-lockfile
             bun run build:release
             sleep $((attempt * 5))
           done
 
-          echo "::error::main kept advancing through 5 sync attempts; rerun this workflow on the latest main."
+          echo "::error::Could not push generated output after 5 attempts (main kept advancing, or pushes kept failing); rerun this workflow on the latest main."
           exit 1
 
       - name: Summarize generated output commit
