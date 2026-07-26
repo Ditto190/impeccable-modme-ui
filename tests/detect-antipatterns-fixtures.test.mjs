@@ -366,6 +366,42 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     );
   });
 
+  it('named-color-borders: named-color side-tabs are flagged, neutral names pass', async () => {
+    // Regression for issue #359: the static cascade's shorthand color
+    // extraction recognized only 9 named colors, so `border-left: 4px solid
+    // purple` (or any of the other named colors parseAnyColor understands)
+    // lost its color during expansion, defaulted to neutral black, and never
+    // fired side-tab — while the same declaration in a .css file was flagged
+    // by the regex engine. The extraction list is now derived from the same
+    // CSS_NAMED_COLORS table the parser uses, so the two can't drift apart.
+    const f = await detectHtml(path.join(FIXTURES, 'named-color-borders.html'));
+    const sideTabs = f.filter(r => r.antipattern === 'side-tab').map(r => r.snippet).sort();
+    // Six FLAG cases, each with a unique width/radius signature so every
+    // finding attributes to exactly one case (an offsetting miss + false
+    // positive can't cancel out in an aggregate count):
+    //   purple 4px + radius 8 (the issue reproducer), rebeccapurple 5px +
+    //   radius 4 (contains "purple" as a substring — whole-token matching),
+    //   crimson 4px top stripe, bare 3px teal, var() resolving to a named
+    //   color at 6px + radius 4, and a 7px inline style attribute.
+    // The PASS column (neutral named colors at 3-4px, 1px thin, uniform)
+    // must contribute nothing — dimgray/gainsboro/black have to parse AND
+    // read as neutral rather than being dropped as unknown colors, and none
+    // of its shapes can produce any of the signatures below.
+    assert.deepEqual(sideTabs, [
+      'border-left: 3px',
+      'border-left: 4px + border-radius: 8px',
+      'border-left: 5px + border-radius: 4px',
+      'border-left: 6px + border-radius: 4px',
+      'border-left: 7px',
+      'border-top: 4px',
+    ]);
+    const borderAccent = f.filter(r => r.antipattern === 'border-accent-on-rounded');
+    assert.equal(
+      borderAccent.length, 0,
+      `expected 0 border-accent-on-rounded, got ${borderAccent.length}: ${borderAccent.map(r => r.snippet).join('; ')}`
+    );
+  });
+
   it('modern-color-borders: regex fallback skips neutral 1px oklch dividers', () => {
     const css = `
       .flag-side-tab {
