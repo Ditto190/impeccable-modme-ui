@@ -1162,9 +1162,21 @@ function copyProviderSkills(bundleDir, root, targets, { scope } = {}) {
       // location OpenCode never reads. Now that the real copy sits in the
       // config dir, drop exactly the skills just written from the stranded
       // location; sibling skills and everything else in ~/.opencode stay.
+      // Guards (both flagged in review): a symlinked skills dir is shared
+      // storage whose target must not be emptied through the link, the
+      // just-written dir must be compared by realpath rather than string,
+      // and a home-rooted repo makes `.opencode/skills` a live
+      // project-scope install rather than a stranded global one.
       if (scope === 'user' && provider === '.opencode') {
         const legacyDir = join(root, '.opencode', 'skills');
-        if (legacyDir !== localSkillsDir && existsSync(legacyDir)) {
+        let migratable = false;
+        try {
+          migratable = existsSync(legacyDir)
+            && !lstatSync(legacyDir).isSymbolicLink()
+            && realpathSync(legacyDir) !== realpathSync(localSkillsDir)
+            && !existsSync(join(root, '.git'));
+        } catch { migratable = false; }
+        if (migratable) {
           for (const skill of readdirSync(srcDir, { withFileTypes: true })) {
             if (!skill.isDirectory()) continue;
             rmSync(join(legacyDir, skill.name), { recursive: true, force: true });
