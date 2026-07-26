@@ -27,7 +27,7 @@ Run comprehensive checks across 5 dimensions. Score each dimension 0-4 using the
 - **Layout thrashing**: Reading/writing layout properties in loops
 - **Expensive animations**: Casual layout-property animation, unbounded blur/filter/shadow effects, or effects that visibly drop frames
 - **Missing optimization**: Images without lazy loading, unoptimized assets
-- **will-change overuse**: `will-change` applied broadly or left on at rest (it is a targeted hint for known expensive animations, not a baseline requirement; see optimize.md)
+- **will-change overuse**: `will-change` applied broadly or left on at rest (it is a targeted hint for known expensive animations, not a baseline requirement)
 - **Bundle size**: Unnecessary imports, unused dependencies
 - **Render performance**: Unnecessary re-renders, missing memoization
 
