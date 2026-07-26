@@ -39,7 +39,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(scratch, { recursive: true, force: true });
+  // These tests run real git subprocesses in the scratch dir; on Node 22 a
+  // recursive delete can race git's object writes and fail the whole test
+  // with ENOTEMPTY (seen in CI). maxRetries/retryDelay make rmSync retry
+  // exactly those transient errors.
+  fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 function write(rel, body) {
