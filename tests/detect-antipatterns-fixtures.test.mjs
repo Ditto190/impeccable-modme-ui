@@ -86,6 +86,74 @@ describe('detectText - Astro structural CSS fixtures', () => {
   });
 });
 
+describe('detectText — pseudo-element stripe fixtures (issue #394)', () => {
+  // The side-tab silhouette drawn as an absolutely-positioned ::before/::after
+  // bar instead of a border. The scanner already ran on full HTML pages via
+  // checkHtmlPatterns; these pin the standalone-stylesheet and component
+  // style-block paths, which used to pass this construction clean.
+  const SHOULD_FLAG = [
+    'Inset Shorthand Left Edge',
+    'Longhand Left Edge',
+    'Bottom Edge',
+    'Full Height Right Edge',
+  ];
+  const SHOULD_PASS = [
+    'Neutral Divider',
+    'Wide Panel',
+    'Static Underline',
+    'Hairline Divider',
+    'Hover Underline',
+    'Floating Badge',
+    // Commented-out CSS is not a live rule.
+    'Commented Out Stripe',
+  ];
+
+  // The 1-based line a case's selector sits on in a fixture file, so the
+  // reported finding line can be checked against the actual source.
+  const selectorLine = (source, caseName) => {
+    const idx = source.split('\n').findIndex(l => l.includes(`data-case="${caseName}"`));
+    assert.notEqual(idx, -1, `fixture is missing case "${caseName}"`);
+    return idx + 1;
+  };
+
+  it('standalone .css files flag chromatic pseudo-element stripes only', () => {
+    const filePath = path.join(FIXTURES, 'pseudo-stripe.css');
+    const source = fs.readFileSync(filePath, 'utf8');
+    const findings = detectText(source, filePath).filter(r => r.antipattern === 'side-tab');
+    const snippets = findings.map(r => r.snippet || '').join(' | ');
+    for (const heading of SHOULD_FLAG) {
+      assert.match(snippets, new RegExp(`data-case=${JSON.stringify(heading)}`), `expected "${heading}" to flag`);
+    }
+    for (const heading of SHOULD_PASS) {
+      assert.doesNotMatch(snippets, new RegExp(`data-case=${JSON.stringify(heading)}`), `"${heading}" should pass`);
+    }
+    // Every finding must carry the selector's real source line, so
+    // line-scoped inline ignores (impeccable-disable-line and
+    // impeccable-disable-next-line) can match it.
+    for (const f of findings) {
+      const caseName = (f.snippet.match(/data-case="([^"]+)"/) || [])[1];
+      assert.equal(
+        f.line, selectorLine(source, caseName),
+        `finding for "${caseName}" reports line ${f.line}, selector sits on line ${selectorLine(source, caseName)}`,
+      );
+    }
+  });
+
+  it('component style blocks flag pseudo-element stripes at their source line', () => {
+    const filePath = path.join(FIXTURES, 'pseudo-stripe.vue');
+    const source = fs.readFileSync(filePath, 'utf8');
+    const findings = detectText(source, filePath).filter(r => r.antipattern === 'side-tab');
+    const snippets = findings.map(r => r.snippet || '').join(' | ');
+    assert.match(snippets, /data-case="Component Left Edge"/, 'expected the component stripe to flag');
+    assert.doesNotMatch(snippets, /data-case="Component Neutral Divider"/, 'neutral divider should pass');
+    const stripe = findings.find(r => /data-case="Component Left Edge"/.test(r.snippet || ''));
+    assert.equal(
+      stripe.line, selectorLine(source, 'Component Left Edge'),
+      'style-block finding must map back to the whole-file line, not the block-local one',
+    );
+  });
+});
+
 describe('detectHtml — static HTML/CSS fixtures', () => {
   it('should-flag: catches border anti-patterns', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'should-flag.html'));
