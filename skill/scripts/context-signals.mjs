@@ -104,31 +104,40 @@ function gitSignals(cwd) {
     const i = ref ? ref.indexOf('/') : -1;
     return i > 0 ? { name: ref.slice(i + 1), rev: ref } : null;
   };
-  const upstream = splitRemoteRef(run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']));
-  const remoteHead = splitRemoteRef(run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']));
+  // A slashless @{u} is a LOCAL upstream (branch.<x>.remote = "."); it names
+  // a merge target just as validly as a remote-tracking ref does.
+  const asUpstream = (ref) => splitRemoteRef(ref) || (ref ? { name: ref, rev: ref } : null);
   const conventional = ['develop', 'main', 'master'];
-  const candidates = [];
-  const seen = new Set();
-  const addCandidate = (name, revs) => {
-    if (!name || name === branch || seen.has(name)) return;
-    seen.add(name);
-    candidates.push({ name, revs });
-  };
-  // The upstream tracks the actual merge target, so its remote rev wins over
-  // a possibly stale local branch of the same name.
-  if (upstream) addCandidate(upstream.name, [upstream.rev]);
-  if (remoteHead) addCandidate(remoteHead.name, [remoteHead.name, remoteHead.rev]);
-  if (!conventional.includes(branch)) {
-    for (const name of conventional) addCandidate(name, [name, `origin/${name}`]);
-  }
+  // On an integration branch itself the scope hint is the working tree. No
+  // signal may override that: an origin/HEAD or upstream naming a DIFFERENT
+  // integration branch (sitting on develop while the remote default is
+  // main) would produce exactly the integration-vs-integration divergence
+  // this detection exists to prevent.
+  const onIntegrationBranch = conventional.includes(branch);
   let base = null;
   let baseRev = null;
-  for (const c of candidates) {
-    const rev = c.revs.find((r) => run(['rev-parse', '--verify', '--quiet', r]) !== null);
-    if (rev) {
-      base = c.name;
-      baseRev = rev;
-      break;
+  if (!onIntegrationBranch) {
+    const upstream = asUpstream(run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']));
+    const remoteHead = splitRemoteRef(run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']));
+    const candidates = [];
+    const seen = new Set();
+    const addCandidate = (name, revs) => {
+      if (!name || name === branch || seen.has(name)) return;
+      seen.add(name);
+      candidates.push({ name, revs });
+    };
+    // The upstream tracks the actual merge target, so its own rev wins over
+    // a possibly stale local branch of the same name.
+    if (upstream) addCandidate(upstream.name, [upstream.rev]);
+    if (remoteHead) addCandidate(remoteHead.name, [remoteHead.name, remoteHead.rev]);
+    for (const name of conventional) addCandidate(name, [name, `origin/${name}`]);
+    for (const c of candidates) {
+      const rev = c.revs.find((r) => run(['rev-parse', '--verify', '--quiet', r]) !== null);
+      if (rev) {
+        base = c.name;
+        baseRev = rev;
+        break;
+      }
     }
   }
   const diffBase = base && branch && branch !== base ? base : null;

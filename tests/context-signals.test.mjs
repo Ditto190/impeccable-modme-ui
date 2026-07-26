@@ -309,6 +309,48 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
   });
 
+  it('remote signals cannot bypass the integration-branch guard (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('branch', '-q', 'develop');
+    git('checkout', '-q', 'develop');
+    // The remote default is main; sitting on develop must still not produce
+    // a develop-vs-main integration diff via the origin/HEAD signal.
+    git('update-ref', 'refs/remotes/origin/main', 'main');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    write('src/App.tsx', 'export default 2;\n'); // dirty on develop
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, null);
+    assert.deepEqual(s.git.changedFiles, ['src/App.tsx']);
+  });
+
+  it('honors a local (slashless) upstream branch (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'canary');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('checkout', '-q', '-b', 'feature/u');
+    git('branch', '-q', '--set-upstream-to=canary'); // local upstream, no remote
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    // canary is neither conventional nor remote, but the configured
+    // upstream names it as the merge target.
+    assert.equal(s.git.base, 'canary');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
   it('never diffs one integration branch against another (#302)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
