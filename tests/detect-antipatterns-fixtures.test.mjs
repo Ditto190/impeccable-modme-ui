@@ -86,6 +86,49 @@ describe('detectText - Astro structural CSS fixtures', () => {
   });
 });
 
+describe('detectText — pseudo-element stripe fixtures (issue #394)', () => {
+  // The side-tab silhouette drawn as an absolutely-positioned ::before/::after
+  // bar instead of a border. The scanner already ran on full HTML pages via
+  // checkHtmlPatterns; these pin the standalone-stylesheet and component
+  // style-block paths, which used to pass this construction clean.
+  const SHOULD_FLAG = [
+    'Inset Shorthand Left Edge',
+    'Longhand Left Edge',
+    'Bottom Edge',
+    'Full Height Right Edge',
+  ];
+  const SHOULD_PASS = [
+    'Neutral Divider',
+    'Wide Panel',
+    'Static Underline',
+    'Hairline Divider',
+    'Hover Underline',
+    'Floating Badge',
+  ];
+
+  it('standalone .css files flag chromatic pseudo-element stripes only', () => {
+    const filePath = path.join(FIXTURES, 'pseudo-stripe.css');
+    const source = fs.readFileSync(filePath, 'utf8');
+    const findings = detectText(source, filePath).filter(r => r.antipattern === 'side-tab');
+    const snippets = findings.map(r => r.snippet || '').join(' | ');
+    for (const heading of SHOULD_FLAG) {
+      assert.match(snippets, new RegExp(`data-case=${JSON.stringify(heading)}`), `expected "${heading}" to flag`);
+    }
+    for (const heading of SHOULD_PASS) {
+      assert.doesNotMatch(snippets, new RegExp(`data-case=${JSON.stringify(heading)}`), `"${heading}" should pass`);
+    }
+  });
+
+  it('component style blocks flag pseudo-element stripes', () => {
+    const filePath = path.join(FIXTURES, 'pseudo-stripe.vue');
+    const source = fs.readFileSync(filePath, 'utf8');
+    const findings = detectText(source, filePath).filter(r => r.antipattern === 'side-tab');
+    const snippets = findings.map(r => r.snippet || '').join(' | ');
+    assert.match(snippets, /data-case="Component Left Edge"/, 'expected the component stripe to flag');
+    assert.doesNotMatch(snippets, /data-case="Component Neutral Divider"/, 'neutral divider should pass');
+  });
+});
+
 describe('detectHtml — static HTML/CSS fixtures', () => {
   it('should-flag: catches border anti-patterns', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'should-flag.html'));
