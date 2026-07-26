@@ -884,6 +884,145 @@ describe('skills install/update: local universal bundle e2e', () => {
     rmSync(home, { recursive: true, force: true });
   }, 15000);
 
+  // OpenCode reads global skills from its config directory, not ~/.opencode:
+  // $OPENCODE_CONFIG_DIR/skills, else $XDG_CONFIG_HOME/opencode/skills, else
+  // ~/.config/opencode/skills. Writing to ~/.opencode/skills produced an
+  // install `opencode debug skill` never saw (#406).
+  test('global install writes OpenCode skills to ~/.config/opencode/skills (#406)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-test-scope-user-oc-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-home-scope-user-oc-'));
+    execSync('git init', { cwd: tmp });
+    mkdirSync(join(home, '.opencode'), { recursive: true });
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.opencode']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    delete env.OPENCODE_CONFIG_DIR;
+    delete env.XDG_CONFIG_HOME;
+
+    const output = run('skills install -y --scope=global --no-hooks', { cwd: tmp, env });
+
+    expect(output).toContain('Installed impeccable into: .opencode (global)');
+    expect(existsSync(join(home, '.config', 'opencode', 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(home, '.opencode', 'skills', 'impeccable'))).toBe(false);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
+
+  test('OpenCode global dir honors OPENCODE_CONFIG_DIR and XDG_CONFIG_HOME (#406)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-test-oc-env-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-home-oc-env-'));
+    execSync('git init', { cwd: tmp });
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.opencode']);
+    const baseEnv = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    delete baseEnv.OPENCODE_CONFIG_DIR;
+    delete baseEnv.XDG_CONFIG_HOME;
+
+    run('skills install -y --providers=opencode --scope=global --no-hooks', {
+      cwd: tmp,
+      env: { ...baseEnv, OPENCODE_CONFIG_DIR: join(home, 'occfg') },
+    });
+    expect(existsSync(join(home, 'occfg', 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
+
+    run('skills install -y --providers=opencode --scope=global --no-hooks', {
+      cwd: tmp,
+      env: { ...baseEnv, XDG_CONFIG_HOME: join(home, 'xdg') },
+    });
+    expect(existsSync(join(home, 'xdg', 'opencode', 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(home, '.opencode', 'skills', 'impeccable'))).toBe(false);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }, 20000);
+
+  test('global OpenCode install migrates a legacy ~/.opencode/skills copy, sparing siblings (#406)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-test-oc-migrate-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-home-oc-migrate-'));
+    execSync('git init', { cwd: tmp });
+    writeSkill(home, '.opencode', 'impeccable');
+    writeSkill(home, '.opencode', 'unrelated-skill');
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.opencode']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    delete env.OPENCODE_CONFIG_DIR;
+    delete env.XDG_CONFIG_HOME;
+
+    run('skills install -y --providers=opencode --scope=global --no-hooks', { cwd: tmp, env });
+
+    expect(existsSync(join(home, '.config', 'opencode', 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
+    // The stranded legacy copy is gone; the sibling skill is untouched.
+    expect(existsSync(join(home, '.opencode', 'skills', 'impeccable'))).toBe(false);
+    expect(existsSync(join(home, '.opencode', 'skills', 'unrelated-skill', 'SKILL.md'))).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
+
+  test('OpenCode migration never follows a symlinked legacy skills dir (#406)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-test-oc-symlink-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-home-oc-symlink-'));
+    execSync('git init', { cwd: tmp });
+    // Shared skill storage with ~/.opencode/skills symlinked at it. Deleting
+    // "the legacy copy" through the link would destroy the shared original.
+    writeSkill(join(home, '.config'), 'agents', 'impeccable');
+    mkdirSync(join(home, '.opencode'), { recursive: true });
+    symlinkSync(join(home, '.config', 'agents', 'skills'), join(home, '.opencode', 'skills'), 'dir');
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.opencode']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    delete env.OPENCODE_CONFIG_DIR;
+    delete env.XDG_CONFIG_HOME;
+
+    run('skills install -y --providers=opencode --scope=global --no-hooks', { cwd: tmp, env });
+
+    expect(existsSync(join(home, '.config', 'opencode', 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
+    // The shared store behind the symlink is intact, link included.
+    expect(existsSync(join(home, '.config', 'agents', 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
+    expect(lstatSync(join(home, '.opencode', 'skills')).isSymbolicLink()).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
+
+  test('OpenCode migration leaves a home-rooted repo project install alone (#406)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-test-oc-homerepo-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-home-oc-homerepo-'));
+    execSync('git init', { cwd: tmp });
+    // The home dir IS a repo (dotfiles setup): .opencode/skills there is a
+    // live project-scope install, not a stranded pre-#406 global one.
+    execSync('git init', { cwd: home });
+    writeSkill(home, '.opencode', 'impeccable');
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.opencode']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    delete env.OPENCODE_CONFIG_DIR;
+    delete env.XDG_CONFIG_HOME;
+
+    run('skills install -y --providers=opencode --scope=global --no-hooks', { cwd: tmp, env });
+
+    expect(existsSync(join(home, '.config', 'opencode', 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(home, '.opencode', 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
+
+  test('global install detects OpenCode from ~/.config/opencode alone (#406)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-test-oc-detect-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-home-oc-detect-'));
+    execSync('git init', { cwd: tmp });
+    // No ~/.opencode at all; only the config dir marks OpenCode as present.
+    mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.opencode']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    delete env.OPENCODE_CONFIG_DIR;
+    delete env.XDG_CONFIG_HOME;
+
+    const output = run('skills install -y --scope=global --no-hooks', { cwd: tmp, env });
+
+    expect(output).toContain('Installed impeccable into: .opencode (global)');
+    expect(existsSync(join(home, '.config', 'opencode', 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
+
   // Project scope must stay at .pi/skills/ even when the git root IS the home
   // dir (dotfiles repos), where scope can't be inferred from the path alone.
   // An existing global install at ~/.pi/agent/skills must not swallow the

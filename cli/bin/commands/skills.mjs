@@ -9,7 +9,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync, lstatSync, unlinkSync, mkdirSync, writeFileSync, rmSync, renameSync, createWriteStream, realpathSync, symlinkSync, readlinkSync, cpSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, lstatSync, unlinkSync, mkdirSync, writeFileSync, rmSync, rmdirSync, renameSync, createWriteStream, realpathSync, symlinkSync, readlinkSync, cpSync } from 'node:fs';
 import { join, resolve, dirname, relative, isAbsolute, sep } from 'node:path';
 import { createInterface, emitKeypressEvents } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -65,11 +65,23 @@ const PROVIDER_DISPLAY = {
 };
 const PROVIDER_INPUT_ORDER = ['claude', 'codex', 'cursor', 'gemini', 'github', 'grok', 'kiro', 'opencode', 'pi', 'qoder', 'trae', 'trae-cn', 'rovo-dev', 'vibe'];
 
-// Providers whose GLOBAL (home) skills dir is not `<provider>/skills`.
-// Pi discovers global skills from ~/.pi/agent/skills/; project scope
-// stays .pi/skills/. See issue #327.
+// OpenCode reads global skills from its config directory, not ~/.opencode:
+// $OPENCODE_CONFIG_DIR, else $XDG_CONFIG_HOME/opencode, else
+// ~/.config/opencode. Writing to ~/.opencode/skills produced an install
+// `opencode debug skill` never listed. See issue #406.
+function opencodeGlobalConfigDir(home) {
+  if (process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
+  if (process.env.XDG_CONFIG_HOME) return join(process.env.XDG_CONFIG_HOME, 'opencode');
+  return join(home, '.config', 'opencode');
+}
+
+// Providers whose GLOBAL (home) skills dir is not `<provider>/skills`,
+// as a function of the home dir. Pi discovers global skills from
+// ~/.pi/agent/skills/ (issue #327); OpenCode from its config dir (issue
+// #406). Project scope stays `<provider>/skills` for both.
 const HOME_SKILLS_DIR_OVERRIDES = {
-  '.pi': join('.pi', 'agent', 'skills'),
+  '.pi': (home) => join(home, '.pi', 'agent', 'skills'),
+  '.opencode': (home) => join(opencodeGlobalConfigDir(home), 'skills'),
 };
 
 // When a project has no harness folder yet, infer the target from globally
@@ -83,6 +95,9 @@ const GLOBAL_HARNESS_HINTS = [
   { home: '.grok', provider: '.grok' },
   { home: '.kiro', provider: '.kiro' },
   { home: '.opencode', provider: '.opencode' },
+  // OpenCode's real global config dir (issue #406); the ~/.opencode entry
+  // above keeps recognizing machines that only have the legacy dir.
+  { resolve: opencodeGlobalConfigDir, provider: '.opencode' },
   { home: '.pi', provider: '.pi' },
   { home: '.qoder', provider: '.qoder' },
   { home: '.rovodev', provider: '.rovodev' },
@@ -134,7 +149,8 @@ const PROVIDER_HOOK_ARTIFACTS = {
 };
 
 function userProviderSkillsDir(home, provider) {
-  if (HOME_SKILLS_DIR_OVERRIDES[provider]) return join(home, HOME_SKILLS_DIR_OVERRIDES[provider]);
+  const override = HOME_SKILLS_DIR_OVERRIDES[provider];
+  if (override) return override(home);
   return join(home, provider, 'skills');
 }
 
@@ -861,10 +877,15 @@ function collectInstallDetections(root, home = homedir()) {
     });
   }
 
-  for (const { home: h, provider } of GLOBAL_HARNESS_HINTS) {
-    const foundPath = join(home, h);
+  for (const hint of GLOBAL_HARNESS_HINTS) {
+    const { provider } = hint;
+    // A hint is either a fixed dir under home or a resolver for harnesses
+    // whose location depends on the environment (OpenCode's config dir).
+    const foundPath = hint.resolve ? hint.resolve(home) : join(home, hint.home);
     if (!existsSync(foundPath)) continue;
-    const skillProbePaths = userSkillProbePaths(home, h, provider);
+    const skillProbePaths = hint.resolve
+      ? uniquePaths([userProviderSkillsDir(home, provider), join(foundPath, 'skills')])
+      : userSkillProbePaths(home, hint.home, provider);
     detections.push({
       provider,
       scope: 'user',
@@ -1136,6 +1157,32 @@ function copyProviderSkills(bundleDir, root, targets, { scope } = {}) {
         rmSync(dest, { recursive: true, force: true });
         copyDirSync(src, dest);
         written++;
+      }
+      // A pre-#406 global OpenCode install lived at ~/.opencode/skills, a
+      // location OpenCode never reads. Now that the real copy sits in the
+      // config dir, drop exactly the skills just written from the stranded
+      // location; sibling skills and everything else in ~/.opencode stay.
+      // Guards (both flagged in review): a symlinked skills dir is shared
+      // storage whose target must not be emptied through the link, the
+      // just-written dir must be compared by realpath rather than string,
+      // and a home-rooted repo makes `.opencode/skills` a live
+      // project-scope install rather than a stranded global one.
+      if (scope === 'user' && provider === '.opencode') {
+        const legacyDir = join(root, '.opencode', 'skills');
+        let migratable = false;
+        try {
+          migratable = existsSync(legacyDir)
+            && !lstatSync(legacyDir).isSymbolicLink()
+            && realpathSync(legacyDir) !== realpathSync(localSkillsDir)
+            && !existsSync(join(root, '.git'));
+        } catch { migratable = false; }
+        if (migratable) {
+          for (const skill of readdirSync(srcDir, { withFileTypes: true })) {
+            if (!skill.isDirectory()) continue;
+            rmSync(join(legacyDir, skill.name), { recursive: true, force: true });
+          }
+          try { rmdirSync(legacyDir); } catch { /* not empty: siblings stay */ }
+        }
       }
     }
   }
