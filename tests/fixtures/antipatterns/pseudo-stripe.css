@@ -108,3 +108,13 @@
   height: 12px;
   background: #7c3aed;
 }
+
+/* ── PASS: commented-out CSS is not a live rule ──
+.card[data-case="Commented Out Stripe"]::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: #7c3aed;
+}
+*/

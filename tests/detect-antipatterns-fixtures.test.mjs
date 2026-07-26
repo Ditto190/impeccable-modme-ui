@@ -104,7 +104,17 @@ describe('detectText — pseudo-element stripe fixtures (issue #394)', () => {
     'Hairline Divider',
     'Hover Underline',
     'Floating Badge',
+    // Commented-out CSS is not a live rule.
+    'Commented Out Stripe',
   ];
+
+  // The 1-based line a case's selector sits on in a fixture file, so the
+  // reported finding line can be checked against the actual source.
+  const selectorLine = (source, caseName) => {
+    const idx = source.split('\n').findIndex(l => l.includes(`data-case="${caseName}"`));
+    assert.notEqual(idx, -1, `fixture is missing case "${caseName}"`);
+    return idx + 1;
+  };
 
   it('standalone .css files flag chromatic pseudo-element stripes only', () => {
     const filePath = path.join(FIXTURES, 'pseudo-stripe.css');
@@ -117,15 +127,30 @@ describe('detectText — pseudo-element stripe fixtures (issue #394)', () => {
     for (const heading of SHOULD_PASS) {
       assert.doesNotMatch(snippets, new RegExp(`data-case=${JSON.stringify(heading)}`), `"${heading}" should pass`);
     }
+    // Every finding must carry the selector's real source line, so
+    // line-scoped inline ignores (impeccable-disable-line and
+    // impeccable-disable-next-line) can match it.
+    for (const f of findings) {
+      const caseName = (f.snippet.match(/data-case="([^"]+)"/) || [])[1];
+      assert.equal(
+        f.line, selectorLine(source, caseName),
+        `finding for "${caseName}" reports line ${f.line}, selector sits on line ${selectorLine(source, caseName)}`,
+      );
+    }
   });
 
-  it('component style blocks flag pseudo-element stripes', () => {
+  it('component style blocks flag pseudo-element stripes at their source line', () => {
     const filePath = path.join(FIXTURES, 'pseudo-stripe.vue');
     const source = fs.readFileSync(filePath, 'utf8');
     const findings = detectText(source, filePath).filter(r => r.antipattern === 'side-tab');
     const snippets = findings.map(r => r.snippet || '').join(' | ');
     assert.match(snippets, /data-case="Component Left Edge"/, 'expected the component stripe to flag');
     assert.doesNotMatch(snippets, /data-case="Component Neutral Divider"/, 'neutral divider should pass');
+    const stripe = findings.find(r => /data-case="Component Left Edge"/.test(r.snippet || ''));
+    assert.equal(
+      stripe.line, selectorLine(source, 'Component Left Edge'),
+      'style-block finding must map back to the whole-file line, not the block-local one',
+    );
   });
 });
 
