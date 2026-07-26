@@ -5369,6 +5369,7 @@ function checkFirstViewportColumnOverflowDOM() {
 }
 
 export {
+  CSS_NAMED_COLORS,
   checkBorders,
   isEmojiOnlyText,
   checkColors,
