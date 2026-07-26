@@ -96,24 +96,43 @@ function gitSignals(cwd) {
   // are withheld when the current branch IS one of them: sitting on main
   // in a repo that also has develop must not diff the two integration
   // branches against each other.
-  const stripOrigin = (ref) => (ref && ref.startsWith('origin/') ? ref.slice('origin/'.length) : null);
-  const upstreamBase = stripOrigin(run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']));
-  const remoteHeadBase = stripOrigin(run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']));
+  // Candidates carry a display name (what git.base reports) and the revs to
+  // try, in order. A remote ref like `upstream/release` (fork workflows) or
+  // an origin/HEAD target with no local checkout is a perfectly good diff
+  // base, so revs are not limited to local branch names.
+  const splitRemoteRef = (ref) => {
+    const i = ref ? ref.indexOf('/') : -1;
+    return i > 0 ? { name: ref.slice(i + 1), rev: ref } : null;
+  };
+  const upstream = splitRemoteRef(run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']));
+  const remoteHead = splitRemoteRef(run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']));
   const conventional = ['develop', 'main', 'master'];
-  const candidates = new Set([
-    ...[upstreamBase, remoteHeadBase].filter(Boolean),
-    ...(conventional.includes(branch) ? [] : conventional),
-  ]);
+  const candidates = [];
+  const seen = new Set();
+  const addCandidate = (name, revs) => {
+    if (!name || name === branch || seen.has(name)) return;
+    seen.add(name);
+    candidates.push({ name, revs });
+  };
+  // The upstream tracks the actual merge target, so its remote rev wins over
+  // a possibly stale local branch of the same name.
+  if (upstream) addCandidate(upstream.name, [upstream.rev]);
+  if (remoteHead) addCandidate(remoteHead.name, [remoteHead.name, remoteHead.rev]);
+  if (!conventional.includes(branch)) {
+    for (const name of conventional) addCandidate(name, [name, `origin/${name}`]);
+  }
   let base = null;
-  for (const b of candidates) {
-    if (b === branch) continue;
-    if (run(['rev-parse', '--verify', '--quiet', b]) !== null) {
-      base = b;
+  let baseRev = null;
+  for (const c of candidates) {
+    const rev = c.revs.find((r) => run(['rev-parse', '--verify', '--quiet', r]) !== null);
+    if (rev) {
+      base = c.name;
+      baseRev = rev;
       break;
     }
   }
   const diffBase = base && branch && branch !== base ? base : null;
-  const fromDiff = diffBase ? run(['diff', '--name-only', `${diffBase}...HEAD`]) : null;
+  const fromDiff = diffBase ? run(['diff', '--name-only', `${baseRev}...HEAD`]) : null;
   // porcelain lines are `XY PATH`: a 2-char status + a space, then the path.
   // Don't trim the combined output — an unstaged-modified line starts with a
   // leading space (` M path`), and a global trim would eat the first line's

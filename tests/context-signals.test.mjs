@@ -266,6 +266,49 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.git.changedFiles, ['src/App.tsx']);
   });
 
+  it('uses the remote-tracking ref when the base has no local branch (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'develop');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('update-ref', 'refs/remotes/origin/develop', 'HEAD');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/develop');
+    git('checkout', '-q', '-b', 'feature/w');
+    git('branch', '-q', '-D', 'develop'); // remote default exists, local doesn't
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, 'develop');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
+  it('honors an upstream on a non-origin remote (fork workflow) (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'release');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('remote', 'add', 'upstream', '.');
+    git('update-ref', 'refs/remotes/upstream/release', 'HEAD');
+    git('checkout', '-q', '-b', 'feature/v');
+    git('branch', '-q', '--set-upstream-to=upstream/release');
+    git('branch', '-q', '-D', 'release'); // the tracked base lives only on the fork parent
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, 'release');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
   it('never diffs one integration branch against another (#302)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
