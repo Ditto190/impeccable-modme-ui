@@ -309,6 +309,31 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
   });
 
+  it('an existing develop outranks a main-pointing origin/HEAD (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('branch', '-q', 'develop');
+    // Classic git-flow with the platform default never flipped off main.
+    git('update-ref', 'refs/remotes/origin/main', 'main');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    git('checkout', '-q', 'develop');
+    git('checkout', '-q', '-b', 'feature/g');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    // Features merge to develop here; picking origin/HEAD's main would drag
+    // the develop-vs-main divergence into scan targets.
+    assert.equal(s.git.base, 'develop');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
   it('remote signals cannot bypass the integration-branch guard (#302)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });

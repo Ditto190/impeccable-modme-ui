@@ -129,8 +129,13 @@ function gitSignals(cwd) {
     // The upstream tracks the actual merge target, so its own rev wins over
     // a possibly stale local branch of the same name.
     if (upstream) addCandidate(upstream.name, [upstream.rev]);
+    // A develop branch marks a git-flow repo where features merge to develop
+    // even when the platform default (origin/HEAD) was never flipped off
+    // main; an existing develop therefore outranks the remote default. This
+    // is #302's own repro shape, and repos without develop are unaffected.
+    addCandidate('develop', ['develop', 'origin/develop']);
     if (remoteHead) addCandidate(remoteHead.name, [remoteHead.name, remoteHead.rev]);
-    for (const name of conventional) addCandidate(name, [name, `origin/${name}`]);
+    for (const name of ['main', 'master']) addCandidate(name, [name, `origin/${name}`]);
     for (const c of candidates) {
       const rev = c.revs.find((r) => run(['rev-parse', '--verify', '--quiet', r]) !== null);
       if (rev) {
