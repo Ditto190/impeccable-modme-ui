@@ -59,13 +59,23 @@ const CLAUDE_PROJECT_HOOK = '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scr
 // string carries the probe: dynamic import, and no-op at exit 0 when it fails.
 //
 // `notice` is the shell that reports the dead runtime to the user, and it is
-// passed in rather than baked in because the wire format is per harness. Claude
-// Code reads a `systemMessage` field off stdout on exit 0. Codex expects
-// `hookSpecificOutput` and Cursor a permission-shaped payload, so handing either
-// a Claude response gets it discarded or printed raw; until those shapes are
-// confirmed every non-Claude harness takes the probe alone, and an unsupported
-// runtime stays as quiet there as it was before the probe existed. Adding a
-// shape later is one more argument at that harness's call site.
+// passed in rather than baked in because only some harnesses have a channel for
+// it. Checked against each harness's hook reference, on the events we hook:
+//
+//   Claude Code  PostToolUse + Stop: `systemMessage` is a universal field shown
+//                to the user, parsed on exit 0.                    -> notice
+//   Codex        PostToolUse + Stop: `systemMessage` is documented as text shown
+//                as a warning in the UI or event stream.            -> notice
+//   Cursor       preToolUse: output is permission-shaped, and its `user_message`
+//                is shown only when the action is DENIED. Warning would mean
+//                blocking the edit, which is worse than silence.    -> probe only
+//   Grok Build   PostToolUse + Stop are passive events: stdout is ignored
+//                outright, so a notice cannot reach anyone.         -> probe only
+//   Copilot      postToolUse: output contract not confirmed. Silence is the
+//                conservative read; do not guess a shape.           -> probe only
+//
+// A harness with no channel still gets the probe, so an unsupported runtime stays
+// as quiet there as it was before the probe existed.
 const guardedNode = (hookPath, notice = '') => {
   const probe = notice
     ? `! { node -e "import('fs')" 2>/dev/null || { ${notice}; exit 0; }; }`
@@ -77,11 +87,14 @@ const guardedNode = (hookPath, notice = '') => {
 // the hook's PATH is at issue and not their install. Apostrophes cannot appear in
 // it, since it travels inside a single-quoted shell string. The marker under
 // ~/.impeccable holds it to one notice per machine rather than one per edit.
-const CLAUDE_NODE_NOTICE_TEXT = 'The impeccable design hook is not running: no Node 22 or newer on PATH. '
+const NODE_NOTICE_TEXT = 'The impeccable design hook is not running: no Node 22 or newer on PATH. '
   + 'Install one, or remove the impeccable hook from your harness settings.';
-const CLAUDE_NODE_NOTICE = 'D="$HOME/.impeccable"; [ -f "$D/node-unsupported" ] || '
+// Claude Code and Codex both read `systemMessage`, so one payload serves both.
+// The marker is per machine, not per harness: a machine running both should be
+// told once, not once each.
+const SYSTEM_MESSAGE_NOTICE = 'D="$HOME/.impeccable"; [ -f "$D/node-unsupported" ] || '
   + '{ mkdir -p "$D" 2>/dev/null && : > "$D/node-unsupported" 2>/dev/null && '
-  + `printf '%s' '{"systemMessage":"${CLAUDE_NODE_NOTICE_TEXT}"}'; }`;
+  + `printf '%s' '{"systemMessage":"${NODE_NOTICE_TEXT}"}'; }`;
 const CLAUDE_PLUGIN_HOOK = '${CLAUDE_PLUGIN_ROOT}/skills/impeccable/scripts/hook.mjs';
 const CODEX_PLUGIN_HOOK = '${PLUGIN_ROOT}/skills/impeccable/scripts/hook.mjs';
 // Codex reads project hooks from `.codex/hooks.json`, but the skill payload the
@@ -107,14 +120,14 @@ export function buildClaudeSettingsManifest() {
           hooks: [
             {
               type: 'command',
-              command: guardedNode(CLAUDE_PROJECT_HOOK, CLAUDE_NODE_NOTICE),
+              command: guardedNode(CLAUDE_PROJECT_HOOK, SYSTEM_MESSAGE_NOTICE),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(guardedNode(CLAUDE_PROJECT_HOOK, CLAUDE_NODE_NOTICE))],
+      Stop: [stopEntry(guardedNode(CLAUDE_PROJECT_HOOK, SYSTEM_MESSAGE_NOTICE))],
     },
   };
 }
@@ -134,14 +147,14 @@ export function buildClaudePluginHooksManifest() {
           hooks: [
             {
               type: 'command',
-              command: guardedNode(CLAUDE_PLUGIN_HOOK, CLAUDE_NODE_NOTICE),
+              command: guardedNode(CLAUDE_PLUGIN_HOOK, SYSTEM_MESSAGE_NOTICE),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(guardedNode(CLAUDE_PLUGIN_HOOK, CLAUDE_NODE_NOTICE))],
+      Stop: [stopEntry(guardedNode(CLAUDE_PLUGIN_HOOK, SYSTEM_MESSAGE_NOTICE))],
     },
   };
 }
@@ -158,14 +171,14 @@ export function buildCodexPluginHooksManifest() {
           hooks: [
             {
               type: 'command',
-              command: guardedNode(CODEX_PLUGIN_HOOK),
+              command: guardedNode(CODEX_PLUGIN_HOOK, SYSTEM_MESSAGE_NOTICE),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(guardedNode(CODEX_PLUGIN_HOOK))],
+      Stop: [stopEntry(guardedNode(CODEX_PLUGIN_HOOK, SYSTEM_MESSAGE_NOTICE))],
     },
   };
 }
@@ -183,14 +196,14 @@ export function buildCodexHooksManifest(skillDir = '.codex') {
           hooks: [
             {
               type: 'command',
-              command: guardedNode(hookPath),
+              command: guardedNode(hookPath, SYSTEM_MESSAGE_NOTICE),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(guardedNode(hookPath))],
+      Stop: [stopEntry(guardedNode(hookPath, SYSTEM_MESSAGE_NOTICE))],
     },
   };
 }
