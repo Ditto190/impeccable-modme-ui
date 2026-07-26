@@ -3,7 +3,7 @@
   "hooks": {
     "preToolUse": [
       {
-        "command": "[ ! -f \".cursor/skills/impeccable/scripts/hook-before-edit.mjs\" ] || node \".cursor/skills/impeccable/scripts/hook-before-edit.mjs\"",
+        "command": "[ ! -f \".cursor/skills/impeccable/scripts/hook-before-edit.mjs\" ] || ! { node -e \"import('fs')\" 2>/dev/null || { D=\"$HOME/.impeccable\"; [ -f \"$D/node-unsupported\" ] || { mkdir -p \"$D\" 2>/dev/null && : > \"$D/node-unsupported\" 2>/dev/null && printf '%s' '{\"systemMessage\":\"The impeccable design hook is not running: no Node 22 or newer on PATH. Install one, or remove the impeccable hook from your harness settings.\"}'; }; exit 0; }; } || node \".cursor/skills/impeccable/scripts/hook-before-edit.mjs\"",
         "timeout": 5
       }
     ]

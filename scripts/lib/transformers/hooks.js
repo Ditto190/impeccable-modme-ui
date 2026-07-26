@@ -51,7 +51,27 @@ const CLAUDE_PROJECT_HOOK = '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scr
 // user-level hooks fire in every project, where a project-relative path may
 // not exist). Guard node invocations so a missing file exits 0 without
 // swallowing node's real exit code when the file is present.
-const guardedNode = (hookPath) => `[ ! -f "${hookPath}" ] || node "${hookPath}"`;
+//
+// The runtime is guarded too (issue #410): a `node` on PATH too old for ESM,
+// or no node at all, kills the hook script while it is still being parsed,
+// before the script's own always-exit-0 contract can run. Nothing written in
+// ESM can report that, the doctor and the sub-commands included, so the command
+// string reports it instead: probe dynamic import, and when the probe fails
+// hand the user the two things they can act on (install a supported node, or
+// drop the hook) through the universal `systemMessage` field on exit 0. A
+// marker under ~/.impeccable keeps it to one notice per machine rather than one
+// per edit. The message says `on PATH` deliberately: the common cause is a hook
+// shell whose PATH misses the version manager, so a user already running Node 22
+// needs to know the hook's PATH is at issue and not their install. Apostrophes
+// cannot appear in the message, which travels in a single-quoted shell string.
+const NODE_NOTICE_TEXT = 'The impeccable design hook is not running: no Node 22 or newer on PATH. '
+  + 'Install one, or remove the impeccable hook from your harness settings.';
+const NODE_NOTICE = 'D="$HOME/.impeccable"; [ -f "$D/node-unsupported" ] || '
+  + '{ mkdir -p "$D" 2>/dev/null && : > "$D/node-unsupported" 2>/dev/null && '
+  + `printf '%s' '{"systemMessage":"${NODE_NOTICE_TEXT}"}'; }`;
+const guardedNode = (hookPath) =>
+  `[ ! -f "${hookPath}" ] || ! { node -e "import('fs')" 2>/dev/null || { ${NODE_NOTICE}; exit 0; }; } `
+  + `|| node "${hookPath}"`;
 const CLAUDE_PLUGIN_HOOK = '${CLAUDE_PLUGIN_ROOT}/skills/impeccable/scripts/hook.mjs';
 const CODEX_PLUGIN_HOOK = '${PLUGIN_ROOT}/skills/impeccable/scripts/hook.mjs';
 // Codex reads project hooks from `.codex/hooks.json`, but the skill payload the
@@ -104,14 +124,14 @@ export function buildClaudePluginHooksManifest() {
           hooks: [
             {
               type: 'command',
-              command: `node "${CLAUDE_PLUGIN_HOOK}"`,
+              command: guardedNode(CLAUDE_PLUGIN_HOOK),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(`node "${CLAUDE_PLUGIN_HOOK}"`)],
+      Stop: [stopEntry(guardedNode(CLAUDE_PLUGIN_HOOK))],
     },
   };
 }
