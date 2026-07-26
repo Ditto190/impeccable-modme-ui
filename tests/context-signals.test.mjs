@@ -152,6 +152,23 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.scan.targets, ['src/Hero.tsx']); // harness path filtered out
   });
 
+  it('keeps hidden-source-dir files (VitePress/Storybook) in scan targets', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('.vitepress/theme/Layout.vue', '<template><div/></template>\n');
+    write('.claude/skills/impeccable/scripts/detector.js', 'export const x = 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    write('.vitepress/theme/Layout.vue', '<template><span/></template>\n'); // real UI source
+    write('.claude/skills/impeccable/scripts/detector.js', 'export const x = 2;\n'); // vendored
+    const s = await gatherSignals(scratch);
+    assert.equal(s.scan.via, 'git-changes');
+    assert.deepEqual(s.scan.targets, ['.vitepress/theme/Layout.vue']);
+  });
+
   it('falls through to source dirs when only harness files changed (#303)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });

@@ -16,6 +16,12 @@ const SKIP_DIRS = new Set([
   'node_modules', 'dist', 'build', '__pycache__',
 ]);
 
+// The exceptions to the hidden-dir rule: hidden directories that
+// conventionally hold real UI source rather than tooling or vendored code.
+// VitePress keeps custom theme components in .vitepress/theme/*.vue, and
+// Storybook keeps preview decorators/styles in .storybook/.
+const HIDDEN_SOURCE_DIRS = new Set(['.vitepress', '.storybook']);
+
 const SCANNABLE_EXTENSIONS = new Set([
   '.html', '.htm', '.css', '.scss', '.sass', '.less',
   '.jsx', '.tsx', '.js', '.ts',
@@ -30,7 +36,7 @@ function walkDir(dir) {
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return files; }
   for (const entry of entries) {
     if (SKIP_DIRS.has(entry.name)) continue;
-    if (entry.isDirectory() && entry.name.startsWith('.')) continue;
+    if (entry.isDirectory() && entry.name.startsWith('.') && !HIDDEN_SOURCE_DIRS.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...walkDir(full));
     else if (SCANNABLE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) files.push(full);

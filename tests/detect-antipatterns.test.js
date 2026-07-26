@@ -1846,8 +1846,17 @@ describe('walkDir', () => {
       write('.cursor/skills/impeccable/example.css');
       write('.impeccable/live/preview.html');
       write('node_modules/pkg/index.js');
-      const files = walkDir(tmp);
-      expect(files).toEqual([path.join(tmp, 'src', 'app.css')]);
+      // Hidden dirs that conventionally hold real UI source are the
+      // exception: VitePress themes and Storybook preview files must keep
+      // being scanned (they were before the hidden-dir rule existed).
+      write('.vitepress/theme/Layout.vue');
+      write('.storybook/preview.css');
+      const files = walkDir(tmp).sort();
+      expect(files).toEqual([
+        path.join(tmp, '.storybook', 'preview.css'),
+        path.join(tmp, '.vitepress', 'theme', 'Layout.vue'),
+        path.join(tmp, 'src', 'app.css'),
+      ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
