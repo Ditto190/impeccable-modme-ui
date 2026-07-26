@@ -112,13 +112,15 @@ function gitSignals(cwd) {
   // signal may override that: an origin/HEAD or upstream naming a DIFFERENT
   // integration branch (sitting on develop while the remote default is
   // main) would produce exactly the integration-vs-integration divergence
-  // this detection exists to prevent.
-  const onIntegrationBranch = conventional.includes(branch);
+  // this detection exists to prevent. "Integration branch" means a
+  // conventional name OR the remote's default branch, so a non-standard
+  // default like trunk is guarded the same way.
+  const remoteHead = splitRemoteRef(run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']));
+  const onIntegrationBranch = conventional.includes(branch) || branch === remoteHead?.name;
   let base = null;
   let baseRev = null;
   if (!onIntegrationBranch) {
     const upstream = asUpstream(run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']));
-    const remoteHead = splitRemoteRef(run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']));
     const candidates = [];
     const seen = new Set();
     const addCandidate = (name, revs) => {

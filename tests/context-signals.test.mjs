@@ -376,6 +376,26 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
   });
 
+  it('sitting on a non-standard default branch keeps the working-tree scope (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'trunk');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('branch', '-q', 'develop'); // a conventional name also exists
+    git('update-ref', 'refs/remotes/origin/trunk', 'HEAD');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
+    write('src/App.tsx', 'export default 2;\n'); // dirty on trunk
+    const s = await gatherSignals(scratch);
+    // trunk IS the integration branch (origin/HEAD says so); develop must
+    // not win the candidate scan and produce a trunk-vs-develop diff.
+    assert.equal(s.git.base, null);
+    assert.deepEqual(s.git.changedFiles, ['src/App.tsx']);
+  });
+
   it('never diffs one integration branch against another (#302)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
