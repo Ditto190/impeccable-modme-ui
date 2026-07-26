@@ -273,6 +273,31 @@ describe('live-browser.js regression guards', () => {
     );
   });
 
+  it('SSE error reply clears the durable session checkpoint like discarded', () => {
+    // Issue #362: `live-poll.mjs --reply <id> error "..."` is the documented
+    // abort flow in reference/live.md, and an agent error reply is terminal
+    // for the session it names. The 'error' case used to reset only the UI
+    // (hideBar + PICKING) while the localStorage checkpoint written for the
+    // GENERATING phase survived — so every reload resurrected a dead session
+    // the server no longer knew about, until the user hand-cleared the
+    // impeccable-live* keys in the console. The error path must tear down the
+    // named session exactly like 'discarded' does (markSessionHandled +
+    // cleanup, which includes clearSession), and drop a stored-but-not-
+    // current checkpoint that matches the errored id.
+    const errorCase = SOURCE.match(/case 'error':[\s\S]{0,2500}?setLiveState\('PICKING'\);\s*break;/);
+    assert.ok(errorCase, 'expected an SSE case \'error\' handler in live-browser.js');
+    assert.match(
+      errorCase[0],
+      /if \(msg\.id && msg\.id === currentSessionId\) \{[\s\S]{0,160}?markSessionHandled\(\);[\s\S]{0,80}?cleanup\(\);[\s\S]{0,80}?break;/,
+      'an error reply naming the current session must run the same markSessionHandled + cleanup teardown as \'discarded\' so the durable checkpoint is cleared',
+    );
+    assert.match(
+      errorCase[0],
+      /if \(msg\.id && loadSession\(\)\?\.id === msg\.id\) clearSession\(\);/,
+      'an error reply naming a stored-but-not-current session must drop that checkpoint so a reload cannot resurrect it',
+    );
+  });
+
   it('handleServerLost preserves the current recoverable phase', () => {
     assert.doesNotMatch(
       SOURCE,
