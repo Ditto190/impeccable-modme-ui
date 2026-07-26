@@ -37,12 +37,13 @@
     }
 
     /* 2: rebeccapurple — a longer name that contains another color name
-          ("purple") as a substring; must match whole-token */
+          ("purple") as a substring; must match whole-token. Width 5px so the
+          finding snippet is unique to this case. */
     #flag-named-rebecca {
       width: 400px;
       background: #ffffff;
       border-radius: 4px;
-      border-left: 4px solid rebeccapurple;
+      border-left: 5px solid rebeccapurple;
     }
 
     /* 3: horizontal stripe variant — named crimson riding the top edge */
@@ -59,12 +60,13 @@
       border-left: 3px solid teal;
     }
 
-    /* 5: named color behind a var() in the shorthand */
+    /* 5: named color behind a var() in the shorthand. Width 6px so the
+          finding snippet is unique to this case. */
     #flag-named-var {
       width: 400px;
       background: #ffffff;
       border-radius: 4px;
-      border-left: 4px solid var(--accent);
+      border-left: 6px solid var(--accent);
     }
 
     /* ── PASS cases: neutral named colors and non-side-tab shapes ── */
@@ -119,8 +121,8 @@
       <div class="case" id="flag-named-crimson-top"><h3>crimson top stripe</h3><p>border-top 4px, horizontal variant</p></div>
       <div class="case" id="flag-named-teal"><h3>named teal</h3><p>border-left 3px, no radius</p></div>
       <div class="case" id="flag-named-var"><h3>var() to named</h3><p>border-left 4px solid var(--accent)</p></div>
-      <div class="case" style="width: 400px; background: #ffffff; border-left: 4px solid purple">
-        <h3>inline named purple</h3><p>style attribute, issue #359 case (a)</p>
+      <div class="case" style="width: 400px; background: #ffffff; border-left: 7px solid purple">
+        <h3>inline named purple</h3><p>style attribute, issue #359 case (a); width 7px keeps the snippet unique</p>
       </div>
     </div>
     <div class="col" data-col="pass">

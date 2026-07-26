@@ -375,20 +375,26 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     // by the regex engine. The extraction list is now derived from the same
     // CSS_NAMED_COLORS table the parser uses, so the two can't drift apart.
     const f = await detectHtml(path.join(FIXTURES, 'named-color-borders.html'));
-    const sideTabs = f.filter(r => r.antipattern === 'side-tab');
-    // Six FLAG cases: purple + radius (the issue reproducer), rebeccapurple
-    // (contains "purple" as a substring — whole-token matching), crimson
-    // top stripe, bare 3px teal, a var() resolving to a named color, and an
-    // inline style attribute. Each must produce exactly one side-tab.
-    assert.equal(
-      sideTabs.length, 6,
-      `expected 6 side-tab findings from the FLAG column, got ${sideTabs.length}: ${sideTabs.map(r => r.snippet).join('; ')}`
-    );
-    const topFindings = sideTabs.filter(r => /border-top/.test(r.snippet || ''));
-    assert.equal(topFindings.length, 1, `expected 1 border-top finding, got ${topFindings.length}`);
-    // PASS column (neutral named colors, thin, and uniform borders) must
-    // contribute nothing — dimgray/gainsboro/black have to parse AND read
-    // as neutral rather than being dropped as unknown colors.
+    const sideTabs = f.filter(r => r.antipattern === 'side-tab').map(r => r.snippet).sort();
+    // Six FLAG cases, each with a unique width/radius signature so every
+    // finding attributes to exactly one case (an offsetting miss + false
+    // positive can't cancel out in an aggregate count):
+    //   purple 4px + radius 8 (the issue reproducer), rebeccapurple 5px +
+    //   radius 4 (contains "purple" as a substring — whole-token matching),
+    //   crimson 4px top stripe, bare 3px teal, var() resolving to a named
+    //   color at 6px + radius 4, and a 7px inline style attribute.
+    // The PASS column (neutral named colors at 3-4px, 1px thin, uniform)
+    // must contribute nothing — dimgray/gainsboro/black have to parse AND
+    // read as neutral rather than being dropped as unknown colors, and none
+    // of its shapes can produce any of the signatures below.
+    assert.deepEqual(sideTabs, [
+      'border-left: 3px',
+      'border-left: 4px + border-radius: 8px',
+      'border-left: 5px + border-radius: 4px',
+      'border-left: 6px + border-radius: 4px',
+      'border-left: 7px',
+      'border-top: 4px',
+    ]);
     const borderAccent = f.filter(r => r.antipattern === 'border-accent-on-rounded');
     assert.equal(
       borderAccent.length, 0,
