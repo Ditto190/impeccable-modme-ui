@@ -28,8 +28,9 @@ function readJson(rel) {
 function expectCommand(command, expectedPath) {
   assert.equal(typeof command, 'string');
   // node-command providers carry the missing-file guard (issue #399: exits 0
-  // when absent, preserves node's exit code when present); github/grok keep
-  // their own portable unguarded forms.
+  // when absent, preserves node's exit code when present) plus the runtime probe
+  // (issue #410: exits 0 when node cannot load ESM). GitHub's portable
+  // `$(git rev-parse)` form is guarded too, so it lands in the same branch.
   if (command.startsWith('[ ! -f "')) {
     assert.match(command, /\|\| node "/);
   } else {

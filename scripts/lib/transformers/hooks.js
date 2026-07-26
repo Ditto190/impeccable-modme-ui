@@ -60,10 +60,12 @@ const CLAUDE_PROJECT_HOOK = '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scr
 //
 // `notice` is the shell that reports the dead runtime to the user, and it is
 // passed in rather than baked in because the wire format is per harness. Claude
-// Code reads a `systemMessage` field off stdout on exit 0; what Codex and Cursor
-// do with stdout they did not ask for is unconfirmed, so they take the probe
-// alone and an unsupported runtime stays as quiet there as it was before the
-// probe existed. Adding their shape later is one more argument at the call site.
+// Code reads a `systemMessage` field off stdout on exit 0. Codex expects
+// `hookSpecificOutput` and Cursor a permission-shaped payload, so handing either
+// a Claude response gets it discarded or printed raw; until those shapes are
+// confirmed every non-Claude harness takes the probe alone, and an unsupported
+// runtime stays as quiet there as it was before the probe existed. Adding a
+// shape later is one more argument at that harness's call site.
 const guardedNode = (hookPath, notice = '') => {
   const probe = notice
     ? `! { node -e "import('fs')" 2>/dev/null || { ${notice}; exit 0; }; }`
@@ -156,14 +158,14 @@ export function buildCodexPluginHooksManifest() {
           hooks: [
             {
               type: 'command',
-              command: `node "${CODEX_PLUGIN_HOOK}"`,
+              command: guardedNode(CODEX_PLUGIN_HOOK),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(`node "${CODEX_PLUGIN_HOOK}"`)],
+      Stop: [stopEntry(guardedNode(CODEX_PLUGIN_HOOK))],
     },
   };
 }
@@ -226,7 +228,7 @@ export function buildGitHubHooksManifest() {
         {
           type: 'command',
           matcher: 'edit|create|apply_patch',
-          bash: `node "${GITHUB_PROJECT_HOOK}"`,
+          bash: guardedNode(GITHUB_PROJECT_HOOK),
           timeoutSec: TIMEOUT_SECONDS,
         },
       ],
@@ -248,14 +250,14 @@ export function buildGrokHooksManifest() {
           hooks: [
             {
               type: 'command',
-              command: `node "${GROK_PROJECT_HOOK}"`,
+              command: guardedNode(GROK_PROJECT_HOOK),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(`node "${GROK_PROJECT_HOOK}"`)],
+      Stop: [stopEntry(guardedNode(GROK_PROJECT_HOOK))],
     },
   };
 }
