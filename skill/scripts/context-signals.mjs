@@ -168,7 +168,7 @@ function isVendoredPath(rel) {
   const dirSegments = rel.split(/[\\/]/).slice(0, -1);
   return dirSegments.some(
     (seg) =>
-      (seg.startsWith('.') && seg !== '.vitepress' && seg !== '.storybook') ||
+      (seg.startsWith('.') && seg !== '.vitepress' && seg !== '.vuepress' && seg !== '.storybook') ||
       seg === 'node_modules' || seg === 'dist' || seg === 'build' || seg === '__pycache__',
   );
 }

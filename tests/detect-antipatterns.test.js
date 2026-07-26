@@ -1850,11 +1850,13 @@ describe('walkDir', () => {
       // exception: VitePress themes and Storybook preview files must keep
       // being scanned (they were before the hidden-dir rule existed).
       write('.vitepress/theme/Layout.vue');
+      write('.vuepress/theme/Layout.vue');
       write('.storybook/preview.css');
       const files = walkDir(tmp).sort();
       expect(files).toEqual([
         path.join(tmp, '.storybook', 'preview.css'),
         path.join(tmp, '.vitepress', 'theme', 'Layout.vue'),
+        path.join(tmp, '.vuepress', 'theme', 'Layout.vue'),
         path.join(tmp, 'src', 'app.css'),
       ]);
     } finally {
