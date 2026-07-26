@@ -56,7 +56,19 @@ const CLAUDE_PROJECT_HOOK = '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scr
 // or no node at all, kills the hook script while it is still being parsed,
 // before the script's own always-exit-0 contract can run. Nothing written in
 // ESM can report that, the doctor and the sub-commands included, so the command
-// string carries the probe: dynamic import, and no-op at exit 0 when it fails.
+// string carries the probe, and no-ops at exit 0 when it fails.
+//
+// The probe imports `node:fs` rather than `fs` because that is what the hook
+// closure actually imports, and the `node:` scheme needs 14.18: a bare `fs`
+// probe passes on 12 and 13, which then die on the real import. `.catch` with an
+// explicit exit is required, not decoration, because before Node 15 an unhandled
+// rejection is only a warning and the process still exits 0, so a rejected probe
+// would read as a pass. What the probe does NOT do is enforce the engines floor
+// of 22. That is deliberate: it asks whether this runtime can load our code, not
+// whether it is supported, so a 14.18-to-21 runtime that works today keeps
+// working instead of being silently switched off. The notice names 22 because
+// that is the version to install, and it is only ever shown to someone whose
+// runtime already failed the probe.
 //
 // `notice` is the shell that reports the dead runtime to the user, and it is
 // passed in rather than baked in because only some harnesses have a channel for
@@ -78,8 +90,8 @@ const CLAUDE_PROJECT_HOOK = '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scr
 // as quiet there as it was before the probe existed.
 const guardedNode = (hookPath, notice = '') => {
   const probe = notice
-    ? `! { node -e "import('fs')" 2>/dev/null || { ${notice}; exit 0; }; }`
-    : `! node -e "import('fs')" 2>/dev/null`;
+    ? `! { node -e "import('node:fs').catch(()=>process.exit(1))" 2>/dev/null || { ${notice}; exit 0; }; }`
+    : `! node -e "import('node:fs').catch(()=>process.exit(1))" 2>/dev/null`;
   return `[ ! -f "${hookPath}" ] || ${probe} || node "${hookPath}"`;
 };
 // The message says `on PATH` deliberately: the common cause is a hook shell whose

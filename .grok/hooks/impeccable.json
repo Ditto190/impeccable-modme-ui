@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ ! -f \".grok/skills/impeccable/scripts/hook.mjs\" ] || ! node -e \"import('fs')\" 2>/dev/null || node \".grok/skills/impeccable/scripts/hook.mjs\"",
+            "command": "[ ! -f \".grok/skills/impeccable/scripts/hook.mjs\" ] || ! node -e \"import('node:fs').catch(()=>process.exit(1))\" 2>/dev/null || node \".grok/skills/impeccable/scripts/hook.mjs\"",
             "timeout": 5,
             "statusMessage": "Checking UI changes"
           }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ ! -f \".grok/skills/impeccable/scripts/hook.mjs\" ] || ! node -e \"import('fs')\" 2>/dev/null || node \".grok/skills/impeccable/scripts/hook.mjs\"",
+            "command": "[ ! -f \".grok/skills/impeccable/scripts/hook.mjs\" ] || ! node -e \"import('node:fs').catch(()=>process.exit(1))\" 2>/dev/null || node \".grok/skills/impeccable/scripts/hook.mjs\"",
             "timeout": 30,
             "statusMessage": "Design deep pass"
           }
