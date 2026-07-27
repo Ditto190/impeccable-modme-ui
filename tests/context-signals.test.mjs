@@ -513,6 +513,10 @@ describe('gatherSignals', () => {
     git('commit', '-qm', 'init');
     git('checkout', '-q', '-b', 'foo');
     git('branch', '-q', '--set-upstream-to=feature/foo');
+    // Adversarial twist: a remote literally named "feature" exists, so any
+    // prefix-based guess would still misread the LOCAL feature/foo upstream
+    // as remote-tracking. Only the full symbolic ref disambiguates.
+    git('remote', 'add', 'feature', '.');
     write('src/Hero.tsx', 'export const Hero = () => null;\n');
     git('add', '.');
     git('commit', '-qm', 'work');

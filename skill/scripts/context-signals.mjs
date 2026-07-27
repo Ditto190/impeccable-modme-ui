@@ -101,19 +101,26 @@ function gitSignals(cwd) {
   // an origin/HEAD target with no local checkout is a perfectly good diff
   // base, so revs are not limited to local branch names.
   const remotes = (run(['remote']) || '').split('\n').filter(Boolean);
-  // Strip a leading "<remote>/" only when that remote is actually
-  // configured: a slash does not make a ref remote. A local upstream named
-  // release/2.0 is one branch name, and truncating it to "2.0" (or
-  // feature/foo to "foo", which then matches the current branch and gets
-  // self-skipped) loses a valid base.
-  const splitRemoteRef = (ref) => {
-    const i = ref ? ref.indexOf('/') : -1;
-    if (i < 1) return null;
-    return remotes.includes(ref.slice(0, i)) ? { name: ref.slice(i + 1), rev: ref } : null;
+  // Read @{u} as a FULL symbolic ref: refs/heads/... is a local upstream
+  // (branch.<x>.remote = "."), refs/remotes/<r>/... is remote-tracking. No
+  // string guessing on the abbreviated form survives contact with reality:
+  // a local upstream named release/2.0 is one branch name, and a local
+  // feature/foo beside a remote actually named "feature" is only told apart
+  // from feature's remote-tracking refs by the full ref namespace.
+  const resolveUpstream = () => {
+    const full = run(['rev-parse', '--symbolic-full-name', '@{u}']);
+    if (!full) return null;
+    if (full.startsWith('refs/heads/')) {
+      const name = full.slice('refs/heads/'.length);
+      return { name, rev: name };
+    }
+    if (full.startsWith('refs/remotes/')) {
+      const rest = full.slice('refs/remotes/'.length);
+      const i = rest.indexOf('/');
+      if (i > 0) return { name: rest.slice(i + 1), rev: rest };
+    }
+    return null;
   };
-  // An @{u} that carries no configured remote prefix is a LOCAL upstream
-  // (branch.<x>.remote = "."); it names a merge target just as validly.
-  const asUpstream = (ref) => splitRemoteRef(ref) || (ref ? { name: ref, rev: ref } : null);
   const conventional = ['develop', 'main', 'master'];
   // On an integration branch itself the scope hint is the working tree. No
   // signal may override that: an origin/HEAD or upstream naming a DIFFERENT
@@ -139,7 +146,7 @@ function gitSignals(cwd) {
   let base = null;
   let baseRev = null;
   if (!onIntegrationBranch) {
-    const upstream = asUpstream(run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']));
+    const upstream = resolveUpstream();
     // Every named candidate tries the local branch first, then that name on
     // every remote (origin first). Covering all remotes up front is what
     // makes the name-level dedup below safe: a develop or main that exists
