@@ -374,13 +374,31 @@ function analyzeAttributes(node, analysis, scopes) {
         }
         break;
       }
-      case 'ClassDirective':
-      case 'StyleDirective': {
+      case 'ClassDirective': {
         const expr = attr.expression;
         if (expr && isFree(expr, scopes)) {
           const text = exprText(analysis.source, expr);
-          const entry = analysis.propFor(text, 'condition');
+          // The directive's class name is literal, so the live DOM answers
+          // the condition directly: the class is either present or not.
+          const entry = analysis.propFor(text, 'condition', {
+            probe: { className: attr.name },
+          });
           analysis.replacements.push({ start: expr.start, end: expr.end, prop: entry.prop });
+        }
+        break;
+      }
+      case 'StyleDirective': {
+        // Unlike ClassDirective, a style directive stores its value in
+        // attribute shape: `true` for the shorthand, else an array of parts.
+        const parts = attr.value === true ? [] : (Array.isArray(attr.value) ? attr.value : [attr.value]);
+        const dynamic = parts.some((part) => part?.type === 'ExpressionTag' && isFree(part.expression, scopes));
+        const shorthandFree = attr.value === true && isFree({ type: 'Identifier', name: attr.name }, scopes);
+        if (dynamic || shorthandFree) {
+          // style:opacity={x} carries a css VALUE, not a boolean, and the
+          // computed value on the live element is not reliably recoverable in
+          // the shape the expression produced. A falsified style is worse
+          // than an HMR-resetting preview.
+          analysis.fail(`style:${attr.name} with a dynamic value requires source-preview mode`);
         }
         break;
       }

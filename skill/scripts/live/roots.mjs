@@ -258,9 +258,43 @@ export function writeRootsManifest(manifest) {
   if (path.resolve(manifest.repoRoot) !== path.resolve(manifest.appRoot)) {
     const pointer = pointerFilePath(manifest.repoRoot);
     fs.mkdirSync(path.dirname(pointer), { recursive: true });
-    fs.writeFileSync(pointer, JSON.stringify({ appRoot: manifest.appRoot }));
+    // The pointer records EVERY app that has booted live in this repo, most
+    // recent first. A single last-boot-wins value made a helper run from the
+    // repo root silently target whichever app booted last, even while an
+    // earlier app's session was the one still live.
+    const entries = readPointerEntries(manifest.repoRoot)
+      .filter((entry) => path.resolve(entry.appRoot) !== path.resolve(manifest.appRoot));
+    entries.unshift({ appRoot: manifest.appRoot, bootedAt: new Date().toISOString() });
+    fs.writeFileSync(pointer, JSON.stringify({ version: 2, appRoots: entries }));
   }
   return file;
+}
+
+function readPointerEntries(repoRoot) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(pointerFilePath(repoRoot), 'utf-8'));
+    if (Array.isArray(raw?.appRoots)) {
+      return raw.appRoots.filter((entry) => entry && typeof entry.appRoot === 'string');
+    }
+    // v1 shape: a single { appRoot } value.
+    if (raw && typeof raw.appRoot === 'string') return [{ appRoot: raw.appRoot }];
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+/** True when the app's live helper server is recorded and its pid is alive. */
+function hasLiveServer(appRoot) {
+  try {
+    const info = JSON.parse(fs.readFileSync(path.join(appRoot, '.impeccable', 'live', 'server.json'), 'utf-8'));
+    if (!info || typeof info.pid !== 'number') return false;
+    process.kill(info.pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: the process exists but is not signalable by this user.
+    return err?.code === 'EPERM';
+  }
 }
 
 function readManifestAt(appRoot) {
@@ -297,13 +331,16 @@ export function resolveLiveRoots(cwd = process.cwd(), { targetPath = null } = {}
 
     const gitRoot = findGitRoot(absCwd);
     if (gitRoot) {
-      try {
-        const pointer = JSON.parse(fs.readFileSync(pointerFilePath(gitRoot), 'utf-8'));
-        if (pointer && typeof pointer.appRoot === 'string') {
-          const viaPointer = readManifestAt(pointer.appRoot);
-          if (viaPointer) return { manifest: viaPointer, source: 'pointer' };
-        }
-      } catch { /* no pointer */ }
+      // Several apps in one repo may have booted live. Prefer the one whose
+      // helper server is actually running; a stale pointer entry must not
+      // redirect status/poll/accept onto the wrong app's session store.
+      const candidates = readPointerEntries(gitRoot)
+        .map((entry) => readManifestAt(entry.appRoot))
+        .filter(Boolean);
+      if (candidates.length > 0) {
+        const live = candidates.find((manifest) => hasLiveServer(manifest.appRoot));
+        return { manifest: live || candidates[0], source: 'pointer' };
+      }
     }
   }
 

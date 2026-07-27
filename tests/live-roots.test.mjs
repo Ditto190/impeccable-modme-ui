@@ -196,3 +196,46 @@ describe('review regressions: walk bounds', () => {
     }
   });
 });
+
+describe('review regressions: multi-app pointer', () => {
+  it('prefers the app whose live server is running over the last boot', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-roots-multi-')));
+    try {
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      for (const name of ['siteA', 'siteB']) {
+        write(repo, `${name}/vite.config.js`, 'export default {};');
+        write(repo, `${name}/package.json`, `{"name":"${name}"}`);
+      }
+      const a = resolveRoots({ cwd: repo, targetPath: join(repo, 'siteA/vite.config.js') }).manifest;
+      const b = resolveRoots({ cwd: repo, targetPath: join(repo, 'siteB/vite.config.js') }).manifest;
+      writeRootsManifest(a);
+      writeRootsManifest(b); // B booted last: a naive pointer now points at B
+
+      // A's helper server is the one alive (this test process's pid).
+      write(repo, 'siteA/.impeccable/live/server.json', JSON.stringify({ pid: process.pid, port: 1, token: 't' }));
+      write(repo, 'siteB/.impeccable/live/server.json', JSON.stringify({ pid: 999999999, port: 2, token: 't' }));
+
+      const resolved = resolveLiveRoots(repo);
+      assert.equal(resolved.source, 'pointer');
+      assert.equal(resolved.manifest.appRoot, join(repo, 'siteA'));
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a legacy single-value pointer', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-roots-legacy-')));
+    try {
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      write(repo, 'app/vite.config.js', 'export default {};');
+      const m = resolveRoots({ cwd: repo, targetPath: join(repo, 'app/vite.config.js') }).manifest;
+      // Write the manifest, then downgrade the pointer to the v1 shape.
+      writeRootsManifest(m);
+      write(repo, '.impeccable/live/app-root.json', JSON.stringify({ appRoot: join(repo, 'app') }));
+      const resolved = resolveLiveRoots(repo);
+      assert.equal(resolved.manifest.appRoot, join(repo, 'app'));
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});

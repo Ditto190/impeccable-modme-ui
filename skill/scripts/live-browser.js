@@ -5453,6 +5453,13 @@
         if (entry.probe && entry.probe.tag) {
           const selector = entry.probe.tag + (entry.probe.classes || []).map((c) => '.' + cssEscapeIdent(c)).join('');
           try { values[entry.prop] = !!liveEl.querySelector(selector); } catch { /* keep default */ }
+        } else if (entry.probe && entry.probe.className) {
+          // class:name directive: the live DOM answers directly, either on
+          // the picked element itself or on a descendant carrying the class.
+          try {
+            values[entry.prop] = liveEl.classList.contains(entry.probe.className)
+              || !!liveEl.querySelector('.' + cssEscapeIdent(entry.probe.className));
+          } catch { /* keep default */ }
         }
       }
     }
@@ -5731,7 +5738,14 @@
         arrivedVariants = availableVariants;
         expectedVariants = Number(manifest.count) || expectedVariants || arrivedVariants;
         visibleVariant = visibleVariant > 0 && visibleVariant <= arrivedVariants ? visibleVariant : 1;
-        await mountSvelteComponentVariant(visibleVariant || 1);
+        const remounted = await mountSvelteComponentVariant(visibleVariant || 1);
+        if (!remounted) {
+          // The mount already reported the failure and raised the card.
+          // Advancing to CYCLING here would show a bar claiming variants are
+          // ready over a page where nothing rendered.
+          saveSession();
+          return;
+        }
         setLiveState('CYCLING');
         showOrUpdateCyclingBar();
         saveSession();

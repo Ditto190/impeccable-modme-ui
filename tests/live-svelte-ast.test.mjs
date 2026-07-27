@@ -215,3 +215,24 @@ describe('review regressions: reserved prop names', () => {
     }
   });
 });
+
+describe('review regressions: directives', () => {
+  it('class directives carry a className probe for live hydration', () => {
+    const src = `<div class:active={isActive}><span>{label}</span></div>`;
+    const res = analyzeSvelteMarkup(src, parse);
+    assert.equal(res.ok, true, res.reason);
+    const cond = res.contract.find((c) => c.expr === 'isActive');
+    assert.deepEqual(cond.probe, { className: 'active' });
+  });
+
+  it('style directives with dynamic values fall back to source-preview', () => {
+    const res = analyzeSvelteMarkup(`<div style:opacity={fade}>x</div>`, parse);
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /style:opacity/);
+  });
+
+  it('style directives with static values stay supported', () => {
+    const res = analyzeSvelteMarkup(`<div style:color="red">{note}</div>`, parse);
+    assert.equal(res.ok, true, res.reason);
+  });
+});
