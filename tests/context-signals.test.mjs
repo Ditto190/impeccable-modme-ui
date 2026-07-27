@@ -396,6 +396,46 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.git.changedFiles, ['src/App.tsx']);
   });
 
+  it('a detached HEAD keeps the working-tree scope (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('branch', '-q', 'develop');
+    git('checkout', '-q', '--detach');
+    write('src/App.tsx', 'export default 2;\n'); // dirty on a detached tip
+    const s = await gatherSignals(scratch);
+    // A detached checkout has no branch identity to diff for; picking
+    // develop here would refill changedFiles with integration divergence.
+    assert.equal(s.git.base, null);
+    assert.deepEqual(s.git.changedFiles, ['src/App.tsx']);
+  });
+
+  it('the integration guard sees non-origin remote defaults (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'trunk');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('branch', '-q', 'develop');
+    // The only remote is upstream (fork-parent layout, no origin at all);
+    // its default branch is trunk, which is exactly where we're sitting.
+    git('remote', 'add', 'upstream', '.');
+    git('update-ref', 'refs/remotes/upstream/trunk', 'HEAD');
+    git('symbolic-ref', 'refs/remotes/upstream/HEAD', 'refs/remotes/upstream/trunk');
+    write('src/App.tsx', 'export default 2;\n'); // dirty on trunk
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, null);
+    assert.deepEqual(s.git.changedFiles, ['src/App.tsx']);
+  });
+
   it('never diffs one integration branch against another (#302)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });

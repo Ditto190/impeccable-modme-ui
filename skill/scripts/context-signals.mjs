@@ -113,10 +113,20 @@ function gitSignals(cwd) {
   // integration branch (sitting on develop while the remote default is
   // main) would produce exactly the integration-vs-integration divergence
   // this detection exists to prevent. "Integration branch" means a
-  // conventional name OR the remote's default branch, so a non-standard
-  // default like trunk is guarded the same way.
-  const remoteHead = splitRemoteRef(run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']));
-  const onIntegrationBranch = conventional.includes(branch) || branch === remoteHead?.name;
+  // conventional name OR any remote's default branch (origin first, but a
+  // fork-parent layout may only have an `upstream` remote), so a
+  // non-standard default like trunk is guarded the same way. A detached
+  // checkout (branch reads as the literal `HEAD`) has no branch identity to
+  // diff for and keeps the working-tree scope too.
+  const remoteHeads = [];
+  const remotes = (run(['remote']) || '').split('\n').filter(Boolean);
+  for (const r of ['origin', ...remotes.filter((name) => name !== 'origin')]) {
+    const head = splitRemoteRef(run(['symbolic-ref', '--short', `refs/remotes/${r}/HEAD`]));
+    if (head) remoteHeads.push(head);
+  }
+  const onIntegrationBranch = branch === 'HEAD'
+    || conventional.includes(branch)
+    || remoteHeads.some((head) => head.name === branch);
   let base = null;
   let baseRev = null;
   if (!onIntegrationBranch) {
@@ -136,7 +146,7 @@ function gitSignals(cwd) {
     // main; an existing develop therefore outranks the remote default. This
     // is #302's own repro shape, and repos without develop are unaffected.
     addCandidate('develop', ['develop', 'origin/develop']);
-    if (remoteHead) addCandidate(remoteHead.name, [remoteHead.name, remoteHead.rev]);
+    for (const head of remoteHeads) addCandidate(head.name, [head.name, head.rev]);
     for (const name of ['main', 'master']) addCandidate(name, [name, `origin/${name}`]);
     for (const c of candidates) {
       const rev = c.revs.find((r) => run(['rev-parse', '--verify', '--quiet', r]) !== null);
