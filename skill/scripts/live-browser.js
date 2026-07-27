@@ -5501,9 +5501,13 @@
   }
 
   // Remove balanced {#each}...{/each} and {#if}...{/if} regions (including
-  // the delimiters) from a markup string. Nesting-aware.
+  // the delimiters) from a markup string. Nesting-aware. {#key} blocks keep
+  // their CONTENT (it always renders) but lose their delimiter tokens, which
+  // would otherwise consume live text slots in the zip and shift every
+  // following expression.
   function stripSvelteBlockRegions(markup) {
     let out = String(markup || '');
+    out = stripSvelteKeyDelimiters(out);
     for (const kind of ['each', 'if']) {
       const open = '{#' + kind;
       const close = '{/' + kind + '}';
@@ -5528,6 +5532,30 @@
       }
     }
     return out;
+  }
+
+  function stripSvelteKeyDelimiters(markup) {
+    let out = String(markup || '');
+    for (;;) {
+      const start = out.indexOf('{#key');
+      if (start === -1) break;
+      // The opening tag runs to its matching close brace (expressions inside
+      // may nest braces).
+      let depth = 0;
+      let i = start;
+      let openEnd = -1;
+      while (i < out.length) {
+        if (out[i] === '{') depth++;
+        else if (out[i] === '}') {
+          depth--;
+          if (depth === 0) { openEnd = i + 1; break; }
+        }
+        i++;
+      }
+      if (openEnd === -1) break;
+      out = out.slice(0, start) + out.slice(openEnd);
+    }
+    return out.split('{/key}').join('');
   }
 
   function cloneWithoutElements(rootEl, excludedEls) {

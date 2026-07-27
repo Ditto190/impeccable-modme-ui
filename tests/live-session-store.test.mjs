@@ -730,3 +730,39 @@ describe('live-session-store', () => {
     });
   });
 });
+
+describe('review regressions: durable mount failures', () => {
+  it('variant_mount_failed survives a helper restart as the pending event', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'impeccable-store-mountfail-'));
+    try {
+      const store = createLiveSessionStore({ cwd: tmp });
+      store.appendEvent({ type: 'generate', id: 'mf123456', count: 3, pageUrl: '/', element: { tagName: 'h1' } });
+      store.appendEvent({ type: 'agent_done', id: 'mf123456' });
+      store.appendEvent({ type: 'variant_mount_failed', id: 'mf123456', variant: 2, url: 'http://x/v2.svelte', error: 'boom' });
+
+      // A second store instance = the restarted helper.
+      const restarted = createLiveSessionStore({ cwd: tmp });
+      const snapshot = restarted.getSnapshot('mf123456');
+      assert.equal(snapshot.pendingEvent?.type, 'variant_mount_failed');
+      assert.equal(snapshot.pendingEvent?.variant, 2);
+
+      // The repair reply retires it.
+      restarted.appendEvent({ type: 'agent_done', id: 'mf123456', sourceEventType: 'variant_mount_failed' });
+      assert.equal(restarted.getSnapshot('mf123456').pendingEvent, null);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('a mount failure does not clobber a still-pending generate', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'impeccable-store-mountfail2-'));
+    try {
+      const store = createLiveSessionStore({ cwd: tmp });
+      store.appendEvent({ type: 'generate', id: 'mf223456', count: 3, pageUrl: '/', element: { tagName: 'h1' } });
+      store.appendEvent({ type: 'variant_mount_failed', id: 'mf223456', variant: 1, url: 'http://x/v1.svelte', error: 'early' });
+      assert.equal(store.getSnapshot('mf223456').pendingEvent?.type, 'generate');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

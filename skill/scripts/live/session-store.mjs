@@ -410,6 +410,13 @@ function applyEvent(snapshot, entry) {
         },
       ].slice(-MOUNT_FAILURE_HISTORY);
       next.renderState = deriveRenderState(next);
+      // The failure needs an agent reply, so it must survive a helper
+      // restart the same way a generate does. Never clobber a still-pending
+      // generate: a progressive publish can fail an early mount while the
+      // generate event itself is still leased.
+      if (!next.pendingEvent) {
+        next.pendingEvent = toPendingEvent(event);
+      }
       break;
     }
     case 'checkpoint':

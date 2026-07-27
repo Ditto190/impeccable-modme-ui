@@ -69,7 +69,7 @@ export function mountFailureAction(snapshot = {}) {
   if (!latest) return null;
   const where = latest.url ? ` from ${latest.url}` : '';
   const why = latest.error ? ` (${latest.error})` : '';
-  return `The browser failed to mount variant ${latest.variant}${where}${why}; nothing is on screen. Fix the variant files, then reply with live-poll.mjs --reply EVENT_ID done --file <manifest or source path> for the queued variant_mount_failed event (or republish) so the browser retries.`;
+  return `The browser failed to mount variant ${latest.variant}${where}${why}; nothing is on screen. Fix the variant files, then reply with live-poll.mjs --reply ${snapshot?.pendingEvent?.id || snapshot?.id || 'SESSION_ID'} done --file <manifest or source path> for the queued variant_mount_failed event (or republish) so the browser retries.`;
 }
 
 function parseArgs(argv) {

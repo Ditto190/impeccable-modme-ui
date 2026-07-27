@@ -163,7 +163,7 @@ describe('live recovery CLI commands', () => {
       'event=live_resume.mount_failure_action actor=agent operation=recover_session risk=agent_thinks_variants_are_on_screen expected=named failing variant and url actual=' + resume.nextAction,
     );
     assert.match(resume.nextAction, /variant_mount_failed/);
-    assert.match(resume.nextAction, /--reply EVENT_ID done --file/);
+    assert.match(resume.nextAction, /--reply cli-render-2 done --file/);
 
     const status = runJson(STATUS_SCRIPT, [], cwd);
     assert.match(status.recoveryHint, /failed to mount variant 2/);
