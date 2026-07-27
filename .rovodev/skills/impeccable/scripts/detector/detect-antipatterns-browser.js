@@ -82,6 +82,15 @@ const GENERIC_FONTS = new Set([
 const WCAG_LARGE_TEXT_PX = 18 * (96 / 72);
 const WCAG_LARGE_BOLD_TEXT_PX = 14 * (96 / 72);
 
+// Em-dash overuse (advisory) thresholds, shared by the regex/static-HTML
+// analyzer and the browser DOM check so both fire on the same saturation
+// pattern. Two gates must hold: an absolute floor of EM_DASH_FLOOR dashes, and
+// a density of at least one dash per EM_DASH_CHARS_PER_DASH characters of body
+// text. A long article that uses a few em-dashes is left alone; a short,
+// dash-per-clause page is not.
+const EM_DASH_FLOOR = 8;
+const EM_DASH_CHARS_PER_DASH = 500;
+
 // Serif faces that show up in italic-display heroes. The rule also fires when
 // the primary face is unknown but the stack ends in the generic `serif` token,
 // which catches custom/private faces with a serif fallback.
@@ -252,6 +261,15 @@ const ANTIPATTERNS = [
     skillGuideline: 'dark mode with glowing accents',
   },
   {
+    id: 'radial-spotlight-glow',
+    category: 'slop',
+    name: 'Decorative radial spotlight glow',
+    description:
+      'A soft, low-opacity accent-colored radial gradient fading to transparent, dropped behind a hero or section as a "spotlight." It is a reflex AI decoration — the translucent cousin of the saturated radial halo. Let the surface stand on its own, or light the composition with a deliberate material accent rather than a floating colored haze.',
+    skillSection: 'Color & Contrast',
+    skillGuideline: 'dark mode with glowing accents',
+  },
+  {
     id: 'marquee',
     category: 'slop',
     name: 'Auto-scrolling marquee',
@@ -315,9 +333,14 @@ const ANTIPATTERNS = [
   {
     id: 'em-dash-overuse',
     category: 'slop',
+    // Advisory: humans use em-dashes legitimately, so this rule is opt-in noise
+    // rather than a failure. It fires only on the AI saturation pattern, not on
+    // ordinary prose. Advisory findings are surfaced separately, never counted
+    // as failures, and skipped by the design hook unless a project opts in.
+    advisory: true,
     name: 'Em-dash overuse',
     description:
-      'More than two em-dashes (— or --) in body copy is an AI cadence tell. Use commas, colons, periods, or parentheses instead.',
+      'Em-dash saturation in body copy is an AI cadence tell. Advisory only: humans use em-dashes legitimately, so this fires only on saturation — at least 8 em-dashes (— or --) at a density near one per 500 characters of body text — never on a long article that uses a few. Prefer commas, colons, periods, or parentheses.',
     skillSection: 'Copy',
     skillGuideline: 'no em dashes',
   },
@@ -506,6 +529,14 @@ const ANTIPATTERNS = [
     name: 'Tiny body text',
     description:
       'Body text below 12px is hard to read, especially on high-DPI screens. Use at least 14px for body content, 16px is ideal.',
+  },
+  {
+    id: 'undersized-ui-text',
+    category: 'quality',
+    scopes: ['type'],
+    name: 'Undersized functional text',
+    description:
+      'Interactive and content-bearing UI text (links, buttons, nav items, labels, table cells, meta rows, timecodes) below 11px is a legibility failure, not a style choice. WCAG sets no absolute pixel floor, but functional text under 11px is a defensible quality bar: it fails on high-DPI and small viewports and it degrades tap and read targets. The 11px floor holds even inside a footer; only non-interactive legal smallprint gets the softer 10px floor. Being ON the DESIGN.md size ramp does not exempt a value here: adding 8px to the ramp launders the token but not the legibility problem, and that is exactly the escape hatch this rule closes. Exempts sup/sub, visually-hidden (sr-only) text, and code/terminal contexts. Decorative letterspaced micro-labels are still functional and stay in scope.',
   },
   {
     id: 'all-caps-body',
@@ -880,9 +911,21 @@ function checkColors(opts) {
   const findings = [];
 
   if (hasDirectText && textColor && !isEmojiOnly) {
+    // Gradient-clipped text (`background-clip: text`, typically with a
+    // transparent text-fill) paints its glyphs *with* the element's own
+    // gradient. The `color` value the cascade still reports is never painted,
+    // and the gradient is the fill, not a backdrop — so measuring `color`
+    // against that gradient (which resolveGradientStops picks up as the
+    // element's own background-image) is a guaranteed false positive
+    // (issue #409 Case A). Skip the backdrop-contrast checks; the gradient-text
+    // rule below still flags the pattern itself. Skipping a rule beats a false
+    // positive here — the true painted contrast can't be measured from `color`.
+    const isGradientClippedText = bgClip === 'text';
     // Run background-dependent checks against either a solid bg or, if the
     // ancestor is a gradient, against every gradient stop (use the worst case).
-    const bgs = effectiveBg ? [effectiveBg] : (effectiveBgStops && effectiveBgStops.length ? effectiveBgStops : null);
+    const bgs = isGradientClippedText
+      ? null
+      : (effectiveBg ? [effectiveBg] : (effectiveBgStops && effectiveBgStops.length ? effectiveBgStops : null));
     if (bgs) {
       // Gray on colored background — flag if every stop is chromatic
       const textLum = relativeLuminance(textColor);
@@ -1582,7 +1625,13 @@ function isZeroOffset(value) {
 // never see it — pseudo-elements aren't part of the DOM the cascade walks —
 // so this scans stylesheet text directly, mirroring the border rule's
 // gates: >= 3px thick, chromatic fill, full height against a side edge.
-function scanCssTextForPseudoStripe(content) {
+function scanCssTextForPseudoStripe(rawContent) {
+  // Blank comment bodies byte-for-byte so commented-out rules are not
+  // scanned as live CSS and every rule keeps its source offset (each
+  // finding carries `index` so line-based callers can attribute it and
+  // line-scoped inline ignores can match).
+  const content = String(rawContent || '').replace(/\/\*[\s\S]*?\*\//g,
+    (block) => block.replace(/[^\n]/g, ' '));
   const customProps = collectCssCustomProps(content);
   const findings = [];
   const seen = new Set();
@@ -1691,9 +1740,13 @@ function scanCssTextForPseudoStripe(content) {
 
     if (seen.has(selector)) continue;
     seen.add(selector);
+    // The selector group absorbs whitespace trailing the previous rule;
+    // advance past it so `index` points at the selector itself.
+    const selectorStart = m.index + (m[1].length - m[1].trimStart().length);
     findings.push({
       id: 'side-tab',
       snippet: `${selector} — absolute ${thicknessPx}px pseudo-element stripe (${edge}: 0)`,
+      index: selectorStart,
     });
   }
   return findings;
@@ -2440,27 +2493,52 @@ function resolveBackground(el, win, customPropMap) {
 // Walk parents looking for a gradient background and return its color stops.
 // Used as a fallback when resolveBackground() returns null because the
 // effective background is a gradient (no single solid color to compare against).
-function resolveGradientStops(el, win) {
+function resolveGradientStops(el, win, customPropMap) {
   let current = el;
   while (current && current.nodeType === 1) {
     const style = DETECTOR_IS_BROWSER ? getComputedStyle(current) : win.getComputedStyle(current);
     const bgImage = style.backgroundImage || '';
+    let stops = null;
     if (bgImage && bgImage !== 'none' && /gradient/i.test(bgImage)) {
-      const stops = parseGradientColors(bgImage);
-      if (stops.length > 0) return stops;
+      const parsed = parseGradientColors(bgImage);
+      if (parsed.length > 0) stops = parsed;
     }
-    if (!DETECTOR_IS_BROWSER) {
+    if (!stops && !DETECTOR_IS_BROWSER) {
       // jsdom doesn't decompose `background:` shorthand — peek at the raw inline style
       const rawStyle = current.getAttribute?.('style') || '';
       const bgMatch = rawStyle.match(/background(?:-image)?\s*:\s*([^;]+)/i);
       if (bgMatch && /gradient/i.test(bgMatch[1])) {
-        const stops = parseGradientColors(bgMatch[1]);
-        if (stops.length > 0) return stops;
+        const parsed = parseGradientColors(bgMatch[1]);
+        if (parsed.length > 0) stops = parsed;
       }
     }
+    if (stops) return compositeGradientStops(stops, current, win, customPropMap);
     current = current.parentElement;
   }
   return null;
+}
+
+// A translucent gradient stop (e.g. a faint `rgba(52,192,168,0.09)` accent
+// glow) paints over whatever surface sits beneath the gradient — the browser
+// composites it, so its effective color is far closer to the base than to the
+// full-opacity accent. Treating the stop as opaque flags every text child of a
+// softly-glowing section as low-contrast (issue #409 Case B). Composite each
+// alpha stop over the resolved surface beneath the gradient element. When that
+// surface isn't resolvable (another gradient above, no opaque ancestor), drop
+// the translucent stop rather than guess: a dropped stop can't manufacture a
+// false finding, and skipping beats a wrong ratio.
+function compositeGradientStops(stops, gradientEl, win, customPropMap) {
+  const hasAlpha = stops.some(s => (s.a ?? 1) < 0.99);
+  if (!hasAlpha) return stops;
+  const base = resolveBackground(gradientEl.parentElement || gradientEl, win, customPropMap);
+  const out = [];
+  for (const s of stops) {
+    const a = s.a ?? 1;
+    if (a >= 0.99) { out.push(s); continue; }
+    if (base) out.push(compositeColorOver(s, base));
+    // else: unresolvable base — drop the translucent stop (skip, don't guess).
+  }
+  return out.length ? out : null;
 }
 
 // Parse a single CSS length token to pixels. Accepts "12px", "50%", a
@@ -3367,6 +3445,33 @@ function checkNumberedSectionLabelsDOM() {
   return checkNumberedSectionLabels({ candidates });
 }
 
+// Em-dash overuse (ADVISORY) — pure logic shared by the browser DOM check.
+// Mirrors the regex/static-HTML analyzer in engines/regex/detect-text.mjs:
+// two gates (absolute floor + density) so a long article using a few dashes is
+// left alone while a short, dash-per-clause page is flagged. Operates on
+// already-rendered text, so no HTML-entity decoding is needed (the browser has
+// resolved `&mdash;` to the literal glyph). Exported for jsdom unit tests.
+function checkEmDashOveruse(text) {
+  const body = typeof text === 'string' ? text.replace(/\s+/g, ' ') : '';
+  let count = 0;
+  const re = /[—]|--(?=\S)/g;
+  while (re.exec(body) !== null) count++;
+  if (count < EM_DASH_FLOOR) return [];
+  if (body.length > count * EM_DASH_CHARS_PER_DASH) return [];
+  return [{ id: 'em-dash-overuse', snippet: `${count} em-dashes in body text` }];
+}
+
+function checkEmDashOveruseDOM() {
+  const body = document.body;
+  if (!body) return [];
+  // innerText reflects rendered, visible text; fall back to textContent for
+  // engines (jsdom) that don't compute innerText.
+  const text = typeof body.innerText === 'string' && body.innerText
+    ? body.innerText
+    : (body.textContent || '');
+  return checkEmDashOveruse(text);
+}
+
 function checkElementMotionDOM(el) {
   const tag = el.tagName.toLowerCase();
   if (SAFE_TAGS.has(tag)) return [];
@@ -3471,6 +3576,131 @@ function checkElementAIPaletteDOM(el) {
   }
 
   return findings;
+}
+
+// ─── Decorative radial spotlight glow ───────────────────────────────────────
+// A soft, low-opacity chromatic radial-gradient fading to transparent, painted
+// as a decorative wash behind a hero or section. The translucent sibling of the
+// `radial-halo` tell: `radial-halo` requires a saturated, near-opaque center on
+// a dark page; this catches the low-alpha "spotlight" the halo gate lets slip
+// (e.g. `radial-gradient(circle at 52% 38%, rgba(80,111,255,0.26),
+// transparent 44%)`). The two alpha bands are disjoint, so they never
+// double-report the same declaration.
+const SPOTLIGHT_COLOR_TOKEN_RE = /(?:rgba?|hsla?|oklch|oklab|lab|lch|hwb|color-mix)\([^)]*(?:\([^)]*\))?[^)]*\)|#[0-9a-f]{3,8}\b|\btransparent\b/i;
+
+// Parse the FIRST non-repeating radial-gradient in a background value into its
+// ordered color stops. Each stop is { color: {r,g,b,a} | null, transparent }.
+// Returns null when there is no plain radial-gradient to read.
+function parseRadialGradientStops(value) {
+  if (!value || !/radial-gradient/i.test(value)) return null;
+  const gradRe = /(repeating-)?radial-gradient\(/gi;
+  let g;
+  while ((g = gradRe.exec(value)) !== null) {
+    if (g[1]) continue; // repeating-* is a pattern, not a spotlight
+    let depth = 0, end = -1;
+    const open = value.indexOf('(', g.index);
+    for (let i = open; i < value.length; i++) {
+      if (value[i] === '(') depth++;
+      else if (value[i] === ')') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end < 0) return null;
+    const args = splitTopLevelCommas(value.slice(open + 1, end));
+    // The optional prelude (shape / size / `at <pos>`) carries no color token.
+    const stopArgs = args.filter(a => SPOTLIGHT_COLOR_TOKEN_RE.test(a));
+    if (stopArgs.length < 2) return null;
+    return stopArgs.map(a => {
+      const tok = a.match(SPOTLIGHT_COLOR_TOKEN_RE);
+      if (!tok) return { color: null, transparent: false };
+      if (/^transparent$/i.test(tok[0])) return { color: null, transparent: true };
+      const color = parseAnyColor(tok[0]);
+      return { color, transparent: !!color && (color.a ?? 1) <= 0.05 };
+    });
+  }
+  return null;
+}
+
+// Pure gate. `label` is a stable identifier the fixture test keys on.
+function checkRadialSpotlight({ gradientValue, width, height, label }) {
+  const stops = parseRadialGradientStops(gradientValue);
+  if (!stops || stops.length < 2) return [];
+
+  // Must fade OUT: the last stop is transparent / near-zero alpha. A gradient
+  // between two visible surfaces is a real background, not a floating glow.
+  const last = stops[stops.length - 1];
+  const lastAlpha = last.transparent ? 0 : (last.color ? (last.color.a ?? 1) : 1);
+  if (lastAlpha > 0.05) return [];
+
+  // The visible (non-transparent, parseable) color stops.
+  const colored = stops.filter(s => !s.transparent && s.color && (s.color.a ?? 1) > 0.05);
+  if (colored.length === 0) return [];
+  // One soft glow, not a multi-color composition: at most two visible stops.
+  if (colored.length > 2) return [];
+  // Every visible stop must be LOW opacity. Any opaque stop means a real fill
+  // or a saturated halo (`radial-halo`'s job), not this translucent spotlight.
+  if (colored.some(s => (s.color.a ?? 1) >= 0.45)) return [];
+  // At least one visible stop must be chromatic. A neutral (grayscale)
+  // near-black / near-white vignette is a legitimate lighting move, exempt.
+  const chromatic = colored.find(s => hasChroma(s.color, 24));
+  if (!chromatic) return [];
+
+  // Decorative-scale gate. Badges, avatars, and actual small "lights" are
+  // exempt; a spotlight glow only reads as slop when it washes a large surface.
+  if (!(width >= 240 && height >= 160)) return [];
+
+  const alpha = (chromatic.color.a ?? 1).toFixed(2);
+  const name = label || 'section';
+  return [{
+    id: 'radial-spotlight-glow',
+    snippet: `radial-gradient spotlight glow "${name}" (${colorToHex(chromatic.color)} a${alpha} → transparent) on ${Math.round(width)}x${Math.round(height)} surface`,
+  }];
+}
+
+// Read the raw radial-gradient source off an element's computed style, with a
+// fallback to the `background` shorthand and the inline style attribute for
+// engines that don't decompose the shorthand into backgroundImage.
+function elementGradientValue(style, el) {
+  const bgImage = style.backgroundImage && style.backgroundImage !== 'none' ? style.backgroundImage : '';
+  if (/radial-gradient/i.test(bgImage)) return bgImage;
+  const bg = style.background || '';
+  if (/radial-gradient/i.test(bg)) return bg;
+  const rawStyle = el?.getAttribute?.('style') || '';
+  const m = rawStyle.match(/background(?:-image)?\s*:\s*([^;]+)/i);
+  if (m && /radial-gradient/i.test(m[1])) return m[1];
+  return '';
+}
+
+function spotlightLabel(el) {
+  const dataName = el.getAttribute?.('data-name');
+  if (dataName) return dataName;
+  if (typeof el.id === 'string' && el.id) return el.id;
+  const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] : '';
+  if (cls) return cls;
+  return el.tagName ? el.tagName.toLowerCase() : 'section';
+}
+
+function checkElementRadialSpotlightDOM(el) {
+  const style = getComputedStyle(el);
+  const gradientValue = elementGradientValue(style, el);
+  if (!gradientValue) return [];
+  const rect = el.getBoundingClientRect();
+  return checkRadialSpotlight({
+    gradientValue,
+    width: rect.width,
+    height: rect.height,
+    label: spotlightLabel(el),
+  });
+}
+
+function checkElementRadialSpotlight(el, style, tag, window) {
+  const gradientValue = elementGradientValue(style, el);
+  if (!gradientValue) return [];
+  // Static engine does no layout — read explicit pixel dimensions from CSS.
+  return checkRadialSpotlight({
+    gradientValue,
+    width: parseFloat(style.width) || 0,
+    height: parseFloat(style.height) || 0,
+    label: spotlightLabel(el),
+  });
 }
 
 const QUALITY_TEXT_TAGS = new Set(['p', 'li', 'td', 'th', 'dd', 'blockquote', 'figcaption']);
@@ -3594,6 +3824,55 @@ function textDescendantsFlushSides(el, rect) {
   return flush;
 }
 
+// Screen-reader-only ("visually hidden") text is exempt from the tiny-text
+// floors: it is never rendered, so its size is irrelevant. Detect the two
+// standard idioms — a known sr-only class on the element or an ancestor, and
+// the clip / 1px-box pattern. Works in both jsdom (declared styles) and the
+// browser (computed styles).
+const SR_ONLY_SELECTOR = '.sr-only, .visually-hidden, .visuallyhidden, .screen-reader, .screen-reader-only, .screenreader, .a11y-hidden, .hidden-visually, [class*="sr-only" i], [class*="visually-hidden" i], [class*="visuallyhidden" i], [class*="screen-reader" i], [class*="screenreader" i]';
+function isVisuallyHidden(el, style) {
+  if ((el.matches && el.matches(SR_ONLY_SELECTOR)) || (el.closest && el.closest(SR_ONLY_SELECTOR))) return true;
+  const pos = style.position || '';
+  if (pos === 'absolute' || pos === 'fixed') {
+    const clip = style.clip || '';
+    const clipPath = style.clipPath || style.webkitClipPath || style['clip-path'] || '';
+    if (/rect\(\s*0/.test(clip) || /inset\(\s*(?:50%|99|100%)/.test(clipPath)) return true;
+    const w = parseFloat(style.width);
+    const h = parseFloat(style.height);
+    const overflow = style.overflow || '';
+    if ((w === 1 || h === 1) && (overflow === 'hidden' || overflow === 'clip')) return true;
+  }
+  return false;
+}
+
+// Elements whose text is never painted: document metadata and script/style
+// payloads. Their JS / CSS / JSON-LD text satisfies `hasDirectText`, and on
+// sites that set `html { font-size: 62.5% }` their inherited computed size is
+// 10px — so the text-size floors flag them as tiny body copy even though
+// nothing renders (issue #408: dozens of phantom "10px body text" findings on
+// every Shopify page). Exclude them, plus anything the cascade resolves to
+// display:none / visibility:hidden. The jsdom path can't lay out, so the
+// tag/attribute-based exclusions carry the weight there; the display checks are
+// computed-style reads that resolve without layout in both adapters.
+const NON_RENDERED_TAGS = new Set([
+  'script', 'style', 'title', 'noscript', 'template', 'head',
+  'meta', 'link', 'base', 'param', 'source', 'track', 'datalist',
+  'col', 'colgroup', 'map', 'area',
+]);
+function isNonRenderedText(el, tag, style) {
+  const t = (tag || '').toLowerCase();
+  if (NON_RENDERED_TAGS.has(t)) return true;
+  // Descendants of <head> never render even when the tag itself would
+  // (some sites nest <noscript>/<template> content there).
+  if (el && el.closest && el.closest('head')) return true;
+  if (style) {
+    if (style.display === 'none') return true;
+    const vis = style.visibility;
+    if (vis === 'hidden' || vis === 'collapse') return true;
+  }
+  return false;
+}
+
 // Pure quality checks. Most run on computed CSS and DOM-only inputs (work in
 // jsdom and the browser). Two checks (line-length, cramped-padding) gate on
 // element rect dimensions, which jsdom can't compute — pass `rect: null` from
@@ -3604,8 +3883,13 @@ function textDescendantsFlushSides(el, rect) {
 function checkQuality(opts) {
   const { el, tag, style, hasDirectText, textLen, fontSize, lineHeightPx, letterSpacingPx, rect, lineMax = 80, viewportWidth = 0, win = null } = opts;
   const findings = [];
-  // Skip browser extension injected elements
-  const elId = el.id || '';
+  // Skip browser extension injected elements. Read the id via getAttribute
+  // whenever `el.id` is not a string: on a <form> (and other
+  // [LegacyOverrideBuiltIns] hosts) a named control like <input name="id">
+  // shadows the builtin `id` getter and returns the control element, whose
+  // `.startsWith` is undefined and throws (issue #407 — every Shopify product
+  // form ships an <input name="id">).
+  const elId = typeof el.id === 'string' ? el.id : (el.getAttribute?.('id') || '');
   if (elId.startsWith('claude-') || elId.startsWith('cic-')) return findings;
 
   // --- Line length too long --- (browser-only: needs rect.width)
@@ -3873,8 +4157,64 @@ function checkQuality(opts) {
     const skipTags = ['sub', 'sup', 'code', 'kbd', 'samp', 'var', 'caption', 'figcaption'];
     const inUIContext = el.closest && el.closest('button, a, label, summary, pre, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], nav, footer, [aria-hidden="true"], [class*="badge" i], [class*="caption" i], [class*="chip" i], [class*="code" i], [class*="console" i], [class*="diff" i], [class*="label" i], [class*="meta" i], [class*="mock" i], [class*="pill" i], [class*="preview" i], [class*="tag" i], [class*="terminal" i], [class*="writes" i]');
     const isUppercase = style.textTransform === 'uppercase';
-    if (!skipTags.includes(tag) && !inUIContext && !isUppercase) {
+    if (!skipTags.includes(tag) && !inUIContext && !isUppercase && !isNonRenderedText(el, tag, style)) {
       findings.push({ id: 'tiny-text', snippet: `${fontSize}px body text` });
+    }
+  }
+
+  // --- Undersized functional / UI text ---
+  // Complements `tiny-text` above, which owns long body copy and deliberately
+  // EXEMPTS the UI furniture layer (nav, footer, links, buttons, labels,
+  // uppercase micro-labels). This rule targets exactly that blind spot: the
+  // interactive and short content-bearing text — nav items, buttons, labels,
+  // table cells, meta rows, timecodes — shipped below an 11px floor.
+  //
+  // The live failure it closes: a build shipped its entire furniture layer at
+  // 8px, and the design hook waved it through because 8px had been added to
+  // the DESIGN.md size ramp. Being on the ramp is a token argument, not a
+  // legibility one, so this rule ignores the design system entirely — a value
+  // on the ramp is still flagged.
+  //
+  // Floors: 11px for anything functional. The floor holds inside a footer;
+  // only NON-interactive legal smallprint gets the softer 10px floor. Exempts
+  // sup/sub, visually-hidden (sr-only) text, and code/terminal contexts.
+  // Uppercase letterspaced micro-labels are still functional — not exempt.
+  {
+    const directText = [...el.childNodes]
+      .filter(n => n.nodeType === 3)
+      .map(n => n.textContent || '')
+      .join('')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const dtLen = directText.length;
+    // `option` renders (in native select popups) so it stays a local skip;
+    // script/style/title/noscript/head-descendants and display:none /
+    // visibility:hidden are handled by isNonRenderedText (shared with tiny-text).
+    const UI_SKIP_TAGS = new Set(['sub', 'sup', 'option']);
+    // jsdom resolves the parent chain in resolveFontSizePx, so em/rem/%-sized
+    // text that computes at or above the floor never reaches here. The browser
+    // adapter additionally catches values only resolvable with real layout
+    // (e.g. viewport-relative units, cascade winners set in linked sheets).
+    if (fontSize > 0 && fontSize < 11 && dtLen >= 2 && !UI_SKIP_TAGS.has(tag) && !isNonRenderedText(el, tag, style)) {
+      const EXEMPT_CONTEXT = 'pre, code, kbd, samp, var, svg, [aria-hidden="true"], [class*="terminal" i], [class*="console" i], [class*="code" i], [class*="mock" i], [class*="editor" i], [class*="syntax" i], [class*="diff" i]';
+      const isExemptContext = (el.matches && el.matches(EXEMPT_CONTEXT)) || (el.closest && el.closest(EXEMPT_CONTEXT));
+      if (!isExemptContext && !isVisuallyHidden(el, style)) {
+        const INTERACTIVE = 'a[href], button, summary, label, select, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"], [role="treeitem"], [tabindex]';
+        const FURNITURE = 'nav, [role="navigation"], td, th, [role="gridcell"], [role="cell"], caption, figcaption, dt, dd, footer, [class*="meta" i], [class*="label" i], [class*="badge" i], [class*="chip" i], [class*="pill" i], [class*="tag" i], [class*="kicker" i], [class*="eyebrow" i], [class*="breadcrumb" i], [class*="timestamp" i], [class*="category" i], [class*="caption" i], [class*="nav" i]';
+        const SMALLPRINT = 'small, footer, [class*="legal" i], [class*="copyright" i], [class*="fineprint" i], [class*="fine-print" i], [class*="smallprint" i], [class*="small-print" i], [class*="disclaimer" i], [class*="disclosure" i], [class*="footnote" i]';
+        const isInteractive = (el.matches && el.matches(INTERACTIVE)) || (el.closest && el.closest(INTERACTIVE));
+        const isFurniture = (el.matches && el.matches(FURNITURE)) || (el.closest && el.closest(FURNITURE));
+        const isSmallprint = (el.matches && el.matches(SMALLPRINT)) || (el.closest && el.closest(SMALLPRINT));
+        const floor = (!isInteractive && isSmallprint) ? 10 : 11;
+        // Fire on functional text only: interactive, structural furniture, or
+        // any short (<=20-char) run — the label / meta / timecode shape. Long
+        // non-furniture body copy stays with `tiny-text`, so the two rules
+        // never double-flag the same element.
+        if (fontSize < floor && (isInteractive || isFurniture || dtLen <= 20)) {
+          const excerpt = directText.slice(0, 40);
+          findings.push({ id: 'undersized-ui-text', snippet: `${fontSize}px functional text "${excerpt}" (below ${floor}px floor)` });
+        }
+      }
     }
   }
 
@@ -4068,7 +4408,7 @@ function checkElementColors(el, style, tag, window, customPropMap, hasAnchorInhe
     textColor,
     bgColor: ownBg,
     effectiveBg: finalEffectiveBg,
-    effectiveBgStops: finalEffectiveBg ? null : resolveGradientStops(el, window),
+    effectiveBgStops: finalEffectiveBg ? null : resolveGradientStops(el, window, customPropMap),
     fontSize: parseFloat(style.fontSize) || 16,
     fontWeight: parseInt(style.fontWeight) || 400,
     hasDirectText,
@@ -6373,7 +6713,11 @@ if (IS_BROWSER) {
   function generateSelector(el) {
     if (el === document.body) return 'body';
     if (el === document.documentElement) return 'html';
-    if (el.id) return '#' + CSS.escape(el.id);
+    // Read via getAttribute when `el.id` is not a string — a <form> with a
+    // named control (e.g. <input name="id">) shadows the builtin getter and
+    // returns the element, producing a garbage `#[object …]` selector (#407).
+    const elId = typeof el.id === 'string' ? el.id : (el.getAttribute('id') || '');
+    if (elId) return '#' + CSS.escape(elId);
 
     const parts = [];
     let current = el;
@@ -7066,6 +7410,10 @@ if (IS_BROWSER) {
           type: f.type || f.id,
           category: ap ? ap.category : 'quality',
           severity: f.severity || ap?.severity || 'warning',
+          // Advisory findings (em-dash overuse, etc.) are surfaced but never
+          // treated as failures; carry the flag so the overlay/extension can
+          // render them with the mildest affordance and consumers can filter.
+          advisory: (ap && ap.advisory === true) || f.advisory === true,
           detail: f.detail || f.snippet,
           ignoreValue: f.ignoreValue || f.value || '',
           name: ap ? ap.name : (f.type || f.id),
@@ -7306,8 +7654,11 @@ if (IS_BROWSER) {
     for (const el of document.querySelectorAll('*')) {
       // Skip impeccable's own elements and any descendants (overlays, labels, banner, nav buttons)
       if (el.closest('.impeccable-overlay, .impeccable-label, .impeccable-banner, .impeccable-tooltip')) continue;
-      // Skip browser extension elements (Claude, etc.)
-      const elId = el.id || '';
+      // Skip browser extension elements (Claude, etc.). Use getAttribute when
+      // `el.id` is not a string: a <form> with a named control like
+      // <input name="id"> shadows the builtin `id` getter and returns the
+      // element, whose `.startsWith` throws (issue #407).
+      const elId = typeof el.id === 'string' ? el.id : (el.getAttribute('id') || '');
       if (elId.startsWith('claude-') || elId.startsWith('cic-')) continue;
       // Skip the impeccable live-mode overlay (highlight, tooltip, bar, picker, toast).
       // These are inspector chrome, not part of the user's design.
@@ -7322,6 +7673,7 @@ if (IS_BROWSER) {
         ...checkElementMotionDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementGlowDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementAIPaletteDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
+        ...checkElementRadialSpotlightDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementIconTileDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementItalicSerifDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
         ...checkElementQualityDOM(el).map(f => ({ type: f.id, detail: f.snippet })),
@@ -7382,6 +7734,17 @@ if (IS_BROWSER) {
     if (repeatedTextFindings.length > 0) {
       pageLevelFindings.push(...repeatedTextFindings);
       addBrowserFindings(groupMap, document.body, repeatedTextFindings);
+    }
+
+    // Em-dash overuse (advisory): browser parity with the static/regex path.
+    // Reads rendered body text so it catches dashes written as HTML entities.
+    // serializeFindings stamps the advisory flag from the registry.
+    const emDashFindings = checkEmDashOveruseDOM()
+      .map(f => ({ type: f.id, detail: f.snippet }))
+      .filter(f => _ruleOk(f.type));
+    if (emDashFindings.length > 0) {
+      pageLevelFindings.push(...emDashFindings);
+      addBrowserFindings(groupMap, document.body, emDashFindings);
     }
 
     const layoutFindings = checkLayout().filter(f => _ruleOk(f.type));

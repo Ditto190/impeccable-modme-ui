@@ -6,6 +6,7 @@ export const OPT_IN_SUITES = [
   'cli-remote-e2e',
   'live-e2e',
   'live-e2e-accept-cleanup',
+  'new-work-e2e',
   'skill-behavior',
   'live-svelte-adapter-deepseek',
 ];
@@ -86,7 +87,7 @@ export const SUITES = {
       /^scripts\/(benchmark-detector|build-browser-detector|build-extension)\.js$/,
       /^site\/(pages\/detector|public\/antipattern|data\/anti-patterns-catalog\.js)/,
       /^tests\/design-system\.test\.mjs$/,
-      /^tests\/(detect-antipatterns|detect-url-launch|inline-ignores|extension-build|fixtures\/antipatterns)/,
+      /^tests\/(detect-antipatterns|detect-cli-design-contamination|detect-url-launch|inline-ignores|extension-build|fixtures\/antipatterns)/,
     ],
     commands: [
       {
@@ -105,6 +106,7 @@ export const SUITES = {
           'tests/design-system.test.mjs',
           'tests/detect-antipatterns-fixtures.test.mjs',
           'tests/detect-antipatterns-browser.test.mjs',
+          'tests/detect-cli-design-contamination.test.mjs',
         ],
       },
     ],
@@ -153,6 +155,7 @@ export const SUITES = {
           'tests/live-session-store.test.mjs',
           'tests/live-source-lock.test.mjs',
           'tests/live-source-search.test.mjs',
+          'tests/live-tanstack-adapter.test.mjs',
           'tests/live-target-context.test.mjs',
           'tests/live-wrap.test.mjs',
           'tests/live-wrap-buffer-aware.test.mjs',
@@ -219,6 +222,24 @@ export const SUITES = {
         timeoutMs: 600000,
         forceExit: true,
         files: ['tests/live-e2e.test.mjs'],
+      },
+    ],
+  },
+  'new-work-e2e': {
+    description: 'Playwright smoke sweep of the new-work concept/serve-question decision page plus the offline fake image generator.',
+    optIn: true,
+    needsPlaywright: true,
+    triggers: [
+      ...COMMON_INFRA_PATTERNS,
+      /^skill\/scripts\/(serve-question|generate-image|concept-seed)\.mjs$/,
+      /^tests\/new-work-e2e(\.test\.mjs|\/)/,
+    ],
+    commands: [
+      {
+        runner: 'node',
+        timeoutMs: 600000,
+        forceExit: true,
+        files: ['tests/new-work-e2e.test.mjs'],
       },
     ],
   },

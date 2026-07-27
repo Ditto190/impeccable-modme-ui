@@ -254,6 +254,43 @@ describe('wrapCli integration', () => {
   });
 
 
+  it('--defer-source-write leaves source untouched and returns the wrapper block', () => {
+    const html = `<!DOCTYPE html>
+<html>
+<body>
+  <div class="hero-section">
+    <h1>Hello World</h1>
+    <p>Welcome to our site.</p>
+  </div>
+</body>
+</html>`;
+    const file = join(tmp, 'index.html');
+    writeFileSync(file, html);
+
+    const result = JSON.parse(execSync(
+      `node skill/scripts/live-wrap.mjs --id defer1 --count 3 --classes "hero-section" --defer-source-write --file "${file}"`,
+      { cwd: process.cwd(), encoding: 'utf-8' }
+    ));
+
+    // Source is NOT written by the preflight (no reload storm).
+    assert.equal(readFileSync(file, 'utf-8'), html);
+
+    // Deferred contract fields present for the agent's atomic edit.
+    assert.equal(result.sourceWritten, false);
+    assert.ok(typeof result.wrapperBlock === 'string' && result.wrapperBlock.length > 0);
+    assert.ok(result.wrapperBlock.includes('data-impeccable-variants="defer1"'));
+    assert.ok(result.wrapperBlock.includes('Variants: insert below this line'));
+    assert.ok(result.wrapperBlock.includes('impeccable-variants-end defer1'));
+    assert.equal(typeof result.replaceStartLine, 'number');
+    assert.equal(typeof result.replaceEndLine, 'number');
+
+    // The replace range points at the picked <div class="hero-section"> block
+    // (1-indexed lines 4..7 of the source above).
+    const lines = html.split('\n');
+    assert.ok(lines[result.replaceStartLine - 1].includes('class="hero-section"'));
+    assert.ok(lines[result.replaceEndLine - 1].includes('</div>'));
+  });
+
   it('wraps a JSX element and uses JSX comment syntax', () => {
     const jsx = `export default function App() {
   return (

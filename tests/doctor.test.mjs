@@ -39,7 +39,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(scratch, { recursive: true, force: true });
+  // These tests run real git subprocesses in the scratch dir; on Node 22 a
+  // recursive delete can race git's object writes and fail the whole test
+  // with ENOTEMPTY (seen in CI). maxRetries/retryDelay make rmSync retry
+  // exactly those transient errors.
+  fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 function write(rel, body) {
@@ -271,6 +275,104 @@ describe('checkHookInstallation', () => {
       checkHookInstallation({ projectRoot: scratch, repoRoot: scratch, providerId: 'source' }),
       [],
     );
+  });
+
+  // The manifest `impeccable hooks on` actually writes, verbatim: a
+  // `${CLAUDE_PROJECT_DIR}`-relative command. Claude Code expands the variable
+  // to the project dir at hook time; the doctor must expand it the same way
+  // (issue #402) instead of existsSync-ing the literal `${CLAUDE_PROJECT_DIR}/...`.
+  const claudeManifest = () => ({
+    hooks: {
+      PostToolUse: [{
+        matcher: 'Edit|Write|MultiEdit',
+        hooks: [{ type: 'command', command: 'node "${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scripts/hook.mjs"' }],
+      }],
+      Stop: [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scripts/hook.mjs"' }] }],
+    },
+  });
+
+  it('stays quiet for a ${CLAUDE_PROJECT_DIR} manifest when the script exists at root', () => {
+    write('.claude/skills/impeccable/scripts/hook.mjs', '// hook\n');
+    write('.claude/settings.json', JSON.stringify(claudeManifest()));
+    assert.deepEqual(
+      checkHookInstallation({ projectRoot: scratch, repoRoot: scratch, providerId: 'claude-code' }),
+      [],
+    );
+  });
+
+  it('still flags a genuinely missing script behind ${CLAUDE_PROJECT_DIR}', () => {
+    // Placeholder expands to a real path that does not exist: the check must
+    // stay real, not neutered into always-quiet.
+    write('.claude/settings.json', JSON.stringify(claudeManifest()));
+    const findings = checkHookInstallation({
+      projectRoot: scratch, repoRoot: scratch, providerId: 'claude-code',
+    });
+    assert.deepEqual(ids(findings), ['hook-script-missing']);
+  });
+
+  it('handles the #399 guarded project-relative form', () => {
+    const p = '"${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scripts/hook.mjs"';
+    const guarded = `[ ! -f ${p} ] || node ${p}`;
+    write('.claude/settings.json', JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ command: guarded }] }] },
+    }));
+    // missing → flagged
+    assert.deepEqual(
+      ids(checkHookInstallation({ projectRoot: scratch, repoRoot: scratch, providerId: 'claude-code' })),
+      ['hook-script-missing'],
+    );
+    // present → quiet
+    write('.claude/skills/impeccable/scripts/hook.mjs', '// hook\n');
+    assert.deepEqual(
+      checkHookInstallation({ projectRoot: scratch, repoRoot: scratch, providerId: 'claude-code' }),
+      [],
+    );
+  });
+
+  it('handles the #399 guarded absolute form (user-level installs)', () => {
+    const abs = path.join(scratch, '.claude', 'skills', 'impeccable', 'scripts', 'hook.mjs');
+    const p = JSON.stringify(abs);
+    const guarded = `[ ! -f ${p} ] || node ${p}`;
+    write('.claude/settings.json', JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ command: guarded }] }] },
+    }));
+    // absolute path missing → flagged
+    assert.deepEqual(
+      ids(checkHookInstallation({ projectRoot: scratch, repoRoot: scratch, providerId: 'claude-code' })),
+      ['hook-script-missing'],
+    );
+    // present → quiet
+    write('.claude/skills/impeccable/scripts/hook.mjs', '// hook\n');
+    assert.deepEqual(
+      checkHookInstallation({ projectRoot: scratch, repoRoot: scratch, providerId: 'claude-code' }),
+      [],
+    );
+  });
+
+  it('never reports missing for the GitHub $(git rev-parse) form', () => {
+    // Command substitution is not statically resolvable; a doctor must not
+    // assert a negative it cannot verify.
+    write('.github/hooks/impeccable.json', JSON.stringify({
+      hooks: { postToolUse: [{ bash: 'node "$(git rev-parse --show-toplevel)/.github/skills/impeccable/scripts/hook.mjs"' }] },
+    }));
+    assert.deepEqual(
+      checkHookInstallation({ projectRoot: scratch, repoRoot: scratch, providerId: 'github' }),
+      [],
+    );
+  });
+
+  it('never reports missing for plugin-root placeholders the doctor cannot map', () => {
+    for (const token of ['${CLAUDE_PLUGIN_ROOT}', '${PLUGIN_ROOT}', '${GROK_PLUGIN_ROOT}']) {
+      fs.rmSync(path.join(scratch, '.claude'), { recursive: true, force: true });
+      write('.claude/settings.json', JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ command: `node "${token}/skills/impeccable/scripts/hook.mjs"` }] }] },
+      }));
+      assert.deepEqual(
+        checkHookInstallation({ projectRoot: scratch, repoRoot: scratch, providerId: 'claude-code' }),
+        [],
+        `expected no finding for ${token}`,
+      );
+    }
   });
 });
 

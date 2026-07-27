@@ -53,6 +53,8 @@ import {
   IMMEDIATE_TIER_RULES,
   splitFindingsByTier,
   perEditTieringActive,
+  ADVISORY_RULES,
+  isAdvisoryFinding,
   payload,
   extractFindingIgnoreValue,
   resolveProjectPlatform,
@@ -414,6 +416,39 @@ describe('filterFindings()', () => {
       limits: DEFAULT_CONFIG.limits,
     });
     assert.deepEqual(filtered.map((f) => f.antipattern), ['gradient-text', 'overused-font']);
+  });
+
+  it('drops advisory-rule findings by default', () => {
+    const findings = [
+      finding('side-tab', 1),
+      finding('em-dash-overuse', 2),
+      finding('gradient-text', 3),
+    ];
+    const filtered = filterFindings(findings, '', '.html', {
+      ignoreRules: [],
+      limits: DEFAULT_CONFIG.limits,
+    });
+    assert.deepEqual(filtered.map((f) => f.antipattern), ['side-tab', 'gradient-text']);
+  });
+
+  it('keeps advisory-rule findings when advisoryRules is "include"', () => {
+    const findings = [
+      finding('side-tab', 1),
+      finding('em-dash-overuse', 2),
+    ];
+    const filtered = filterFindings(findings, '', '.html', {
+      ignoreRules: [],
+      advisoryRules: 'include',
+      limits: DEFAULT_CONFIG.limits,
+    });
+    assert.deepEqual(filtered.map((f) => f.antipattern), ['side-tab', 'em-dash-overuse']);
+  });
+
+  it('recognizes advisory findings by rule id or explicit flag', () => {
+    assert.ok(ADVISORY_RULES.has('em-dash-overuse'));
+    assert.equal(isAdvisoryFinding(finding('em-dash-overuse', 1)), true);
+    assert.equal(isAdvisoryFinding({ antipattern: 'anything', advisory: true }), true);
+    assert.equal(isAdvisoryFinding(finding('side-tab', 1)), false);
   });
 
   it('does not treat source comments as hook suppression', () => {
@@ -3147,12 +3182,12 @@ describe('runHook() — per-edit tiering', () => {
   it('splitFindingsByTier partitions on IMMEDIATE_TIER_RULES', () => {
     const { immediate, deferred } = splitFindingsByTier([
       finding('dark-glow', 1),
-      finding('em-dash-overuse', 2),
+      finding('marketing-buzzword', 2),
       finding('low-contrast', 3),
       finding('side-tab', 4),
     ]);
     assert.deepEqual(immediate.map((f) => f.antipattern), ['dark-glow', 'low-contrast']);
-    assert.deepEqual(deferred.map((f) => f.antipattern), ['em-dash-overuse', 'side-tab']);
+    assert.deepEqual(deferred.map((f) => f.antipattern), ['marketing-buzzword', 'side-tab']);
     for (const f of immediate) assert.ok(IMMEDIATE_TIER_RULES.has(f.antipattern));
   });
 
@@ -3167,13 +3202,13 @@ describe('runHook() — per-edit tiering', () => {
   it('surfaces immediate-tier findings per edit and defers copy-tier ones', async () => {
     const file = write('src/Card.tsx', 'noop');
     const det = fakeDetector([
-      finding('em-dash-overuse', 3),
+      finding('marketing-buzzword', 3),
       finding('dark-glow', 5),
     ]);
     const r = await runHook({ stdinJson: JSON.stringify(eventFor(file)), env: {}, cwd, detector: det });
     assert.match(r.stdout, /Design hook findings requiring review/);
     assert.match(r.stdout, /dark-glow/);
-    assert.doesNotMatch(r.stdout, /em-dash-overuse/);
+    assert.doesNotMatch(r.stdout, /marketing-buzzword/);
     assert.equal(r.audit.deferred, 1);
 
     const cache = readCache(cwd);
@@ -3182,10 +3217,10 @@ describe('runHook() — per-edit tiering', () => {
 
   it('emits a clean ack when all findings are deferred, and still marks the file touched', async () => {
     const file = write('src/Copy.tsx', 'noop');
-    const det = fakeDetector([finding('em-dash-overuse', 2)]);
+    const det = fakeDetector([finding('marketing-buzzword', 2)]);
     const r = await runHook({ stdinJson: JSON.stringify(eventFor(file, 'tier-deferred-only')), env: {}, cwd, detector: det });
     assert.match(r.stdout, /No deterministic design-quality issues found/);
-    assert.doesNotMatch(r.stdout, /em-dash-overuse/);
+    assert.doesNotMatch(r.stdout, /marketing-buzzword/);
     assert.equal(r.audit.deferred, 1);
 
     // The touched-file entry is what lets the Stop deep pass find this file.
@@ -3198,10 +3233,10 @@ describe('runHook() — per-edit tiering', () => {
     fs.mkdirSync(path.join(cwd, '.impeccable'), { recursive: true });
     fs.writeFileSync(getConfigPath(cwd), JSON.stringify({ hook: { perEditRules: 'all' } }));
     const file = write('src/Card.tsx', 'noop');
-    const det = fakeDetector([finding('em-dash-overuse', 2)]);
+    const det = fakeDetector([finding('marketing-buzzword', 2)]);
     const r = await runHook({ stdinJson: JSON.stringify(eventFor(file, 'tier-all')), env: {}, cwd, detector: det });
     assert.match(r.stdout, /Design hook findings requiring review/);
-    assert.match(r.stdout, /em-dash-overuse/);
+    assert.match(r.stdout, /marketing-buzzword/);
     assert.equal(r.audit.deferred, undefined);
   });
 
@@ -3213,11 +3248,33 @@ describe('runHook() — per-edit tiering', () => {
       toolName: 'edit',
       toolArgs: JSON.stringify({ path: file }),
     };
-    const det = fakeDetector([finding('em-dash-overuse', 2)]);
+    const det = fakeDetector([finding('marketing-buzzword', 2)]);
     const r = await runHook({ stdinJson: JSON.stringify(githubEvent), env: {}, cwd, detector: det });
     assert.equal(r.audit.harness, 'github');
     const out = JSON.parse(r.stdout);
-    assert.match(out.additionalContext, /em-dash-overuse/);
+    assert.match(out.additionalContext, /marketing-buzzword/);
+  });
+
+  it('skips advisory findings per edit by default and never nags about them', async () => {
+    const file = write('src/Copy.tsx', 'noop');
+    const det = fakeDetector([finding('em-dash-overuse', 3)]);
+    const r = await runHook({ stdinJson: JSON.stringify(eventFor(file, 'adv-skip')), env: {}, cwd, detector: det });
+    // The only finding is advisory, so the file scans clean.
+    assert.match(r.stdout, /No deterministic design-quality issues found/);
+    assert.doesNotMatch(r.stdout, /em-dash-overuse/);
+  });
+
+  it('includes advisory findings per edit when detector.advisoryRules is "include"', async () => {
+    fs.mkdirSync(path.join(cwd, '.impeccable'), { recursive: true });
+    fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
+      hook: { perEditRules: 'all' },
+      detector: { advisoryRules: 'include' },
+    }));
+    const file = write('src/Copy.tsx', 'noop');
+    const det = fakeDetector([finding('em-dash-overuse', 3)]);
+    const r = await runHook({ stdinJson: JSON.stringify(eventFor(file, 'adv-include')), env: {}, cwd, detector: det });
+    assert.match(r.stdout, /Design hook findings requiring review/);
+    assert.match(r.stdout, /em-dash-overuse/);
   });
 });
 
@@ -3257,14 +3314,14 @@ describe('runStopHook()', () => {
     const file = write('src/Card.tsx', 'noop');
     const det = fakeDetector([
       finding('dark-glow', 5),
-      finding('em-dash-overuse', 3),
+      finding('marketing-buzzword', 3),
       finding('side-tab', 7),
     ]);
 
     // Per-edit pass: surfaces dark-glow, defers the other two.
     const edit = await runHook({ stdinJson: JSON.stringify(editEvent(file, sid)), env: {}, cwd, detector: det });
     assert.match(edit.stdout, /dark-glow/);
-    assert.doesNotMatch(edit.stdout, /em-dash-overuse/);
+    assert.doesNotMatch(edit.stdout, /marketing-buzzword/);
 
     // Stop deep pass: surfaces exactly the deferred remainder.
     const stop = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
@@ -3272,7 +3329,7 @@ describe('runStopHook()', () => {
     assert.equal(stop.audit.emitted, true);
     const out = JSON.parse(stop.stdout);
     assert.equal(out.hookSpecificOutput.hookEventName, 'Stop');
-    assert.match(out.hookSpecificOutput.additionalContext, /em-dash-overuse/);
+    assert.match(out.hookSpecificOutput.additionalContext, /marketing-buzzword/);
     assert.match(out.hookSpecificOutput.additionalContext, /side-tab/);
     assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /dark-glow/);
     assert.equal(stop.emission.kind, 'stop-deep-pass');
@@ -3288,11 +3345,11 @@ describe('runStopHook()', () => {
   it('a second Stop fire is silent: deep-pass findings are remembered', async () => {
     const sid = 'stop-twice';
     const file = write('src/Card.tsx', 'noop');
-    const det = fakeDetector([finding('em-dash-overuse', 3)]);
+    const det = fakeDetector([finding('marketing-buzzword', 3)]);
 
     await runHook({ stdinJson: JSON.stringify(editEvent(file, sid)), env: {}, cwd, detector: det });
     const first = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
-    assert.match(first.stdout, /em-dash-overuse/);
+    assert.match(first.stdout, /marketing-buzzword/);
 
     const second = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
     assert.equal(second.stdout, '');
@@ -3303,15 +3360,84 @@ describe('runStopHook()', () => {
     const sid = 'stop-ignored';
     fs.mkdirSync(path.join(cwd, '.impeccable'), { recursive: true });
     fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
-      detector: { ignoreRules: ['em-dash-overuse'] },
+      detector: { ignoreRules: ['marketing-buzzword'] },
+    }));
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([finding('marketing-buzzword', 3)]);
+
+    await runHook({ stdinJson: JSON.stringify(editEvent(file, sid)), env: {}, cwd, detector: det });
+    const stop = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(stop.stdout, '');
+    assert.equal(stop.audit.skipped, 'stop-clean');
+  });
+
+  it('skips advisory findings in the deep pass by default', async () => {
+    const sid = 'stop-advisory';
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([finding('em-dash-overuse', 3)]);
+
+    await runHook({ stdinJson: JSON.stringify(editEvent(file, sid)), env: {}, cwd, detector: det });
+    const stop = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
+    // Silent either way: the advisory finding is dropped at the per-edit pass, so
+    // the file is never recorded as touched, and the deep pass has nothing to say.
+    assert.equal(stop.stdout, '');
+    assert.ok(['stop-clean', 'no-touched-files'].includes(stop.audit.skipped));
+  });
+
+  it('surfaces advisory findings in the deep pass when advisoryRules is "include"', async () => {
+    const sid = 'stop-advisory-include';
+    fs.mkdirSync(path.join(cwd, '.impeccable'), { recursive: true });
+    fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
+      detector: { advisoryRules: 'include' },
     }));
     const file = write('src/Card.tsx', 'noop');
     const det = fakeDetector([finding('em-dash-overuse', 3)]);
 
     await runHook({ stdinJson: JSON.stringify(editEvent(file, sid)), env: {}, cwd, detector: det });
     const stop = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(stop.audit.emitted, true);
+    const out = JSON.parse(stop.stdout);
+    assert.match(out.hookSpecificOutput.additionalContext, /em-dash-overuse/);
+  });
+
+  it('re-invoked with stop_hook_active:true exits 0 and silent even with pending findings (issue #400)', async () => {
+    const sid = 'stop-active';
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([finding('marketing-buzzword', 3)]);
+
+    // Prime a real touched-file + finding so a plain Stop pass would fire.
+    await runHook({ stdinJson: JSON.stringify(editEvent(file, sid)), env: {}, cwd, detector: det });
+
+    // Re-invocation after the previous fire kept the turn alive: the contract
+    // says exit clean, no re-block, before scanning.
+    const active = { ...stopEvent(sid), stop_hook_active: true };
+    const stop = await runStopHook({ stdinJson: JSON.stringify(active), env: {}, cwd, detector: det });
+    assert.equal(stop.exitCode, 0);
     assert.equal(stop.stdout, '');
-    assert.equal(stop.audit.skipped, 'stop-clean');
+    assert.equal(stop.audit.emitted, undefined);
+    assert.equal(stop.audit.skipped, 'stop-hook-active');
+  });
+
+  it('stop_hook_active:false or absent still runs the deep pass as before', async () => {
+    const sid = 'stop-inactive';
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([finding('marketing-buzzword', 3)]);
+    await runHook({ stdinJson: JSON.stringify(editEvent(file, sid)), env: {}, cwd, detector: det });
+
+    // Explicit false (the stopEvent default).
+    const explicitFalse = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(explicitFalse.audit.emitted, true);
+    assert.match(explicitFalse.stdout, /marketing-buzzword/);
+
+    // Field absent entirely (legacy / non-Claude-Code payloads): same behavior.
+    const sid2 = 'stop-absent';
+    const file2 = write('src/Card2.tsx', 'noop');
+    await runHook({ stdinJson: JSON.stringify(editEvent(file2, sid2)), env: {}, cwd, detector: det });
+    const ev = stopEvent(sid2);
+    delete ev.stop_hook_active;
+    const absent = await runStopHook({ stdinJson: JSON.stringify(ev), env: {}, cwd, detector: det });
+    assert.equal(absent.audit.emitted, true);
+    assert.match(absent.stdout, /marketing-buzzword/);
   });
 
   it('honors kill switches and the re-entrancy guard', async () => {

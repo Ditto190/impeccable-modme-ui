@@ -113,6 +113,8 @@ When `preActions` is omitted, steer smoke inherits `runtime.preActions` to revea
 | `astro/` | `src/layouts/Layout.astro` as inject target. HTML comments. |
 | `sveltekit/` | `src/app.html` shell + `src/routes/+page.svelte`. |
 | `nuxt-vite7/` | Nuxt 4 `app/` structure + Vue 3 SFC. Live loads through a generated dev-only client plugin. |
+| `tanstack-router-vite/` | Vite + TanStack Router (code-based SPA). Tracked `index.html` shell inject (the baseline Vite path, no adapter). |
+| `tanstack-start/` | Vite + TanStack Start (SSR). No static `index.html`; Live patches the `__root.tsx` document to mount a generated dev-only React component that loads the bundle. |
 | `multipage-with-generator/` | `src/` tracked, `dist/` gitignored. Exercises the is-generated guard and `element_not_in_source` fallback. |
 | `nextjs-turborepo/` | Monorepo with shared CSP helper (`createBaseNextConfig`). CSP shape `append-arrays`. |
 | `nextjs-inline-csp/` | App-level `next.config.js` with a literal CSP string. CSP shape `append-string`. |

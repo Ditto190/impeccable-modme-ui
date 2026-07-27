@@ -127,6 +127,41 @@
   let arrivedVariants = 0;
   let visibleVariant = 0;
   let generationPhase = null;
+  // Ascending order of the agent-generation lifecycle. The visible progress bar
+  // must never regress: a `browser_resumed`/behind checkpoint re-broadcasts an
+  // earlier phase (the server regresses the snapshot phase to `generating` on a
+  // behind checkpoint), and without this the bar jumps backward mid-generation.
+  // Unranked phases (params sidecar flow, unknown values) always pass so we
+  // never block a phase we do not model.
+  const PHASE_RANK = {
+    queued: 0,
+    picked_up: 1,
+    scaffolding: 2,
+    scaffold_fallback: 3,
+    source_ready: 4,
+    generation_ready: 5,
+    generating: 5,
+    variants_progress: 5,
+    first_variant_generating: 6,
+    first_variant_validating: 7,
+    first_reviewable: 8,
+    remaining_variants_generating: 9,
+    remaining_variants_validating: 10,
+    second_reviewable: 11,
+    all_variants_ready: 12,
+    variants_ready: 12,
+    variant_parameters_generating: 13,
+    variant_parameters_validating: 14,
+    parameters_ready: 15,
+  };
+  function shouldAdvancePhase(current, next) {
+    if (!next || next === current) return false;
+    const nextRank = PHASE_RANK[next];
+    const currentRank = PHASE_RANK[current];
+    // Only block a known-lower phase from overwriting a known-higher one.
+    if (nextRank === undefined || currentRank === undefined) return true;
+    return nextRank >= currentRank;
+  }
   let parameterGenerationState = 'idle';
   let parameterReadyAnnouncedSession = null;
   let svelteComponentSession = null;
@@ -140,6 +175,14 @@
   let pickedAnchorViewportTop = null;
   let pendingVariantAnchorRetryObserver = null;
   let pendingAcceptedSession = null;
+  // Survives cleanupAcceptedSession on purpose: the id of an accept whose
+  // POST was acknowledged (intent durable, epoch fenced) but whose actual
+  // source promotion hasn't reported back yet. Accept is optimistic, so the
+  // teardown nulls pendingAcceptedSession long before live-accept.mjs runs;
+  // this marker is what lets the SSE 'error' branch still recognize a late
+  // accept failure and say the variant was not saved (issue #384). Released
+  // when the real accept result arrives or a new session starts.
+  let awaitingAcceptResult = null;
   let variantObserver = null;
   let variantSelectionInFlight = false;
   let variantSelectionPromise = null;
@@ -6347,7 +6390,10 @@
           break;
         case 'agent_phase':
           if (msg.id === currentSessionId && (state === 'GENERATING' || state === 'CYCLING')) {
-            generationPhase = msg.phase || generationPhase;
+            // Advance the visible phase monotonically. A behind/resumed
+            // checkpoint may carry an earlier phase for internal bookkeeping,
+            // but the bar must not move backward.
+            if (shouldAdvancePhase(generationPhase, msg.phase)) generationPhase = msg.phase;
             if (msg.phase === 'variant_parameters_generating' || msg.phase === 'variant_parameters_validating') {
               parameterGenerationState = 'loading';
             }
@@ -6363,22 +6409,19 @@
             if (msg.publicationKind === 'params') parameterGenerationState = 'loading';
             rememberSessionFileMeta(msg);
             if (isFrameworkComponentPreviewMode(msg.previewMode) && msg.previewFile) {
+              // Component-preview (Svelte/Vue) progressive delivery: the browser
+              // mounts compiled components, so there is no framework-owned DOM
+              // to race. Keep streaming each checkpoint into the preview.
               injectSvelteComponentsFromManifest(msg.previewFile, msg.id);
-            } else if ((msg.previewMode === 'source' || !msg.previewMode) && (msg.previewFile || msg.file)) {
-              // Give normal framework HMR the first chance to reconcile its
-              // own managed tree. Nuxt route-module HMR can skip intermediate
-              // revisions, so fall back to source injection only when the
-              // advertised progress still has not appeared after a short
-              // settle. Immediate injection races React/Vue ownership and can
-              // trigger removeChild errors on the next HMR commit.
-              const targetArrived = Number(msg.arrivedVariants) || 1;
-              setTimeout(() => {
-                if (msg.id !== currentSessionId) return;
-                if (state !== 'GENERATING' && state !== 'CYCLING') return;
-                if (msg.publicationKind !== 'params' && arrivedVariants >= targetArrived) return;
-                injectVariantsFromSource(msg.previewFile || msg.file, msg.id);
-              }, 150);
             }
+            // Source-preview targets: do NOT source-inject per checkpoint.
+            // Immediate injection races framework (React/Vue) ownership mid-
+            // generation and triggers removeChild errors on the next HMR
+            // commit. Let HMR own reconciliation while variants stream in;
+            // source injection runs only on the final `done` (which keeps its
+            // 750ms settle + retry ladder for non-HMR harnesses like Cursor).
+            // The visible progress count still advances from the variant
+            // MutationObserver as HMR lands each variant.
           }
           break;
         case 'steer_done':
@@ -6439,12 +6482,20 @@
           break;
         case 'complete':
         case 'accept':
+          // The real accept result arrived: the awaited failure window closed.
+          if (awaitingAcceptResult?.id && msg.id === awaitingAcceptResult.id) awaitingAcceptResult = null;
           if (maybeCompleteAcceptedSession(msg)) break;
           break;
         case 'agent_done':
           // The deterministic accept has already committed the reviewed DOM
           // and fenced generation. Carbonize may continue in the background;
           // it must not hold the foreground picker hostage.
+          // Only a carbonize agent_done is provably accept-side: accept
+          // unlocks at the first variant, so a late generation agent_done
+          // for the same session id can still arrive after Accept and must
+          // not close the awaited failure window early (the SSE broadcast
+          // carries no sourceEventType to tell the two apart).
+          if (msg.data?.carbonize === true && awaitingAcceptResult?.id && msg.id === awaitingAcceptResult.id) awaitingAcceptResult = null;
           if (msg.data?.carbonize === true && maybeCompleteAcceptedSession(msg)) break;
           break;
         case 'discarded':
@@ -6456,14 +6507,43 @@
         case 'error':
           if (pendingAcceptedSession?.id && msg.id === pendingAcceptedSession.id) {
             pendingAcceptedSession = null;
+            awaitingAcceptResult = null;
             setLiveState('CYCLING');
             updateBarContent('cycling');
             showToast('Could not complete accept cleanup. Try Accept again.', 5000);
             break;
           }
+          // The optimistic teardown already released the session, so the
+          // CYCLING recovery above can no longer match; without this branch
+          // the failure fell through to the generic toast and the user had
+          // no hint their variant was never written (issue #384).
+          if (awaitingAcceptResult?.id && msg.id === awaitingAcceptResult.id) {
+            awaitingAcceptResult = null;
+            console.error('[impeccable] Accept failed after teardown:', msg.message);
+            // Hedged on purpose: a carbonize-phase failure raises this same
+            // error after the source WAS promoted, so "was not saved" would
+            // overclaim. Normalize the server message's terminal punctuation
+            // so the two sentences don't run together.
+            const acceptFailDetail = String(msg.message || 'unknown error').trim().replace(/[.!?]?$/, '.');
+            showToast('Accept failed: ' + acceptFailDetail + ' The variant may not have been saved. If the change is missing, pick the element and generate again.', 8000);
+            break;
+          }
           if (maybeCompleteSteer(msg)) break;
           console.error('[impeccable] Error:', msg.message);
           showToast('Error: ' + msg.message, 5000);
+          // An agent error reply is terminal for the session it names: tear
+          // it down exactly like 'discarded' (cleanup includes clearSession),
+          // or the durable localStorage checkpoint survives and every reload
+          // resurrects a GENERATING bar for a session the server no longer
+          // knows about (issue #362).
+          if (msg.id && msg.id === currentSessionId) {
+            markSessionHandled();
+            cleanup();
+            break;
+          }
+          // A stored-but-not-current checkpoint naming the errored session
+          // (the error raced a reload) must not resurrect either.
+          if (msg.id && loadSession()?.id === msg.id) clearSession();
           hideBar();
           renderEditBadge('hidden');
           setLiveState('PICKING');
@@ -6489,7 +6569,7 @@
   function handleServerLost() {
     const recoveryState = currentSessionId ? state : 'IDLE';
     if (state === 'GENERATING' || state === 'CYCLING' || state === 'SAVING') {
-      showToast('Live server disconnected. Session ended.', 5000);
+      showToast('Live server connection lost. Your session is saved; reopen this page or restart live-poll.mjs to continue.', 6000);
     }
     hideBar();
     hideHighlight();
@@ -6910,6 +6990,9 @@
     stripManualEditRuntimeState(selectedElement);
 
     pendingAcceptedSession = null;
+    // A new session supersedes any accept still awaiting its result; a late
+    // failure toast for the previous session would only mislead here.
+    awaitingAcceptResult = null;
     currentSessionId = id8();
     expectedVariants = selectedCount;
     arrivedVariants = 0;
@@ -6989,6 +7072,9 @@
 
     stopVoice({ suppressSubmit: true });
     pendingAcceptedSession = null;
+    // A new session supersedes any accept still awaiting its result; a late
+    // failure toast for the previous session would only mislead here.
+    awaitingAcceptResult = null;
     currentSessionId = id8();
     expectedVariants = selectedCount;
     arrivedVariants = 0;
@@ -7820,6 +7906,7 @@ void main() {
         markSessionHandled();
         setLiveState('CONFIRMED');
         document.documentElement.dataset.impeccableAcceptToPickingMs = String(Date.now() - acceptPayload.clientSentAt);
+        awaitingAcceptResult = { id: acceptedSessionId };
         scheduleAcceptCleanup(pending);
       })
       .catch(() => {

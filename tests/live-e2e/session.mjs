@@ -117,10 +117,14 @@ export function stopLiveServer(tmp) {
   } catch { /* already gone */ }
 }
 
-export function runInject(tmp, port) {
+export function runInject(tmp, port, token) {
   const out = execFileSync(
     process.execPath,
-    [join(SCRIPTS_DIR, 'live-inject.mjs'), '--port', String(port)],
+    [
+      join(SCRIPTS_DIR, 'live-inject.mjs'),
+      '--port', String(port),
+      ...(token ? ['--token', String(token)] : []),
+    ],
     {
       cwd: tmp,
       encoding: 'utf-8',
@@ -296,7 +300,7 @@ export async function bootFixtureSession({
     const injectStartedAt = Date.now();
     trace('setup.inject.start', { fixture: name });
     log(`live-inject --port ${live.port}`);
-    const injectResult = runInject(tmp, live.port);
+    const injectResult = runInject(tmp, live.port, live.token);
     if (!injectResult.ok) throw new Error('live-inject failed: ' + JSON.stringify(injectResult));
     trace('setup.inject.end', { fixture: name, files: injectResult.files || injectResult.pageFiles || [] });
     log(`live-inject complete in ${formatDuration(Date.now() - injectStartedAt)}`);

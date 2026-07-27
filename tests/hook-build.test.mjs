@@ -13,6 +13,7 @@ import {
   buildClaudeSettingsManifest,
   buildClaudePluginHooksManifest,
   buildCodexHooksManifest,
+  buildCodexPluginHooksManifest,
   buildCursorHooksManifest,
   buildGitHubHooksManifest,
   buildGrokHooksManifest,
@@ -25,11 +26,44 @@ function readJson(rel) {
   return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
 }
 
+// The runtime probe every hook command must carry (issue #410): a node below
+// the engines floor exits the command at 0 instead of dying on ESM parse. The
+// expected floor comes from package.json engines, so probe and contract cannot
+// drift apart.
+const ENGINES_NODE_MAJOR = parseInt(
+  JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).engines.node.replace(/[^\d.]/g, ''),
+  10,
+);
+const NODE_PROBE = `process.exit(parseInt(process.versions.node,10)>=${ENGINES_NODE_MAJOR}?0:1)`;
+
 function expectCommand(command, expectedPath) {
   assert.equal(typeof command, 'string');
-  assert.match(command, /^node "/);
+  // node-command providers carry the missing-file guard (issue #399: exits 0
+  // when absent, preserves node's exit code when present) plus the runtime
+  // probe. GitHub's portable `$(git rev-parse)` form is guarded too, so it
+  // lands in the same branch.
+  if (command.startsWith('[ ! -f "')) {
+    assert.match(command, /\|\| node "/);
+    assert.ok(command.includes(NODE_PROBE), `missing runtime probe in ${command}`);
+  } else {
+    assert.match(command, /^node "|^bash -c|\$\(git rev-parse/);
+  }
   assert.ok(command.includes(expectedPath), `missing ${expectedPath} in ${command}`);
   assert.ok(!command.includes('hook-probe.mjs'), `probe hook still referenced in ${command}`);
+}
+
+function manifestCommands(manifest) {
+  const commands = [];
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return; }
+    if (value && typeof value === 'object') {
+      if (typeof value.command === 'string') commands.push(value.command);
+      if (typeof value.bash === 'string') commands.push(value.bash);
+      Object.values(value).forEach(walk);
+    }
+  };
+  walk(manifest.hooks);
+  return commands;
 }
 
 describe('hook manifest builders', () => {
@@ -56,6 +90,9 @@ describe('hook manifest builders', () => {
   });
 
   it('builds Codex project-local hooks for the real detector hook', () => {
+    // Default install dir is `.codex`: a `.codex`-directory install keeps the
+    // skill payload at `.codex/skills/...`, so the hook must point there (not at
+    // a hardcoded `.agents`, which no-ops on such installs).
     const manifest = buildCodexHooksManifest();
     assert.equal(manifest.description, undefined);
     const group = manifest.hooks.PostToolUse[0];
@@ -65,7 +102,7 @@ describe('hook manifest builders', () => {
     assert.equal(handler.type, 'command');
     assert.equal(handler.timeout, 5);
     assert.equal(handler.statusMessage, 'Checking UI changes');
-    expectCommand(handler.command, '.agents/skills/impeccable/scripts/hook.mjs');
+    expectCommand(handler.command, '.codex/skills/impeccable/scripts/hook.mjs');
     assert.ok(!handler.command.includes('git rev-parse --show-toplevel'));
     assert.ok(!handler.command.includes('${PLUGIN_ROOT}'));
     assert.equal(manifest.hooks.SessionStart, undefined);
@@ -74,7 +111,31 @@ describe('hook manifest builders', () => {
     // pass too.
     const stop = manifest.hooks.Stop[0].hooks[0];
     assert.equal(stop.timeout, 30);
-    expectCommand(stop.command, '.agents/skills/impeccable/scripts/hook.mjs');
+    expectCommand(stop.command, '.codex/skills/impeccable/scripts/hook.mjs');
+  });
+
+  it('derives the Codex hook payload path from the install dir', () => {
+    // Each install dir gets a manifest pointing at its own skills payload: a
+    // `.codex`-directory install at `.codex/skills`, a `.agents` (Codex repo
+    // skills) install at `.agents/skills`.
+    const codexDir = buildCodexHooksManifest('.codex');
+    expectCommand(codexDir.hooks.PostToolUse[0].hooks[0].command, '.codex/skills/impeccable/scripts/hook.mjs');
+    expectCommand(codexDir.hooks.Stop[0].hooks[0].command, '.codex/skills/impeccable/scripts/hook.mjs');
+
+    const agentsDir = buildCodexHooksManifest('.agents');
+    expectCommand(agentsDir.hooks.PostToolUse[0].hooks[0].command, '.agents/skills/impeccable/scripts/hook.mjs');
+    expectCommand(agentsDir.hooks.Stop[0].hooks[0].command, '.agents/skills/impeccable/scripts/hook.mjs');
+    assert.ok(!agentsDir.hooks.PostToolUse[0].hooks[0].command.includes('.codex/skills'));
+
+    // hooksJsonFor threads the provider's configDir through to the builder.
+    expectCommand(
+      hooksJsonFor('codex', { configDir: '.agents' }).hooks.PostToolUse[0].hooks[0].command,
+      '.agents/skills/impeccable/scripts/hook.mjs',
+    );
+    expectCommand(
+      hooksJsonFor('codex').hooks.PostToolUse[0].hooks[0].command,
+      '.codex/skills/impeccable/scripts/hook.mjs',
+    );
   });
 
   it('builds one Cursor pre-write blocking hook', () => {
@@ -131,6 +192,40 @@ describe('hook manifest builders', () => {
     expectCommand(stop.command, '.grok/skills/impeccable/scripts/hook.mjs');
   });
 
+  it('probes the node runtime everywhere, and notices only where a channel exists', () => {
+    // Claude Code and Codex render a `systemMessage` from hook stdout, so their
+    // manifests carry the one-time unsupported-runtime notice. Cursor (output is
+    // permission-shaped; a message would block the edit), Grok (stdout ignored),
+    // and Copilot (contract unconfirmed) get the silent probe only.
+    const withNotice = [
+      buildClaudeSettingsManifest(),
+      buildClaudePluginHooksManifest(),
+      buildCodexHooksManifest(),
+      buildCodexPluginHooksManifest(),
+    ];
+    const probeOnly = [
+      buildCursorHooksManifest(),
+      buildGitHubHooksManifest(),
+      buildGrokHooksManifest(),
+    ];
+    for (const manifest of [...withNotice, ...probeOnly]) {
+      for (const command of manifestCommands(manifest)) {
+        assert.ok(command.includes(NODE_PROBE), `missing runtime probe in ${command}`);
+      }
+    }
+    for (const manifest of withNotice) {
+      for (const command of manifestCommands(manifest)) {
+        assert.ok(command.includes('systemMessage'), `missing notice in ${command}`);
+        assert.ok(command.includes('node-unsupported'), `missing once-only marker in ${command}`);
+      }
+    }
+    for (const manifest of probeOnly) {
+      for (const command of manifestCommands(manifest)) {
+        assert.ok(!command.includes('systemMessage'), `unexpected notice in ${command}`);
+      }
+    }
+  });
+
   it('routes supported hook builders and leaves other providers alone', () => {
     assert.ok(hooksJsonFor('claude'));
     assert.ok(hooksJsonFor('codex'));
@@ -185,11 +280,25 @@ describe('generated hook artifacts in repo', () => {
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.cursor/skills/impeccable/scripts/detector/detect-antipatterns.mjs')));
   });
 
-  it('Codex project hooks reference hook.mjs in the .agents skill payload', () => {
+  it('Codex project hooks reference hook.mjs in the .codex skill payload', () => {
+    // The committed `.codex/hooks.json` is the distribution artifact for a
+    // `.codex`-directory install, whose skill payload lives at `.codex/skills/`
+    // (issue: it previously hardcoded `.agents/skills`, so the guarded hook
+    // no-opped on `.codex` installs). CLI installs that lay the skill down at
+    // `.agents/skills` rewrite the command to that path at install time.
     const manifest = readJson('.codex/hooks.json');
     const handler = manifest.hooks.PostToolUse[0].hooks[0];
 
-    expectCommand(handler.command, '.agents/skills/impeccable/scripts/hook.mjs');
+    expectCommand(handler.command, '.codex/skills/impeccable/scripts/hook.mjs');
+    assert.ok(!handler.command.includes('.agents/skills'));
+
+    // The self-consistent Codex bundle at `dist/codex/.codex/skills/` is a build
+    // artifact, not a tracked repo file; `bun run build` emits it and
+    // build.test.js verifies it there. This suite runs before the build (CI's
+    // `test:core` precedes the Build step), so it asserts only tracked outputs.
+
+    // The repo ships the Codex skill payload at `.agents/skills` (the
+    // layout CLI installs use, and where the rewritten command resolves).
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.agents/skills/impeccable/SKILL.md')));
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.agents/skills/impeccable/scripts/hook.mjs')));
     assert.ok(fs.existsSync(path.join(REPO_ROOT, '.agents/skills/impeccable/scripts/hook-lib.mjs')));

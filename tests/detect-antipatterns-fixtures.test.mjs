@@ -12,8 +12,10 @@ import { fileURLToPath } from 'url';
 import {
   detectHtml,
   detectText,
+  formatFindings,
   normalizeDesignSystem,
 } from '../cli/engine/detect-antipatterns.mjs';
+import { checkEmDashOveruse } from '../cli/engine/rules/checks.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(__dirname, 'fixtures', 'antipatterns');
@@ -81,6 +83,74 @@ describe('detectText - Astro structural CSS fixtures', () => {
     for (const heading of SHOULD_PASS) {
       assert.doesNotMatch(snippets, new RegExp(`data-case=${JSON.stringify(heading)}`), `"${heading}" should pass`);
     }
+  });
+});
+
+describe('detectText — pseudo-element stripe fixtures (issue #394)', () => {
+  // The side-tab silhouette drawn as an absolutely-positioned ::before/::after
+  // bar instead of a border. The scanner already ran on full HTML pages via
+  // checkHtmlPatterns; these pin the standalone-stylesheet and component
+  // style-block paths, which used to pass this construction clean.
+  const SHOULD_FLAG = [
+    'Inset Shorthand Left Edge',
+    'Longhand Left Edge',
+    'Bottom Edge',
+    'Full Height Right Edge',
+  ];
+  const SHOULD_PASS = [
+    'Neutral Divider',
+    'Wide Panel',
+    'Static Underline',
+    'Hairline Divider',
+    'Hover Underline',
+    'Floating Badge',
+    // Commented-out CSS is not a live rule.
+    'Commented Out Stripe',
+  ];
+
+  // The 1-based line a case's selector sits on in a fixture file, so the
+  // reported finding line can be checked against the actual source.
+  const selectorLine = (source, caseName) => {
+    const idx = source.split('\n').findIndex(l => l.includes(`data-case="${caseName}"`));
+    assert.notEqual(idx, -1, `fixture is missing case "${caseName}"`);
+    return idx + 1;
+  };
+
+  it('standalone .css files flag chromatic pseudo-element stripes only', () => {
+    const filePath = path.join(FIXTURES, 'pseudo-stripe.css');
+    const source = fs.readFileSync(filePath, 'utf8');
+    const findings = detectText(source, filePath).filter(r => r.antipattern === 'side-tab');
+    const snippets = findings.map(r => r.snippet || '').join(' | ');
+    for (const heading of SHOULD_FLAG) {
+      assert.match(snippets, new RegExp(`data-case=${JSON.stringify(heading)}`), `expected "${heading}" to flag`);
+    }
+    for (const heading of SHOULD_PASS) {
+      assert.doesNotMatch(snippets, new RegExp(`data-case=${JSON.stringify(heading)}`), `"${heading}" should pass`);
+    }
+    // Every finding must carry the selector's real source line, so
+    // line-scoped inline ignores (impeccable-disable-line and
+    // impeccable-disable-next-line) can match it.
+    for (const f of findings) {
+      const caseName = (f.snippet.match(/data-case="([^"]+)"/) || [])[1];
+      assert.equal(
+        f.line, selectorLine(source, caseName),
+        `finding for "${caseName}" reports line ${f.line}, selector sits on line ${selectorLine(source, caseName)}`,
+      );
+    }
+  });
+
+  it('component style blocks flag pseudo-element stripes at their source line', () => {
+    const filePath = path.join(FIXTURES, 'pseudo-stripe.vue');
+    const source = fs.readFileSync(filePath, 'utf8');
+    const findings = detectText(source, filePath).filter(r => r.antipattern === 'side-tab');
+    const snippets = findings.map(r => r.snippet || '').join(' | ');
+    assert.match(snippets, /data-case="Component Left Edge"/, 'expected the component stripe to flag');
+    assert.doesNotMatch(snippets, /data-case="Component Neutral Divider"/, 'neutral divider should pass');
+    const stripe = findings.find(r => /data-case="Component Left Edge"/.test(r.snippet || ''));
+    assert.equal(
+      stripe.line, selectorLine(source, 'Component Left Edge'),
+      'style-block finding must map back to the whole-file line, not the block-local one',
+    );
   });
 });
 
@@ -279,6 +349,43 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     );
   });
 
+  it('color: gradient-clipped text is not contrast-checked against its own fill (issue #409 Case A)', async () => {
+    // background-clip: text with a transparent fill paints the glyphs with the
+    // gradient; the inherited `color` is never painted, so measuring it against
+    // the element's own gradient stops (#6d8cff / #a78bfa) is a false positive.
+    // The gradient-text pattern flag still fires; the backdrop-contrast rules
+    // (low-contrast / gray-on-color) must stay silent for the clipped element.
+    const f = await detectHtml(path.join(FIXTURES, 'color.html'));
+    const clippedContrastFP = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#6d8cff|#a78bfa/i.test(r.snippet || '')
+    );
+    assert.equal(
+      clippedContrastFP.length, 0,
+      `gradient-clipped text must not be contrast-checked against its own fill, got: ${clippedContrastFP.map(r => `${r.antipattern}:${r.snippet}`).join('; ')}`
+    );
+    // The pattern itself must still be surfaced.
+    assert.ok(
+      f.some(r => r.antipattern === 'gradient-text'),
+      'gradient-text pattern flag must still fire'
+    );
+  });
+
+  it('color: alpha gradient-glow stops composite against the surface beneath (issue #409 Case B)', async () => {
+    // A 9%-alpha teal glow stop (rgba(52,192,168,0.09)) over a dark section
+    // composites to ~near-black, not the full-opacity #34c0a8. Text on it is
+    // high-contrast; treating the stop as opaque flagged every text child.
+    const f = await detectHtml(path.join(FIXTURES, 'color.html'));
+    const glowFP = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#34c0a8/i.test(r.snippet || '')
+    );
+    assert.equal(
+      glowFP.length, 0,
+      `alpha glow stops must composite against the underlying surface, got: ${glowFP.map(r => `${r.antipattern}:${r.snippet}`).join('; ')}`
+    );
+  });
+
   it('legitimate-borders: zero findings', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'legitimate-borders.html'));
     assert.equal(f.length, 0, `expected no findings, got: ${f.map(r => `${r.antipattern}:${r.snippet}`).join('; ')}`);
@@ -320,6 +427,42 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     // pass cases (neutral-resolving var, thin var, uniform all-sides var).
     // If any leaks through, the label exception or var() fallback is
     // over-broad.
+    const borderAccent = f.filter(r => r.antipattern === 'border-accent-on-rounded');
+    assert.equal(
+      borderAccent.length, 0,
+      `expected 0 border-accent-on-rounded, got ${borderAccent.length}: ${borderAccent.map(r => r.snippet).join('; ')}`
+    );
+  });
+
+  it('named-color-borders: named-color side-tabs are flagged, neutral names pass', async () => {
+    // Regression for issue #359: the static cascade's shorthand color
+    // extraction recognized only 9 named colors, so `border-left: 4px solid
+    // purple` (or any of the other named colors parseAnyColor understands)
+    // lost its color during expansion, defaulted to neutral black, and never
+    // fired side-tab — while the same declaration in a .css file was flagged
+    // by the regex engine. The extraction list is now derived from the same
+    // CSS_NAMED_COLORS table the parser uses, so the two can't drift apart.
+    const f = await detectHtml(path.join(FIXTURES, 'named-color-borders.html'));
+    const sideTabs = f.filter(r => r.antipattern === 'side-tab').map(r => r.snippet).sort();
+    // Six FLAG cases, each with a unique width/radius signature so every
+    // finding attributes to exactly one case (an offsetting miss + false
+    // positive can't cancel out in an aggregate count):
+    //   purple 4px + radius 8 (the issue reproducer), rebeccapurple 5px +
+    //   radius 4 (contains "purple" as a substring — whole-token matching),
+    //   crimson 4px top stripe, bare 3px teal, var() resolving to a named
+    //   color at 6px + radius 4, and a 7px inline style attribute.
+    // The PASS column (neutral named colors at 3-4px, 1px thin, uniform)
+    // must contribute nothing — dimgray/gainsboro/black have to parse AND
+    // read as neutral rather than being dropped as unknown colors, and none
+    // of its shapes can produce any of the signatures below.
+    assert.deepEqual(sideTabs, [
+      'border-left: 3px',
+      'border-left: 4px + border-radius: 8px',
+      'border-left: 5px + border-radius: 4px',
+      'border-left: 6px + border-radius: 4px',
+      'border-left: 7px',
+      'border-top: 4px',
+    ]);
     const borderAccent = f.filter(r => r.antipattern === 'border-accent-on-rounded');
     assert.equal(
       borderAccent.length, 0,
@@ -550,6 +693,115 @@ describe('detectHtml — icon-tile-stack', () => {
     for (const text of SHOULD_PASS) {
       assert.ok(!flagged.has(text), `"${text}" should NOT be flagged as icon-tile-stack`);
     }
+  });
+});
+
+describe('detectHtml — radial-spotlight-glow', () => {
+  // Two-column fixture convention: left col = should-flag, right col = should-pass.
+  // The rule's snippet embeds the element's data-name in quotes, e.g.
+  //   radial-gradient spotlight glow "Hero Spotlight Blue" (#506fff a0.26 → transparent).
+  const SHOULD_FLAG = [
+    'Hero Spotlight Blue',
+    'Section Glow Violet',
+    'Overlay Glow Cyan',
+    'Two Stop Soft Glow',
+    'Hex Alpha Glow',
+  ];
+  const SHOULD_PASS = [
+    'Opaque Radial Background',
+    'Small Accent Badge',
+    'Avatar Glow Light',
+    'Neutral Vignette',
+    'White Vignette',
+    'Rich Radial Composition',
+    'Rich Transparent Composition',
+    'Opaque Center Glow',
+    'Linear Gradient Wash',
+  ];
+
+  it('radial-spotlight-glow: flags only the should-flag column', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'radial-spotlight-glow.html'));
+    const flagged = new Set();
+    for (const r of f) {
+      if (r.antipattern !== 'radial-spotlight-glow') continue;
+      const m = (r.snippet || '').match(/"([^"]+)"/);
+      if (m) flagged.add(m[1]);
+    }
+
+    for (const text of SHOULD_FLAG) {
+      assert.ok(flagged.has(text), `expected "${text}" to be flagged as radial-spotlight-glow`);
+    }
+    for (const text of SHOULD_PASS) {
+      assert.ok(!flagged.has(text), `"${text}" should NOT be flagged as radial-spotlight-glow`);
+    }
+  });
+});
+
+describe('detectHtml — undersized-ui-text', () => {
+  // Two-column fixture: left col = should-flag, right col = should-pass.
+  // The rule's snippet embeds the element's direct text in quotes, e.g.
+  //   `8px functional text "Flag Nav Link" (below 11px floor)`.
+  // The test extracts those quoted texts and matches them against the lists.
+  const SHOULD_FLAG = [
+    'Flag Nav Link',      // interactive nav link at 8px
+    'Flag Category',      // non-interactive furniture label at 8px
+    'Flag Meta Row',      // meta row at 9px
+    'Flag Button',        // interactive button at 10px
+    'Flag Table Cell',    // structural table cell at 9px
+    'Flag Caps Label',    // uppercase letterspaced micro-label — NOT exempt
+    'Flag Footer Link',   // interactive text in footer stays on the 11px floor
+  ];
+  const SHOULD_PASS = [
+    'Pass Legal Fine Print', // non-interactive footer smallprint at 10px (floor 10)
+    'Pass Sr Only',          // visually-hidden text
+    'Pass Sup Marker',       // sup tag exempt
+    'Pass Sub Marker',       // sub tag exempt
+    'Pass Em Sized',         // 0.6em of a 20px parent = 12px, above the floor
+    'Pass Terminal Line',    // code/terminal mock, legitimately small
+    'Pass Normal Link',      // functional text at the 12px floor
+  ];
+
+  it('undersized-ui-text: flags only the should-flag column', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'undersized-ui-text.html'));
+    const flagged = new Set();
+    for (const r of f) {
+      if (r.antipattern !== 'undersized-ui-text') continue;
+      const m = (r.snippet || '').match(/"([^"]+)"/);
+      if (m) flagged.add(m[1]);
+    }
+
+    for (const text of SHOULD_FLAG) {
+      assert.ok(flagged.has(text), `expected "${text}" to be flagged as undersized-ui-text`);
+    }
+    for (const text of SHOULD_PASS) {
+      assert.ok(!flagged.has(text), `"${text}" should NOT be flagged as undersized-ui-text`);
+    }
+  });
+});
+
+describe('detectHtml — non-rendered text (issue #408)', () => {
+  // On sites that set `html { font-size: 62.5% }` the root computes to 10px, so
+  // <script>/<style>/<title>/<noscript> and display:none / visibility:hidden
+  // blocks — whose JS/CSS/JSON-LD text clears the hasDirectText gate — report a
+  // 10px size and used to produce dozens of phantom "10px body text" findings.
+  // Both text-size floors (tiny-text and undersized-ui-text) must skip them and
+  // measure only genuinely rendered text.
+  it('tiny-text / undersized-ui-text: non-rendered elements produce no findings, rendered text still flags', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'nonrendered-text.html'));
+    const tiny = f.filter(r => r.antipattern === 'tiny-text');
+    const undersized = f.filter(r => r.antipattern === 'undersized-ui-text');
+
+    // Exactly the two genuinely rendered elements flag: the 10px body <p>
+    // (tiny-text) and the 9px interactive nav link (undersized-ui-text).
+    assert.equal(
+      tiny.length, 1,
+      `expected exactly 1 tiny-text finding (rendered body copy), got ${tiny.length}: ${tiny.map(r => r.snippet).join('; ')}`
+    );
+    assert.equal(
+      undersized.length, 1,
+      `expected exactly 1 undersized-ui-text finding (rendered nav link), got ${undersized.length}: ${undersized.map(r => r.snippet).join('; ')}`
+    );
+    assert.match(undersized[0].snippet || '', /Rendered Nav Link/, 'the one undersized finding must be the rendered nav link');
   });
 });
 
@@ -927,52 +1179,68 @@ describe('em-dash overuse — HTML entity escapes', () => {
     `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head>` +
     `<body><main><h1>A real page heading of ordinary length</h1><p>${body}</p></main></body></html>`;
 
-  // Six dashes clears the 5+ threshold. Sentence fragments keep the surrounding
-  // prose realistic so nothing else in the pipeline objects.
-  const sixNamed = 'fast &mdash; cheap &mdash; honest &mdash; simple &mdash; quiet &mdash; kind &mdash; done';
-  const sixNumeric = 'fast &#8212; cheap &#8212; honest &#8212; simple &#8212; quiet &#8212; kind &#8212; done';
-  const sixHex = 'fast &#x2014; cheap &#x2014; honest &#x2014; simple &#x2014; quiet &#x2014; kind &#x2014; done';
-  const sixHexUpper = 'fast &#X2014; cheap &#X2014; honest &#X2014; simple &#X2014; quiet &#X2014; kind &#X2014; done';
-  const sixNumericPadded = 'fast &#08212; cheap &#08212; honest &#08212; simple &#08212; quiet &#08212; kind &#08212; done';
-  // Three literal glyphs + three named entities render identically; the count
-  // must see all six.
-  const mixed = 'fast — cheap — honest — simple &mdash; quiet &mdash; kind &mdash; done';
+  // Eight dashes clears the raised advisory floor (EM_DASH_FLOOR = 8, up from
+  // the old flat 5). Packed into one short paragraph they also clear the density
+  // gate. Sentence fragments keep the surrounding prose realistic so nothing
+  // else in the pipeline objects.
+  const eightNamed = 'fast &mdash; cheap &mdash; honest &mdash; simple &mdash; quiet &mdash; kind &mdash; bright &mdash; calm &mdash; done';
+  const eightNumeric = 'fast &#8212; cheap &#8212; honest &#8212; simple &#8212; quiet &#8212; kind &#8212; bright &#8212; calm &#8212; done';
+  const eightHex = 'fast &#x2014; cheap &#x2014; honest &#x2014; simple &#x2014; quiet &#x2014; kind &#x2014; bright &#x2014; calm &#x2014; done';
+  const eightHexUpper = 'fast &#X2014; cheap &#X2014; honest &#X2014; simple &#X2014; quiet &#X2014; kind &#X2014; bright &#X2014; calm &#X2014; done';
+  const eightNumericPadded = 'fast &#08212; cheap &#08212; honest &#08212; simple &#08212; quiet &#08212; kind &#08212; bright &#08212; calm &#08212; done';
+  // Four literal glyphs + four named entities render identically; the count
+  // must see all eight.
+  const mixed = 'fast — cheap — honest — simple — quiet &mdash; kind &mdash; bright &mdash; calm &mdash; done';
 
   const SHOULD_FLAG = {
-    'named &mdash;': sixNamed,
-    'numeric &#8212;': sixNumeric,
-    'hex &#x2014;': sixHex,
-    'uppercase-hex &#X2014;': sixHexUpper,
-    'zero-padded decimal &#08212;': sixNumericPadded,
+    'named &mdash;': eightNamed,
+    'numeric &#8212;': eightNumeric,
+    'hex &#x2014;': eightHex,
+    'uppercase-hex &#X2014;': eightHexUpper,
+    'zero-padded decimal &#08212;': eightNumericPadded,
     'mixed literal + entity': mixed,
   };
 
+  // A long paragraph carrying exactly eight dashes across several thousand
+  // characters of prose. Above the absolute floor, but the density gate
+  // (one per ~500 chars) keeps ordinary long-form writing from flagging.
+  const longLowDensityFiller = 'This paragraph is written in ordinary human prose that runs on for quite a while. '.repeat(60);
+  const longLowDensity = `a — b — c — d — e — f — g — h — end. ${longLowDensityFiller}`;
+
   // False-positive shapes: none of these should trip the em-dash counter.
   const SHOULD_PASS = {
-    // Below the 5+ threshold: occasional em-dash entity use is legitimate prose.
+    // Below the floor: seven dashes on a short page is under the raised floor of 8.
+    'seven dashes below floor': 'a — b — c — d — e — f — g — done, otherwise plain sentences fill the paragraph body',
+    // Below the floor: occasional em-dash entity use is legitimate prose.
     'two entities below threshold': 'fast &mdash; cheap &mdash; done, otherwise plain sentences fill the paragraph body',
+    // Above the floor but below the density gate: a long human article.
+    'eight dashes across a long article': longLowDensity,
     // En-dashes are a different character and a different job (ranges); the em-dash
     // rule must not decode or count them.
-    'en-dash entities': 'pages 10&ndash;20 and 30&ndash;40 and 50&ndash;60 and 70&ndash;80 and 90&ndash;100 and 1&ndash;2',
-    'numeric en-dash entities': 'pages 10&#8211;20 and 30&#8211;40 and 50&#8211;60 and 70&#8211;80 and 90&#8211;100 and 1&#8211;2',
+    'en-dash entities': 'pages 10&ndash;20 and 30&ndash;40 and 50&ndash;60 and 70&ndash;80 and 90&ndash;100 and 1&ndash;2 and 3&ndash;4 and 5&ndash;6 and 7&ndash;8',
+    'numeric en-dash entities': 'pages 10&#8211;20 and 30&#8211;40 and 50&#8211;60 and 70&#8211;80 and 90&#8211;100 and 1&#8211;2 and 3&#8211;4 and 5&#8211;6',
     // Double-escaped: the visible text is the literal string "&mdash;", not a dash.
-    'double-escaped ampersand': 'write &amp;mdash; and &amp;mdash; and &amp;mdash; and &amp;mdash; and &amp;mdash; and &amp;mdash; literally',
+    'double-escaped ampersand': 'write &amp;mdash; and &amp;mdash; and &amp;mdash; and &amp;mdash; and &amp;mdash; and &amp;mdash; and &amp;mdash; and &amp;mdash; literally',
     // Unrelated entities must never be miscounted as dashes.
     'non-dash entities': 'a&nbsp;b &copy; c &hellip; d &amp; e &trade; f &reg; g &deg; h &sect; i &para;',
     // Ordinary hyphenated compounds are single hyphens, not the double-hyphen tell.
-    'hyphenated compounds': 'state-of-the-art, well-being, high-quality, self-service, end-to-end, at-a-glance copy',
+    'hyphenated compounds': 'state-of-the-art, well-being, high-quality, self-service, end-to-end, at-a-glance, day-to-day, off-the-shelf copy',
   };
 
-  const emDashCount = (findings) =>
-    findings.filter((r) => r.antipattern === 'em-dash-overuse').length;
+  const emDashFindings = (findings) =>
+    findings.filter((r) => r.antipattern === 'em-dash-overuse');
 
   for (const [label, body] of Object.entries(SHOULD_FLAG)) {
     it(`flags em-dash overuse spelled as ${label}`, () => {
       const findings = detectText(page(body), 'em-dash.html');
+      const hits = emDashFindings(findings);
       assert.equal(
-        emDashCount(findings), 1,
+        hits.length, 1,
         `expected em-dash-overuse for "${label}", got: ${findings.map((r) => r.antipattern).join(', ') || 'none'}`,
       );
+      // The rule is advisory: the finding must carry the flag so the CLI, JSON,
+      // and hook can partition it out of the failure set.
+      assert.equal(hits[0].advisory, true, `"${label}" finding should be marked advisory`);
     });
   }
 
@@ -980,7 +1248,7 @@ describe('em-dash overuse — HTML entity escapes', () => {
     it(`does not flag ${label}`, () => {
       const findings = detectText(page(body), 'em-dash.html');
       assert.equal(
-        emDashCount(findings), 0,
+        emDashFindings(findings).length, 0,
         `"${label}" should not flag em-dash overuse`,
       );
     });
@@ -988,9 +1256,65 @@ describe('em-dash overuse — HTML entity escapes', () => {
 
   it('static-HTML path decodes entity em-dashes too (fixture file)', async () => {
     const findings = await detectHtml(path.join(FIXTURES, 'em-dash-entities.html'));
+    const hits = findings.filter((r) => r.antipattern === 'em-dash-overuse');
     assert.equal(
-      findings.filter((r) => r.antipattern === 'em-dash-overuse').length, 1,
+      hits.length, 1,
       'em-dash-entities.html should flag em-dash overuse via the static-HTML path',
     );
+    assert.equal(hits[0].advisory, true, 'static-HTML em-dash finding should be advisory');
+  });
+});
+
+describe('formatFindings — advisory partitioning', () => {
+  const primary = { antipattern: 'side-tab', name: 'Side-tab', description: 'A primary finding.', file: 'a.css', line: 1, snippet: 'x' };
+  const advisory = { antipattern: 'em-dash-overuse', name: 'Em-dash', description: 'An advisory finding.', file: 'a.html', line: 0, snippet: '8 em-dashes', advisory: true };
+
+  it('lists advisory findings in a separate section and excludes them from the failure count', () => {
+    const text = formatFindings([primary, advisory], false);
+    assert.match(text, /1 anti-pattern found\./); // primary count only
+    assert.match(text, /Advisory \(not counted as failures\)/);
+    assert.match(text, /em-dash-overuse/);
+    assert.match(text, /1 advisory note/);
+  });
+
+  it('reports zero failures for an advisory-only set but still shows the advisory section', () => {
+    const text = formatFindings([advisory], false);
+    assert.match(text, /0 anti-patterns found\./);
+    assert.match(text, /em-dash-overuse/);
+  });
+
+  it('keeps every finding (advisory flagged) in JSON output', () => {
+    const json = JSON.parse(formatFindings([primary, advisory], true));
+    assert.equal(json.length, 2);
+    assert.equal(json.find((f) => f.antipattern === 'em-dash-overuse').advisory, true);
+    assert.equal(json.find((f) => f.antipattern === 'side-tab').advisory, undefined);
+  });
+});
+
+describe('em-dash overuse — browser adapter parity (checkEmDashOveruse)', () => {
+  // The browser DOM check operates on already-rendered text, so it exercises
+  // the same two-gate logic without entity decoding. checkEmDashOveruse is the
+  // pure core the DOM wrapper calls.
+  const id = (findings) => findings.map((f) => f.id).join(',');
+
+  it('flags eight dense em-dashes', () => {
+    const findings = checkEmDashOveruse('a — b — c — d — e — f — g — h — done');
+    assert.equal(id(findings), 'em-dash-overuse');
+  });
+
+  it('does not flag seven em-dashes (below the floor)', () => {
+    const findings = checkEmDashOveruse('a — b — c — d — e — f — g — done');
+    assert.equal(findings.length, 0);
+  });
+
+  it('does not flag eight em-dashes spread across long prose (density gate)', () => {
+    const filler = 'This is ordinary human prose that continues at length. '.repeat(80);
+    const findings = checkEmDashOveruse(`a — b — c — d — e — f — g — h — end. ${filler}`);
+    assert.equal(findings.length, 0);
+  });
+
+  it('counts the double-hyphen em-dash substitute', () => {
+    const findings = checkEmDashOveruse('a--b c--d e--f g--h i--j k--l m--n o--p done');
+    assert.equal(id(findings), 'em-dash-overuse');
   });
 });

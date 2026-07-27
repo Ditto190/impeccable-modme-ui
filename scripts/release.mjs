@@ -211,6 +211,26 @@ try {
 }
 
 console.log(`\n✓ ${cfg.label} ${version} released as ${tag}`);
+
+// npx impeccable update serves from impeccable.style, not from this release:
+// the site must be redeployed (its deploy overlays public main first). Warn
+// loudly when the served version lags so a release never silently strands
+// update users on old content again (the 4.0.0 release did exactly that).
+if (component === 'skill' && !dryRun) {
+  try {
+    const res = await fetch('https://impeccable.style/api/version');
+    const served = (await res.json()).skills;
+    if (served === version) {
+      console.log(`✓ impeccable.style serves ${served}`);
+    } else {
+      console.log(`\n⚠ impeccable.style still serves ${served}, not ${version}.`);
+      console.log('  npx impeccable update users get the OLD version until the site redeploys:');
+      console.log('  cd ../impeccable-site && bun run deploy');
+    }
+  } catch {
+    console.log('⚠ could not reach impeccable.style/api/version to verify the served bundle');
+  }
+}
 if (cfg.postReleaseHint) {
   console.log(`\n→ Next step: ${cfg.postReleaseHint}`);
 }

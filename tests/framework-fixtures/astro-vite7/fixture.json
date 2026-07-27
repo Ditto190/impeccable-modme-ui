@@ -1,5 +1,5 @@
 {
-  "name": "Astro 6 + Vite 7",
+  "name": "Astro 7 + Vite 7",
   "config": {
     "files": ["src/layouts/Layout.astro"],
     "insertBefore": "</body>",

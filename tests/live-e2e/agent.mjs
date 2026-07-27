@@ -1292,14 +1292,12 @@ function renderVariantsBlock({ sessionId, indent, output, commentSyntax, file, s
 }
 
 /**
- * Read the wrapped file, find the "insert below this line" marker, splice in
- * the rendered variants block, write back.
+ * Splice the rendered variants block into an array of wrapper lines at the
+ * "insert below this line" marker. Pure: returns the new lines array. Used
+ * both against a whole file (wrapper already in source) and against a
+ * standalone wrapper block (deferred source write, agent writes it now).
  */
-async function spliceVariantsIntoWrapper({ tmp, wrapInfo, sessionId, output }) {
-  const filePath = path.join(tmp, wrapInfo.file);
-  const src = await fs.readFile(filePath, 'utf-8');
-  const lines = src.split('\n');
-
+function spliceVariantsIntoLines(lines, { sessionId, output, commentSyntax, file, styleMode }) {
   // Find the "Variants: insert below this line" comment line — definitive
   // marker, robust to any indentation off-by-one. Matches in any comment
   // style (HTML / JSX / Astro).
@@ -1307,7 +1305,7 @@ async function spliceVariantsIntoWrapper({ tmp, wrapInfo, sessionId, output }) {
     l.includes('Variants: insert below this line'),
   );
   if (markerIdx === -1) {
-    throw new Error('insert marker not found in ' + wrapInfo.file);
+    throw new Error('insert marker not found in ' + file);
   }
 
   const indent = (lines[markerIdx].match(/^\s*/) || [''])[0];
@@ -1320,25 +1318,72 @@ async function spliceVariantsIntoWrapper({ tmp, wrapInfo, sessionId, output }) {
     sessionId,
     indent: wrapperIndent,
     output,
-    commentSyntax: wrapInfo.commentSyntax,
-    file: wrapInfo.file,
-    styleMode: wrapInfo.styleMode,
+    commentSyntax,
+    file,
+    styleMode,
   });
 
   const endMarkerIdx = lines.findIndex((line, index) =>
     index > markerIdx && line.includes('impeccable-variants-end ' + sessionId),
   );
   if (endMarkerIdx === -1) {
-    throw new Error('end marker not found in ' + wrapInfo.file);
+    throw new Error('end marker not found in ' + file);
   }
-  const tailIdx = wrapInfo.commentSyntax.open === '{/*'
+  const tailIdx = commentSyntax.open === '{/*'
     ? endMarkerIdx
     : endMarkerIdx - 1;
 
-  const next = [
+  return [
     ...lines.slice(0, markerIdx + 1),
     block,
     ...lines.slice(tailIdx),
+  ];
+}
+
+/**
+ * Read the wrapped file, find the "insert below this line" marker, splice in
+ * the rendered variants block, write back. Used when the wrapper is already
+ * present in source (agent's own wrap fallback, no preflight).
+ */
+async function spliceVariantsIntoWrapper({ tmp, wrapInfo, sessionId, output }) {
+  const filePath = path.join(tmp, wrapInfo.file);
+  const src = await fs.readFile(filePath, 'utf-8');
+  const lines = src.split('\n');
+  const next = spliceVariantsIntoLines(lines, {
+    sessionId,
+    output,
+    commentSyntax: wrapInfo.commentSyntax,
+    file: wrapInfo.file,
+    styleMode: wrapInfo.styleMode,
+  });
+  await fs.writeFile(filePath, next.join('\n'), 'utf-8');
+}
+
+/**
+ * Deferred source write (preflight computed the scaffold but left source
+ * untouched). Splice the variants into the scaffold's `wrapperBlock`, then
+ * replace the picked element's source range with the result in ONE write —
+ * the 3.5 atomic single-edit semantics. `replaceEndLine < replaceStartLine`
+ * expresses a pure insertion (insert mode).
+ */
+async function writeDeferredWrapperWithVariants({ tmp, wrapInfo, sessionId, output }) {
+  const filePath = path.join(tmp, wrapInfo.file);
+  const src = await fs.readFile(filePath, 'utf-8');
+  const lines = src.split('\n');
+  const wrapperLines = String(wrapInfo.wrapperBlock).split('\n');
+  const splicedWrapper = spliceVariantsIntoLines(wrapperLines, {
+    sessionId,
+    output,
+    commentSyntax: wrapInfo.commentSyntax,
+    file: wrapInfo.file,
+    styleMode: wrapInfo.styleMode,
+  });
+  const startIdx = wrapInfo.replaceStartLine - 1;
+  const endIdx = wrapInfo.replaceEndLine - 1; // may be startIdx-1 for insertion
+  const next = [
+    ...lines.slice(0, startIdx),
+    ...splicedWrapper,
+    ...lines.slice(endIdx + 1),
   ];
   await fs.writeFile(filePath, next.join('\n'), 'utf-8');
 }
@@ -1661,6 +1706,8 @@ export async function runAgentLoop({
         trace('agent.write.start', { id: event.id, file: wrapInfo.file });
         if (wrapInfo.previewMode === 'svelte-component') {
           await writeSvelteComponentVariants({ tmp, wrapInfo, event, output, writeParams: true });
+        } else if (wrapInfo.sourceWritten === false) {
+          await writeDeferredWrapperWithVariants({ tmp, wrapInfo, sessionId: event.id, output });
         } else {
           await spliceVariantsIntoWrapper({ tmp, wrapInfo, sessionId: event.id, output });
         }

@@ -386,3 +386,83 @@ describe('bundled skill scripts are self-contained', () => {
     expect(broken).toEqual([]);
   });
 });
+
+describe('degraded-mode fallback reference generation', () => {
+  const ROOT = process.cwd();
+  const DEGRADED_TEST_DIR = path.join(ROOT, 'test-tmp-degraded');
+  const DIST = path.join(DEGRADED_TEST_DIR, 'dist');
+
+  const readDegraded = (provider, configDir, role) =>
+    fs.readFileSync(
+      path.join(DIST, provider, configDir, 'skills', 'impeccable', 'reference', 'degraded', `${role}.md`),
+      'utf-8'
+    );
+
+  beforeEach(() => {
+    if (fs.existsSync(DEGRADED_TEST_DIR)) fs.rmSync(DEGRADED_TEST_DIR, { recursive: true, force: true });
+    fs.mkdirSync(DEGRADED_TEST_DIR, { recursive: true });
+    const { skills } = utils.readSourceFiles(ROOT);
+    transformers.transformClaudeCode(skills, DIST);
+    transformers.transformCodex(skills, DIST);
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(DEGRADED_TEST_DIR)) fs.rmSync(DEGRADED_TEST_DIR, { recursive: true, force: true });
+  });
+
+  test('a build emits reference/degraded/<role>.md for every agent, prefix-stripped', () => {
+    const dir = path.join(DIST, 'codex', '.codex', 'skills', 'impeccable', 'reference', 'degraded');
+    const files = fs.readdirSync(dir).sort();
+    expect(files).toEqual([
+      'asset-producer.md',
+      'documenter.md',
+      'finish-reviewer.md',
+      'manual-edit-applier.md',
+    ]);
+  });
+
+  test('finish-reviewer fallback opens with the preamble and carries a distinctive body phrase', () => {
+    const content = readDegraded('codex', '.codex', 'finish-reviewer');
+    expect(content.startsWith('<!-- Generated from skill/agents/ at build time. Do not edit; edit the agent definition. -->'))
+      .toBe(true);
+    expect(content).toContain('This harness has no subagent capability, so you are running this role inline.');
+    // Distinctive phrase from the agent body proves the source body was inlined.
+    expect(content).toContain('material_fixes');
+  });
+
+  test('generated fallbacks pass through provider-block compilation (codex keeps its block, others strip it)', () => {
+    // Standalone provider blocks are the shape compileProviderBlocks compiles.
+    // A synthetic agent proves the degraded path runs the same compilation as
+    // ordinary reference files, with the right provider tags per target.
+    const synthetic = {
+      name: 'impeccable',
+      description: 'synthetic',
+      body: 'Synthetic skill body.',
+      agents: [
+        {
+          name: 'impeccable-synthetic',
+          body: 'Shared body line.\n\n<codex>\nCODEX_ONLY_MARKER for the codex target.\n</codex>\n\nMore shared body.',
+        },
+      ],
+    };
+    const synthDist = path.join(DEGRADED_TEST_DIR, 'synth');
+    transformers.transformCodex([synthetic], synthDist);
+    transformers.transformClaudeCode([synthetic], synthDist);
+    const read = (provider, configDir) =>
+      fs.readFileSync(
+        path.join(synthDist, provider, configDir, 'skills', 'impeccable', 'reference', 'degraded', 'synthetic.md'),
+        'utf-8'
+      );
+    const codex = read('codex', '.codex');
+    const claude = read('claude-code', '.claude');
+    expect(codex).toContain('CODEX_ONLY_MARKER');
+    expect(claude).not.toContain('CODEX_ONLY_MARKER');
+    // Both still carry the preamble and the shared body.
+    expect(codex.startsWith('<!-- Generated from skill/agents/')).toBe(true);
+    expect(claude).toContain('More shared body.');
+  });
+
+  test('the source repo contains no hand-authored degraded/ reference files (generation-only)', () => {
+    expect(fs.existsSync(path.join(ROOT, 'skill', 'reference', 'degraded'))).toBe(false);
+  });
+});

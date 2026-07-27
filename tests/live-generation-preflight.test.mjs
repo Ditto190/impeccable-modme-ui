@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   buildGenerationPreflight,
   runGenerationPreflight,
+  clearSourceResolutionCache,
 } from '../skill/scripts/live/generation-preflight.mjs';
 
 const SCRIPTS_DIR = path.resolve('skill/scripts');
@@ -26,6 +27,7 @@ test('builds a replace preflight from the picker locator', () => {
   assert.equal(command.mode, 'replace');
   assert.deepEqual(command.args.slice(1), [
     '--id', 'session-1', '--count', '3',
+    '--defer-source-write',
     '--element-id', 'hero',
     '--classes', 'hero hero--dark',
     '--tag', 'SECTION',
@@ -48,9 +50,20 @@ test('builds an insert preflight from the anchor locator', () => {
 
   assert.equal(command.mode, 'insert');
   assert.deepEqual(command.args.slice(1), [
-    '--id', 'session-2', '--count', '2', '--position', 'before',
+    '--id', 'session-2', '--count', '2',
+    '--defer-source-write', '--position', 'before',
     '--classes', 'card', '--tag', 'ARTICLE', '--text', 'Plan',
   ]);
+});
+
+test('replace preflight always requests a deferred source write', () => {
+  const command = buildGenerationPreflight({
+    type: 'generate',
+    id: 'session-defer',
+    count: 3,
+    element: { classes: ['hero'] },
+  }, SCRIPTS_DIR);
+  assert.ok(command.args.includes('--defer-source-write'));
 });
 
 test('returns scaffold metadata without exposing child-process details', async () => {
@@ -106,6 +119,93 @@ test('yields to the event loop instead of blocking on the child process', async 
   const result = await pending;
   assert.equal(result.ok, true);
   assert.equal(tickedDuringPreflight, true, 'the event loop must stay responsive during preflight');
+});
+
+test('caches the resolved source file and reuses it via --file on the next generate', async () => {
+  clearSourceResolutionCache();
+  const cache = new Map();
+  const event = {
+    type: 'generate',
+    id: 'sess-a',
+    count: 3,
+    pageUrl: '/pricing',
+    element: { classes: ['hero'], tagName: 'SECTION' },
+  };
+  const firstArgs = [];
+  const first = await runGenerationPreflight(event, {
+    scriptsDir: SCRIPTS_DIR,
+    cache,
+    async execFileImpl(_file, args) {
+      firstArgs.push(...args);
+      return { stdout: '{"file":"src/Pricing.jsx","sourceWritten":false}\n', stderr: '' };
+    },
+  });
+  assert.equal(first.ok, true);
+  assert.ok(!firstArgs.includes('--file'), 'first pass does the tree search, no --file');
+
+  // Second generate on the SAME target (new session id) should point --file at
+  // the cached resolution and skip the search.
+  const secondArgs = [];
+  const second = await runGenerationPreflight({ ...event, id: 'sess-b' }, {
+    scriptsDir: SCRIPTS_DIR,
+    cache,
+    async execFileImpl(_file, args) {
+      secondArgs.push(...args);
+      return { stdout: '{"file":"src/Pricing.jsx","sourceWritten":false}\n', stderr: '' };
+    },
+  });
+  assert.equal(second.ok, true);
+  const fileIdx = secondArgs.indexOf('--file');
+  assert.notEqual(fileIdx, -1, 'cached resolution injects --file');
+  assert.equal(secondArgs[fileIdx + 1], 'src/Pricing.jsx');
+});
+
+test('evicts the cached resolution when the preflight fails', async () => {
+  const cache = new Map();
+  const event = {
+    type: 'generate',
+    id: 'sess-c',
+    count: 3,
+    pageUrl: '/pricing',
+    element: { classes: ['hero'] },
+  };
+  await runGenerationPreflight(event, {
+    scriptsDir: SCRIPTS_DIR,
+    cache,
+    async execFileImpl() { return { stdout: '{"file":"src/Pricing.jsx"}\n', stderr: '' }; },
+  });
+  assert.equal(cache.size, 1);
+
+  const error = new Error('spawn failed');
+  error.stderr = 'live-wrap.mjs: element not found\n';
+  await runGenerationPreflight(event, {
+    scriptsDir: SCRIPTS_DIR,
+    cache,
+    execFileImpl: () => Promise.reject(error),
+  });
+  assert.equal(cache.size, 0, 'a failed resolution is evicted so the next run re-searches');
+});
+
+test('caches the route source file, not the svelte-component manifest', async () => {
+  const cache = new Map();
+  const event = {
+    type: 'generate',
+    id: 'sess-svelte',
+    count: 3,
+    pageUrl: '/',
+    element: { classes: ['hero'] },
+  };
+  await runGenerationPreflight(event, {
+    scriptsDir: SCRIPTS_DIR,
+    cache,
+    async execFileImpl() {
+      return {
+        stdout: '{"file":"node_modules/.impeccable-live/x/manifest.json","sourceFile":"src/routes/+page.svelte","previewMode":"svelte-component"}\n',
+        stderr: '',
+      };
+    },
+  });
+  assert.deepEqual([...cache.values()], ['src/routes/+page.svelte']);
 });
 
 test('reports a child-process failure without leaking internals or throwing', async () => {

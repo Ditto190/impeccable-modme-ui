@@ -157,6 +157,19 @@ for (const name of listFixtures()) {
           assert.match(body, /localhost:9999\/live\.js/);
           return;
         }
+        if (result.adapter === 'tanstack-start') {
+          const adapterResult = result.results[0];
+          const rootDoc = readFileSync(join(tmp, adapterResult.file), 'utf-8');
+          const component = readFileSync(join(tmp, adapterResult.componentFile), 'utf-8');
+          assert.equal(adapterResult.inserted, true, 'TanStack Start root document was patched');
+          assert.match(rootDoc, /impeccable-live-tanstack-start/, 'root document got the adapter marker');
+          assert.match(rootDoc, /<ImpeccableLiveRoot \/>/, 'root document renders the mount component');
+          assert.doesNotMatch(rootDoc, /impeccable-live-start/, 'root document must not get the raw script block');
+          assert.doesNotMatch(rootDoc, /localhost:9999\/live\.js/, 'root document must not own live.js directly');
+          assert.match(component, /localhost:9999\/live\.js/, 'mount component loads live.js');
+          assert.match(component, /useEffect/, 'mount component appends the script on mount');
+          return;
+        }
         for (const r of result.results) {
           assert.ok(r.inserted, `${r.file} got the tag (result: ${JSON.stringify(r)})`);
           const body = readFileSync(join(tmp, r.file), 'utf-8');
@@ -187,6 +200,14 @@ for (const name of listFixtures()) {
         if (result.adapter === 'nuxt') {
           assert.equal(result.results[0].removed, true);
           assert.equal(existsSync(join(tmp, result.results[0].file)), false, 'Nuxt client plugin was removed');
+          return;
+        }
+        if (result.adapter === 'tanstack-start') {
+          const adapterResult = result.results[0];
+          const rootDoc = readFileSync(join(tmp, adapterResult.file), 'utf-8');
+          assert.doesNotMatch(rootDoc, /ImpeccableLiveRoot/);
+          assert.doesNotMatch(rootDoc, /impeccable-live-tanstack-start/);
+          assert.equal(existsSync(join(tmp, adapterResult.componentFile)), false, 'TanStack mount component was removed');
           return;
         }
         for (const r of result.results) {

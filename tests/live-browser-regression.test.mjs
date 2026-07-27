@@ -273,6 +273,73 @@ describe('live-browser.js regression guards', () => {
     );
   });
 
+  it('SSE error reply clears the durable session checkpoint like discarded', () => {
+    // Issue #362: `live-poll.mjs --reply <id> error "..."` is the documented
+    // abort flow in reference/live.md, and an agent error reply is terminal
+    // for the session it names. The 'error' case used to reset only the UI
+    // (hideBar + PICKING) while the localStorage checkpoint written for the
+    // GENERATING phase survived — so every reload resurrected a dead session
+    // the server no longer knew about, until the user hand-cleared the
+    // impeccable-live* keys in the console. The error path must tear down the
+    // named session exactly like 'discarded' does (markSessionHandled +
+    // cleanup, which includes clearSession), and drop a stored-but-not-
+    // current checkpoint that matches the errored id.
+    const errorCase = SOURCE.match(/case 'error':[\s\S]{0,2500}?setLiveState\('PICKING'\);\s*break;/);
+    assert.ok(errorCase, 'expected an SSE case \'error\' handler in live-browser.js');
+    assert.match(
+      errorCase[0],
+      /if \(msg\.id && msg\.id === currentSessionId\) \{[\s\S]{0,160}?markSessionHandled\(\);[\s\S]{0,80}?cleanup\(\);[\s\S]{0,80}?break;/,
+      'an error reply naming the current session must run the same markSessionHandled + cleanup teardown as \'discarded\' so the durable checkpoint is cleared',
+    );
+    assert.match(
+      errorCase[0],
+      /if \(msg\.id && loadSession\(\)\?\.id === msg\.id\) clearSession\(\);/,
+      'an error reply naming a stored-but-not-current session must drop that checkpoint so a reload cannot resurrect it',
+    );
+  });
+
+  it('a late accept failure is recognized after the optimistic teardown (#384)', () => {
+    // Accept is optimistic: POST /events acknowledging the intent schedules
+    // cleanupAcceptedSession(), which nulls pendingAcceptedSession before
+    // live-accept.mjs has actually run. When the accept later fails (missing
+    // markers, preview error, receipt conflict, source_locked), the SSE
+    // 'error' guard keyed on pendingAcceptedSession could no longer match,
+    // so the user got only the generic error toast with no hint that their
+    // variant was never written. An awaitingAcceptResult id must be set on
+    // the optimistic success path, survive cleanupAcceptedSession, be
+    // matched in the 'error' case with an explicit not-saved message, and
+    // be released when the real accept result arrives.
+    assert.match(
+      SOURCE,
+      /awaitingAcceptResult = \{ id: acceptedSessionId \};[\s\S]{0,400}?scheduleAcceptCleanup\(pending\);/,
+      'the optimistic POST-success path must record awaitingAcceptResult before scheduling the teardown',
+    );
+    const errorCase = SOURCE.match(/case 'error':[\s\S]{0,2600}?setLiveState\('PICKING'\);\s*break;/);
+    assert.ok(errorCase, 'expected an SSE case \'error\' handler in live-browser.js');
+    assert.match(
+      errorCase[0],
+      /if \(awaitingAcceptResult\?\.id && msg\.id === awaitingAcceptResult\.id\) \{[\s\S]{0,700}?awaitingAcceptResult = null;[\s\S]{0,700}?may not have been saved[\s\S]{0,300}?break;/,
+      'an error naming the awaited accept must clear the marker and warn that the variant may not have been saved (hedged: a carbonize-phase failure fires this after the source WAS promoted)',
+    );
+    // Accept unlocks at the first variant, so a late generation agent_done
+    // for the same session id can arrive after Accept; only a carbonize
+    // agent_done is provably accept-side and may close the window.
+    const agentDoneCase = SOURCE.match(/case 'agent_done':[\s\S]{0,1200}?break;/);
+    assert.ok(agentDoneCase, 'expected an SSE case \'agent_done\' handler in live-browser.js');
+    assert.match(
+      agentDoneCase[0],
+      /msg\.data\?\.carbonize === true && awaitingAcceptResult\?\.id && msg\.id === awaitingAcceptResult\.id/,
+      'agent_done must only release the awaited accept marker for carbonize completions, or a late generation agent_done reopens the #384 hole',
+    );
+    const cleanupFn = SOURCE.match(/function cleanupAcceptedSession\(\) \{[\s\S]{0,1200}?\n  \}/);
+    assert.ok(cleanupFn, 'expected cleanupAcceptedSession in live-browser.js');
+    assert.doesNotMatch(
+      cleanupFn[0],
+      /awaitingAcceptResult\s*=/,
+      'cleanupAcceptedSession must not clear awaitingAcceptResult - surviving the teardown is the point',
+    );
+  });
+
   it('handleServerLost preserves the current recoverable phase', () => {
     assert.doesNotMatch(
       SOURCE,
@@ -283,6 +350,41 @@ describe('live-browser.js regression guards', () => {
       SOURCE,
       /function handleServerLost\(\)[\s\S]{0,300}?const recoveryState = currentSessionId \? state : 'IDLE';[\s\S]{0,1200}?setLiveState\(recoveryState\);[\s\S]{0,120}?if \(currentSessionId\) saveSession\(\);/,
       'server-lost cleanup should keep the current session phase in local recovery state instead of rewriting it to GENERATING',
+    );
+  });
+
+  it('server-lost toast frames the disconnect as resumable, not ended', () => {
+    assert.doesNotMatch(
+      SOURCE,
+      /Live server disconnected\. Session ended\./,
+      'the "Session ended" copy made agents rationalize bailing to direct edits; the session is resumable',
+    );
+    assert.match(
+      SOURCE,
+      /Live server connection lost\. Your session is saved;[^']*restart live-poll\.mjs to continue\./,
+      'server-lost toast should tell the user the session is saved and how to continue',
+    );
+  });
+
+  it('the agent-phase progress bar advances monotonically', () => {
+    // A behind/resumed checkpoint must not move the visible bar backward.
+    assert.doesNotMatch(
+      SOURCE,
+      /generationPhase = msg\.phase \|\| generationPhase;/,
+      'raw phase assignment lets a behind checkpoint regress the visible bar to an earlier phase',
+    );
+    assert.match(
+      SOURCE,
+      /case 'agent_phase':[\s\S]{0,400}?if \(shouldAdvancePhase\(generationPhase, msg\.phase\)\) generationPhase = msg\.phase;/,
+      'agent_phase should only advance the phase when it moves forward',
+    );
+    // The rank table must order the lifecycle so scaffolding/source_ready sit
+    // below generating and the reviewable phases.
+    assert.match(SOURCE, /function shouldAdvancePhase\(current, next\)/);
+    assert.match(
+      SOURCE,
+      /scaffolding: 2,[\s\S]{0,120}?source_ready: 4,[\s\S]{0,120}?(generation_ready|generating): 5,/,
+      'scaffolding and source_ready must rank below generating',
     );
   });
 
@@ -920,10 +1022,13 @@ describe('live-browser.js regression guards', () => {
     );
     assert.match(SOURCE, /tune\.disabled = true/, 'pending Tune must be visibly loading but non-interactive');
     assert.match(SOURCE, /Tune controls are ready\./, 'parameter arrival needs a clear ready indication');
+    // Source-mode DOM injection is gated to the `done` branch (it races
+    // framework ownership mid-generation), but a params-only publication must
+    // still flip the Tune controls into their loading state on the checkpoint.
     assert.match(
       SOURCE,
-      /msg\.publicationKind !== 'params' && arrivedVariants >= targetArrived/,
-      'a params-only publication must refresh even though the variant count is unchanged',
+      /case 'variant_progress':[\s\S]{0,120}?if \(msg\.publicationKind === 'params'\) parameterGenerationState = 'loading';/,
+      'a params-only publication must mark Tune controls loading even though the variant count is unchanged',
     );
     assert.match(SOURCE, /revisionDomain: 'browser'/, 'browser checkpoints must use their own revision domain');
   });
