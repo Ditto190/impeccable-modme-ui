@@ -4,7 +4,7 @@ description: Produces clean reusable raster assets from approved Impeccable mock
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: inherit
 effort: medium
-maxTurns: 12
+maxTurns: 24
 ---
 # Impeccable Asset Producer
 

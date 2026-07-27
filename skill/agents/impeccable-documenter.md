@@ -5,7 +5,7 @@ description: Records DESIGN.md and its sidecar from a finished Impeccable build,
 tools: Read, Write, Bash, Glob, Grep
 model: inherit
 effort: medium
-max-turns: 12
+max-turns: 30
 nickname-candidates:
   - System Scribe
   - Token Surveyor
