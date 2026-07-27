@@ -482,6 +482,71 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
   });
 
+  it('a local upstream with a slash in its name is not misparsed (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'release/2.0');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('checkout', '-q', '-b', 'hotfix/x');
+    git('branch', '-q', '--set-upstream-to=release/2.0');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'hotfix work');
+    const s = await gatherSignals(scratch);
+    // "release" is not a remote here; the whole ref is the local base name.
+    assert.equal(s.git.base, 'release/2.0');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
+  it('a local upstream sharing the branch leaf name is not self-skipped (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'feature/foo');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('checkout', '-q', '-b', 'foo');
+    git('branch', '-q', '--set-upstream-to=feature/foo');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'work');
+    const s = await gatherSignals(scratch);
+    // Truncating feature/foo to "foo" made it look like the current branch
+    // and the valid upstream was discarded.
+    assert.equal(s.git.base, 'feature/foo');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
+  it('a pruned upstream tracking ref falls back to other remotes (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'feature/p');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('remote', 'add', 'origin', '.');
+    git('remote', 'add', 'upstream', '.');
+    // The branch tracks origin/main, but that tracking ref was pruned; the
+    // live main exists only on the upstream remote.
+    git('config', 'branch.feature/p.remote', 'origin');
+    git('config', 'branch.feature/p.merge', 'refs/heads/main');
+    git('update-ref', 'refs/remotes/upstream/main', 'HEAD');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, 'main');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
   it('never diffs one integration branch against another (#302)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
