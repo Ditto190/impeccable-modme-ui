@@ -436,6 +436,52 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.git.changedFiles, ['src/App.tsx']);
   });
 
+  it('finds a develop that exists only on a non-origin remote (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'feature/f');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    // Fork-parent layout: develop lives only as upstream/develop, no local
+    // copy, no origin remote, and the feature branch has no upstream.
+    git('remote', 'add', 'upstream', '.');
+    git('update-ref', 'refs/remotes/upstream/develop', 'HEAD');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, 'develop');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
+  it('a same-name default on a second remote still resolves (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'feature/h');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/App.tsx', 'export default 1;\n');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('remote', 'add', 'origin', '.');
+    git('remote', 'add', 'upstream', '.');
+    // origin advertises main but its tracking ref is gone (pruned); the
+    // real main lives only as upstream/main. Name-level dedup must not
+    // discard the upstream rev.
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    git('update-ref', 'refs/remotes/upstream/main', 'HEAD');
+    git('symbolic-ref', 'refs/remotes/upstream/HEAD', 'refs/remotes/upstream/main');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, 'main');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
   it('never diffs one integration branch against another (#302)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });

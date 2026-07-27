@@ -131,6 +131,13 @@ function gitSignals(cwd) {
   let baseRev = null;
   if (!onIntegrationBranch) {
     const upstream = asUpstream(run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']));
+    // Every named candidate tries the local branch first, then that name on
+    // every remote (origin first). Covering all remotes up front is what
+    // makes the name-level dedup below safe: a develop or main that exists
+    // only as upstream/<name> still resolves even though origin's candidate
+    // claimed the name first.
+    const remoteOrder = ['origin', ...remotes.filter((name) => name !== 'origin')];
+    const revsFor = (name) => [name, ...remoteOrder.map((r) => `${r}/${name}`)];
     const candidates = [];
     const seen = new Set();
     const addCandidate = (name, revs) => {
@@ -145,9 +152,9 @@ function gitSignals(cwd) {
     // even when the platform default (origin/HEAD) was never flipped off
     // main; an existing develop therefore outranks the remote default. This
     // is #302's own repro shape, and repos without develop are unaffected.
-    addCandidate('develop', ['develop', 'origin/develop']);
-    for (const head of remoteHeads) addCandidate(head.name, [head.name, head.rev]);
-    for (const name of ['main', 'master']) addCandidate(name, [name, `origin/${name}`]);
+    addCandidate('develop', revsFor('develop'));
+    for (const head of remoteHeads) addCandidate(head.name, revsFor(head.name));
+    for (const name of ['main', 'master']) addCandidate(name, revsFor(name));
     for (const c of candidates) {
       const rev = c.revs.find((r) => run(['rev-parse', '--verify', '--quiet', r]) !== null);
       if (rev) {
