@@ -47,11 +47,51 @@ function stopEntry(command) {
   };
 }
 const CLAUDE_PROJECT_HOOK = '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scripts/hook.mjs';
+// The Node major the hook runtime requires, kept equal to the engines floor in
+// package.json. The probe and the notice both derive from it so they cannot
+// disagree about the supported version.
+const NODE_MAJOR_FLOOR = 22;
 // A hook manifest can be copied into a user-level settings file (issue #399:
 // user-level hooks fire in every project, where a project-relative path may
 // not exist). Guard node invocations so a missing file exits 0 without
 // swallowing node's real exit code when the file is present.
-const guardedNode = (hookPath) => `[ ! -f "${hookPath}" ] || node "${hookPath}"`;
+//
+// The runtime is guarded too (issue #410): a `node` on PATH too old for the
+// hook's ESM syntax dies while hook.mjs is still being parsed, before the
+// script's own always-exit-0 contract can run, so the harness reported a hook
+// error on every edit and every Stop. Nothing written in ESM can report that
+// condition, so the command string itself checks the version floor first, in
+// ES5-only syntax that parses on any node old enough to fail it, and exits 0
+// when the runtime is unsupported or missing.
+//
+// `notice` reports the dead runtime to the user. It is passed per harness
+// because only some have a channel for it, checked against each harness's own
+// hook reference on the events we hook:
+//   Claude Code / Codex: `systemMessage` on stdout is shown to the user -> notice
+//   Cursor: preToolUse output is permission-shaped and its `user_message`
+//     renders only on DENY, so warning would block the edit    -> probe only
+//   Grok Build: PostToolUse/Stop stdout is ignored outright    -> probe only
+//   Copilot: output contract unconfirmed; do not guess a shape -> probe only
+const NODE_PROBE = `node -e "process.exit(parseInt(process.versions.node,10)>=${NODE_MAJOR_FLOOR}?0:1)" 2>/dev/null`;
+const guardedNode = (hookPath, notice = '') => {
+  const probe = notice
+    ? `! { ${NODE_PROBE} || { ${notice}; exit 0; }; }`
+    : `! ${NODE_PROBE}`;
+  return `[ ! -f "${hookPath}" ] || ${probe} || node "${hookPath}"`;
+};
+// The message says `on PATH` deliberately: the common cause is a hook shell
+// whose PATH misses the version manager, so a user already running Node 22
+// needs to know the hook's PATH is at issue and not their install. Apostrophes
+// cannot appear in it, since it travels inside a single-quoted shell string.
+const NODE_NOTICE_TEXT = `The impeccable design hook is not running: no Node ${NODE_MAJOR_FLOOR} or newer on PATH. `
+  + 'Install one, or remove the impeccable hook from your harness settings.';
+// Claude Code and Codex both read `systemMessage`, so one payload serves both.
+// The marker under ~/.impeccable holds it to one notice per machine (not per
+// harness or per edit), and printf runs only after the marker write succeeds,
+// so an unwritable HOME degrades to silence rather than a notice on every edit.
+const SYSTEM_MESSAGE_NOTICE = 'D="$HOME/.impeccable"; [ -f "$D/node-unsupported" ] || '
+  + '{ mkdir -p "$D" 2>/dev/null && : > "$D/node-unsupported" 2>/dev/null && '
+  + `printf '%s' '{"systemMessage":"${NODE_NOTICE_TEXT}"}'; }`;
 const CLAUDE_PLUGIN_HOOK = '${CLAUDE_PLUGIN_ROOT}/skills/impeccable/scripts/hook.mjs';
 const CODEX_PLUGIN_HOOK = '${PLUGIN_ROOT}/skills/impeccable/scripts/hook.mjs';
 // Codex reads project hooks from `.codex/hooks.json`, but the skill payload the
@@ -77,14 +117,14 @@ export function buildClaudeSettingsManifest() {
           hooks: [
             {
               type: 'command',
-              command: guardedNode(CLAUDE_PROJECT_HOOK),
+              command: guardedNode(CLAUDE_PROJECT_HOOK, SYSTEM_MESSAGE_NOTICE),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(guardedNode(CLAUDE_PROJECT_HOOK))],
+      Stop: [stopEntry(guardedNode(CLAUDE_PROJECT_HOOK, SYSTEM_MESSAGE_NOTICE))],
     },
   };
 }
@@ -104,14 +144,14 @@ export function buildClaudePluginHooksManifest() {
           hooks: [
             {
               type: 'command',
-              command: `node "${CLAUDE_PLUGIN_HOOK}"`,
+              command: guardedNode(CLAUDE_PLUGIN_HOOK, SYSTEM_MESSAGE_NOTICE),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(`node "${CLAUDE_PLUGIN_HOOK}"`)],
+      Stop: [stopEntry(guardedNode(CLAUDE_PLUGIN_HOOK, SYSTEM_MESSAGE_NOTICE))],
     },
   };
 }
@@ -128,14 +168,14 @@ export function buildCodexPluginHooksManifest() {
           hooks: [
             {
               type: 'command',
-              command: `node "${CODEX_PLUGIN_HOOK}"`,
+              command: guardedNode(CODEX_PLUGIN_HOOK, SYSTEM_MESSAGE_NOTICE),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(`node "${CODEX_PLUGIN_HOOK}"`)],
+      Stop: [stopEntry(guardedNode(CODEX_PLUGIN_HOOK, SYSTEM_MESSAGE_NOTICE))],
     },
   };
 }
@@ -153,14 +193,14 @@ export function buildCodexHooksManifest(skillDir = '.codex') {
           hooks: [
             {
               type: 'command',
-              command: guardedNode(hookPath),
+              command: guardedNode(hookPath, SYSTEM_MESSAGE_NOTICE),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(guardedNode(hookPath))],
+      Stop: [stopEntry(guardedNode(hookPath, SYSTEM_MESSAGE_NOTICE))],
     },
   };
 }
@@ -198,7 +238,7 @@ export function buildGitHubHooksManifest() {
         {
           type: 'command',
           matcher: 'edit|create|apply_patch',
-          bash: `node "${GITHUB_PROJECT_HOOK}"`,
+          bash: guardedNode(GITHUB_PROJECT_HOOK),
           timeoutSec: TIMEOUT_SECONDS,
         },
       ],
@@ -220,14 +260,14 @@ export function buildGrokHooksManifest() {
           hooks: [
             {
               type: 'command',
-              command: `node "${GROK_PROJECT_HOOK}"`,
+              command: guardedNode(GROK_PROJECT_HOOK),
               timeout: TIMEOUT_SECONDS,
               statusMessage: STATUS_MESSAGE,
             },
           ],
         },
       ],
-      Stop: [stopEntry(`node "${GROK_PROJECT_HOOK}"`)],
+      Stop: [stopEntry(guardedNode(GROK_PROJECT_HOOK))],
     },
   };
 }

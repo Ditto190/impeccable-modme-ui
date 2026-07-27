@@ -13,6 +13,7 @@ import {
   buildClaudeSettingsManifest,
   buildClaudePluginHooksManifest,
   buildCodexHooksManifest,
+  buildCodexPluginHooksManifest,
   buildCursorHooksManifest,
   buildGitHubHooksManifest,
   buildGrokHooksManifest,
@@ -25,18 +26,44 @@ function readJson(rel) {
   return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
 }
 
+// The runtime probe every hook command must carry (issue #410): a node below
+// the engines floor exits the command at 0 instead of dying on ESM parse. The
+// expected floor comes from package.json engines, so probe and contract cannot
+// drift apart.
+const ENGINES_NODE_MAJOR = parseInt(
+  JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).engines.node.replace(/[^\d.]/g, ''),
+  10,
+);
+const NODE_PROBE = `process.exit(parseInt(process.versions.node,10)>=${ENGINES_NODE_MAJOR}?0:1)`;
+
 function expectCommand(command, expectedPath) {
   assert.equal(typeof command, 'string');
   // node-command providers carry the missing-file guard (issue #399: exits 0
-  // when absent, preserves node's exit code when present); github/grok keep
-  // their own portable unguarded forms.
+  // when absent, preserves node's exit code when present) plus the runtime
+  // probe. GitHub's portable `$(git rev-parse)` form is guarded too, so it
+  // lands in the same branch.
   if (command.startsWith('[ ! -f "')) {
     assert.match(command, /\|\| node "/);
+    assert.ok(command.includes(NODE_PROBE), `missing runtime probe in ${command}`);
   } else {
     assert.match(command, /^node "|^bash -c|\$\(git rev-parse/);
   }
   assert.ok(command.includes(expectedPath), `missing ${expectedPath} in ${command}`);
   assert.ok(!command.includes('hook-probe.mjs'), `probe hook still referenced in ${command}`);
+}
+
+function manifestCommands(manifest) {
+  const commands = [];
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return; }
+    if (value && typeof value === 'object') {
+      if (typeof value.command === 'string') commands.push(value.command);
+      if (typeof value.bash === 'string') commands.push(value.bash);
+      Object.values(value).forEach(walk);
+    }
+  };
+  walk(manifest.hooks);
+  return commands;
 }
 
 describe('hook manifest builders', () => {
@@ -163,6 +190,40 @@ describe('hook manifest builders', () => {
     assert.equal(stop.timeout, 30);
     assert.equal(stop.statusMessage, 'Design deep pass');
     expectCommand(stop.command, '.grok/skills/impeccable/scripts/hook.mjs');
+  });
+
+  it('probes the node runtime everywhere, and notices only where a channel exists', () => {
+    // Claude Code and Codex render a `systemMessage` from hook stdout, so their
+    // manifests carry the one-time unsupported-runtime notice. Cursor (output is
+    // permission-shaped; a message would block the edit), Grok (stdout ignored),
+    // and Copilot (contract unconfirmed) get the silent probe only.
+    const withNotice = [
+      buildClaudeSettingsManifest(),
+      buildClaudePluginHooksManifest(),
+      buildCodexHooksManifest(),
+      buildCodexPluginHooksManifest(),
+    ];
+    const probeOnly = [
+      buildCursorHooksManifest(),
+      buildGitHubHooksManifest(),
+      buildGrokHooksManifest(),
+    ];
+    for (const manifest of [...withNotice, ...probeOnly]) {
+      for (const command of manifestCommands(manifest)) {
+        assert.ok(command.includes(NODE_PROBE), `missing runtime probe in ${command}`);
+      }
+    }
+    for (const manifest of withNotice) {
+      for (const command of manifestCommands(manifest)) {
+        assert.ok(command.includes('systemMessage'), `missing notice in ${command}`);
+        assert.ok(command.includes('node-unsupported'), `missing once-only marker in ${command}`);
+      }
+    }
+    for (const manifest of probeOnly) {
+      for (const command of manifestCommands(manifest)) {
+        assert.ok(!command.includes('systemMessage'), `unexpected notice in ${command}`);
+      }
+    }
   });
 
   it('routes supported hook builders and leaves other providers alone', () => {
