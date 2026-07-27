@@ -394,13 +394,40 @@ export function resolveLiveRoots(cwd = process.cwd(), { targetPath = null } = {}
 }
 
 /**
+ * Consume a `--target <path>` / `--target=<path>` pair from an argv array,
+ * returning the value and removing the tokens so downstream flag parsers
+ * (which do not know the option) never see them.
+ */
+export function consumeTargetArg(argv = process.argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--target' && typeof argv[i + 1] === 'string') {
+      const value = argv[i + 1];
+      argv.splice(i, 2);
+      return value;
+    }
+    if (typeof arg === 'string' && arg.startsWith('--target=')) {
+      const value = arg.slice('--target='.length);
+      argv.splice(i, 1);
+      return value;
+    }
+  }
+  return null;
+}
+
+/**
  * Entry-point guard for live CLI scripts: resolve the governing roots and
  * make appRoot the process cwd so every downstream path derivation agrees
- * with the boot. Returns the manifest. Never throws; on selection ambiguity
- * it stays in the current directory (the boot flow handles prompting).
+ * with the boot. An explicit `--target <path>` on the helper's command line
+ * overrides pointer resolution, which is what disambiguates a repo with
+ * several live apps (the multi-app warning names this escape hatch, so it
+ * has to actually work on every helper). Returns the manifest. Never
+ * throws; on selection ambiguity it stays in the current directory (the
+ * boot flow handles prompting).
  */
 export function enterLiveRoot(cwd = process.cwd()) {
-  const resolved = resolveLiveRoots(cwd);
+  const targetPath = consumeTargetArg(process.argv);
+  const resolved = resolveLiveRoots(cwd, targetPath ? { targetPath } : {});
   if (!resolved.manifest) return null;
   const appRoot = resolved.manifest.appRoot;
   if (path.resolve(cwd) !== path.resolve(appRoot) && isDir(appRoot)) {

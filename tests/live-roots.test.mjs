@@ -267,3 +267,38 @@ describe('review regressions: stopped-session recovery', () => {
     }
   });
 });
+
+describe('review regressions: helper --target', () => {
+  it('enterLiveRoot honors --target and strips it from argv', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-roots-target-')));
+    try {
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      for (const name of ['appA', 'appB']) {
+        write(repo, `${name}/vite.config.js`, 'export default {};');
+      }
+      const a = resolveRoots({ cwd: repo, targetPath: join(repo, 'appA/vite.config.js') }).manifest;
+      const b = resolveRoots({ cwd: repo, targetPath: join(repo, 'appB/vite.config.js') }).manifest;
+      writeRootsManifest(a);
+      writeRootsManifest(b);
+      // Both alive: pointer resolution alone is ambiguous (A? B?); --target
+      // must decide, and downstream flag parsing must not see the tokens.
+      write(repo, 'appA/.impeccable/live/server.json', JSON.stringify({ pid: process.pid, port: 1, token: 't' }));
+      write(repo, 'appB/.impeccable/live/server.json', JSON.stringify({ pid: process.pid, port: 2, token: 't' }));
+
+      const res = spawnSync(process.execPath, [
+        '-e',
+        `import(${JSON.stringify(ROOTS_MODULE)}).then((m) => {
+          process.argv.push('--target', ${JSON.stringify(join(repo, 'appB'))});
+          m.enterLiveRoot();
+          console.log(JSON.stringify({ cwd: process.cwd(), argvHasTarget: process.argv.includes('--target') }));
+        });`,
+      ], { cwd: repo, encoding: 'utf-8' });
+      assert.equal(res.status, 0, res.stderr);
+      const out = JSON.parse(res.stdout.trim().split('\n').pop());
+      assert.equal(realpathSync(out.cwd), join(repo, 'appB'));
+      assert.equal(out.argvHasTarget, false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
