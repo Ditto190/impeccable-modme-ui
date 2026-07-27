@@ -101,7 +101,7 @@ jobs:
         # Pinned for reproducible CI. Fails on AMO errors; innerHTML style
         # warnings in the panel renderer are non-blocking and not promoted to
         # errors here.
-        run: npx --yes web-ext@8 lint --source-dir dist/extension-firefox
+        run: npx --yes web-ext@10 lint --source-dir dist/extension-firefox
 
       - name: Verify generated tracked outputs
         run: git diff --exit-code -- .agents .claude .cursor .gemini .github/skills plugin cli/engine/detect-antipatterns-browser.js extension/detector
