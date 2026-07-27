@@ -5,7 +5,7 @@ description: Reviews a finished Impeccable build against its direction contract,
 tools: Read, Bash, Glob, Grep
 model: inherit
 effort: high
-max-turns: 12
+max-turns: 30
 nickname-candidates:
   - Finishing Eye
   - Contract Judge

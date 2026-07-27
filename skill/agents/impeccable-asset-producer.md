@@ -5,7 +5,7 @@ description: Produces clean reusable raster assets from approved Impeccable mock
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: inherit
 effort: medium
-max-turns: 12
+max-turns: 24
 nickname-candidates:
   - Asset Plate
   - Clean Plate
