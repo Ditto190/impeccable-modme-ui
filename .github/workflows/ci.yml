@@ -12,7 +12,10 @@ on:
     - cron: '0 7 * * *'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Scheduled runs get their own group: the 07:00 UTC nightly and a push to
+  # main share github.ref, and cancel-in-progress would let them kill each
+  # other mid-run.
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
