@@ -5970,7 +5970,16 @@
     });
     dismiss.textContent = '×';
     dismiss.setAttribute('aria-label', 'Dismiss');
-    dismiss.addEventListener('click', (e) => { e.stopPropagation(); clearMountErrorCard(); });
+    dismiss.addEventListener('click', (e) => {
+      e.stopPropagation();
+      clearMountErrorCard();
+      // The card was the only recovery affordance while the bar is hidden;
+      // dismissing it must hand the user back a usable surface. PICKING
+      // reactivates the global mark and the picker. The saved session and
+      // server truth survive, so a later republish (SSE `done`) still
+      // resurrects the comparison through the normal handlers.
+      if (state === 'GENERATING') setLiveState('PICKING');
+    });
     head.appendChild(dismiss);
     card.appendChild(head);
 

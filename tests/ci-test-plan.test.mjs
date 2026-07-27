@@ -95,6 +95,17 @@ describe('ci-test-plan', () => {
     assert.match(workflow, /live-e2e-accept-cleanup:/);
     assert.match(workflow, /live-svelte-adapter-deepseek:/);
   });
+  it('schedule events run only the deterministic suites plus the full live-e2e matrix', () => {
+    const outputs = runPlan({ GITHUB_EVENT_NAME: 'schedule' });
+    assert.equal(outputs.live_e2e, 'true');
+    assert.equal(outputs.live_e2e_accept_cleanup, 'false');
+    assert.equal(outputs.skill_behavior, 'false');
+    assert.equal(outputs.live_svelte_adapter_deepseek, 'false');
+    assert.equal(outputs.cli_remote_e2e, 'false');
+    assert.equal(outputs.core, 'true');
+    assert.equal(outputs.live, 'true');
+  });
+
 });
 
 function runPlan(env) {
