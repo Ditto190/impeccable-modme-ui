@@ -577,6 +577,30 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
   });
 
+  it('a develop-pointing remote default outranks a stale local develop (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'develop');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/base.css', 'a{}\n');
+    git('add', '.');
+    git('commit', '-qm', 'A');
+    write('src/extra.css', 'b{}\n');
+    git('add', '.');
+    git('commit', '-qm', 'A2');
+    git('update-ref', 'refs/remotes/origin/develop', 'HEAD');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/develop');
+    git('checkout', '-q', '-b', 'feature/t');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    git('branch', '-f', 'develop', 'HEAD~2'); // local develop is stale at A
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, 'develop');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
   it('never diffs one integration branch against another (#302)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
