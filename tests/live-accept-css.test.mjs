@@ -209,3 +209,24 @@ describe('review regressions: toggle branch truth', () => {
     assert.equal(stripParamSelector('[data-p-flag] .a', 'flag', 'toggle', false), null);
   });
 });
+
+describe('review regressions: verify precision', () => {
+  it('does not flag user tokens that merely share the p- prefix', () => {
+    const clean = [
+      '<div data-page="3" data-p-count-like data-photo="x">ok</div>',
+      '.a { color: var(--primary); padding: var(--padding, 4px); }',
+    ].join('\n');
+    assert.equal(verifyAcceptedSource(clean).clean, true, JSON.stringify(verifyAcceptedSource(clean).findings));
+  });
+
+  it('still flags the exact shapes live mode writes', () => {
+    const dirty = [
+      '<div data-p-density="snug">x</div>',
+      '.a { gap: var(--p-depth, 4px); }',
+      '.b[data-p-flag] { color: red; }',
+    ].join('\n');
+    const { clean, findings } = verifyAcceptedSource(dirty);
+    assert.equal(clean, false);
+    assert.equal(findings.length >= 3, true);
+  });
+});

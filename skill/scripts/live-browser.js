@@ -5214,7 +5214,11 @@
     const candidates = [new URL(base + rel, location.origin).href];
     if (base !== '/') candidates.push(new URL('/' + rel, location.origin).href);
     if (absPath) {
-      candidates.push(new URL(base + '@fs/' + String(absPath).replace(/^\/+/, ''), location.origin).href);
+      const fsRel = '@fs/' + String(absPath).replace(/^\/+/, '');
+      candidates.push(new URL(base + fsRel, location.origin).href);
+      // Vite versions differ on whether @fs is served under base or at the
+      // server root; with a non-root base, try both.
+      if (base !== '/') candidates.push(new URL('/' + fsRel, location.origin).href);
     }
     return candidates;
   }

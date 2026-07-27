@@ -8,6 +8,10 @@
  * mechanical Svelte accept runs it on its own output as a self-check.
  */
 
+// Param patterns are anchored to the exact shapes live mode writes
+// (attribute-with-value / selector forms, var() references), not bare
+// substrings, so user tokens that merely share the prefix cannot trip the
+// completion gate.
 const FORBIDDEN = [
   { marker: 'impeccable-variants-start', why: 'variant wrapper comment left in source' },
   { marker: 'impeccable-variants-end', why: 'variant wrapper comment left in source' },
@@ -15,8 +19,8 @@ const FORBIDDEN = [
   { marker: 'impeccable-carbonize-end', why: 'carbonize block not rewritten into permanent form' },
   { marker: 'impeccable-param-values', why: 'param-values comment not baked and removed' },
   { marker: 'data-impeccable-', why: 'live-mode plumbing attribute left on markup' },
-  { marker: 'data-p-', why: 'preview parameter attribute left on markup' },
-  { marker: 'var(--p-', why: 'preview parameter variable not baked to a literal' },
+  { marker: /\bdata-p-[A-Za-z0-9_-]+\s*(?:=|\])/, label: 'data-p-*', why: 'preview parameter attribute left on markup' },
+  { marker: /var\(\s*--p-[A-Za-z0-9_-]+\s*[,)]/, label: 'var(--p-*)', why: 'preview parameter variable not baked to a literal' },
   { marker: '--impeccable-variant-ready', why: 'preview readiness sentinel left in CSS' },
 ];
 
@@ -29,10 +33,11 @@ export function verifyAcceptedSource(text) {
   const lines = String(text || '').split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    for (const { marker, why } of FORBIDDEN) {
-      if (line.includes(marker)) {
+    for (const { marker, label, why } of FORBIDDEN) {
+      const hit = marker instanceof RegExp ? marker.test(line) : line.includes(marker);
+      if (hit) {
         findings.push({
-          marker,
+          marker: label || String(marker),
           line: i + 1,
           excerpt: line.trim().slice(0, 120),
           why,
