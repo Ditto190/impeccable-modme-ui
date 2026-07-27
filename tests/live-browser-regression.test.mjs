@@ -1357,8 +1357,15 @@ describe('live-browser.js regression guards', () => {
     );
     assert.match(
       SOURCE,
-      /function findAdoptableServerSession\([\s\S]{0,900}?\^\(steer\|manual_edit\)/,
-      'adoption must exclude steer and manual-edit phases',
+      /function findAdoptableServerSession\([\s\S]{0,900}?ADOPTABLE_SESSION_PHASES\.has\(String\(session\.phase/,
+      'adoption must be limited to the comparison-phase allowlist',
+    );
+    // Accept/carbonize phases are agent-side work; adopting them resurrects
+    // the bar over a decided comparison (the slow-CI astro accept hang).
+    assert.doesNotMatch(
+      SOURCE,
+      /ADOPTABLE_SESSION_PHASES = new Set\(\[[\s\S]{0,200}?(accept_requested|carbonize|steer|manual_edit)/,
+      'accept, carbonize, steer, and manual-edit phases must not be adoptable',
     );
   });
 

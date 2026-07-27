@@ -8670,6 +8670,16 @@ void main() {
    * not evidence that it belongs to THIS page, and adopting it would hijack an
    * unrelated route.
    */
+  // Phases in which the user is (or should be) comparing variants. Only these
+  // are adoptable by a browser with no local record. Steer and manual-edit
+  // sessions have no wrapper to restore, and accept/carbonize phases are
+  // agent-side work: a reload mid-carbonize must not resurrect the bar over a
+  // page whose comparison is already decided (a slow-CI reload hit exactly
+  // that window and left the bar stranded after accept).
+  const ADOPTABLE_SESSION_PHASES = new Set([
+    'generate_requested', 'variants_ready', 'generating', 'cycling',
+  ]);
+
   function findAdoptableServerSession(activeSessions) {
     if (!Array.isArray(activeSessions)) return null;
     return activeSessions.find((session) => (
@@ -8679,12 +8689,8 @@ void main() {
       && session.pageUrl
       && pageMatchesCurrent(session.pageUrl)
       && (session.previewFile || session.sourceFile)
-      // Only variant comparisons are adoptable. A steer or manual-edit
-      // session is non-terminal and carries a sourceFile, but restoring it
-      // as a comparison hunts for a variant wrapper that never existed and
-      // wedges the bar before the user's next pick.
       && Number(session.expectedVariants) > 0
-      && !/^(steer|manual_edit)/.test(String(session.phase || ''))
+      && ADOPTABLE_SESSION_PHASES.has(String(session.phase || ''))
     )) || null;
   }
 
