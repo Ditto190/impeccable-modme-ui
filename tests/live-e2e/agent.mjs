@@ -2073,7 +2073,10 @@ export async function runAgentLoop({
           body: JSON.stringify({
             token,
             type: 'done',
-            sourceEventType: 'generate',
+            // No explicit sourceEventType: the server's inferSourceEventType
+            // maps this done onto the pending variant_mount_failed event, so
+            // the failure is acknowledged and leaves the poll queue instead
+            // of being redelivered forever.
             id: event.id,
             file: published.wrapInfo.file,
           }),

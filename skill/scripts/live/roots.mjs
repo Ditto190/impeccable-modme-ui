@@ -297,6 +297,32 @@ function hasLiveServer(appRoot) {
   }
 }
 
+const TERMINAL_SESSION_PHASES = new Set(['completed', 'discarded']);
+
+/**
+ * True when the app's durable session store holds a session that is not
+ * terminal. With every helper server stopped, this is what distinguishes
+ * "the app whose interrupted session the user is trying to recover" from an
+ * app that merely booted more recently.
+ */
+function hasActiveDurableSession(appRoot) {
+  const dir = path.join(appRoot, '.impeccable', 'live', 'sessions');
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return false;
+  }
+  for (const name of entries) {
+    if (!name.endsWith('.snapshot.json')) continue;
+    try {
+      const snapshot = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf-8'));
+      if (snapshot?.phase && !TERMINAL_SESSION_PHASES.has(snapshot.phase)) return true;
+    } catch { /* skip unreadable snapshots */ }
+  }
+  return false;
+}
+
 function readManifestAt(appRoot) {
   try {
     const raw = JSON.parse(fs.readFileSync(rootsFilePath(appRoot), 'utf-8'));
@@ -331,15 +357,18 @@ export function resolveLiveRoots(cwd = process.cwd(), { targetPath = null } = {}
 
     const gitRoot = findGitRoot(absCwd);
     if (gitRoot) {
-      // Several apps in one repo may have booted live. Prefer the one whose
-      // helper server is actually running; a stale pointer entry must not
-      // redirect status/poll/accept onto the wrong app's session store.
+      // Several apps in one repo may have booted live. Preference order:
+      // a running helper server, then an app whose durable store still holds
+      // a non-terminal session (the stopped session the user is recovering),
+      // then the most recent boot. A stale pointer entry must never redirect
+      // status/poll/accept onto the wrong app's session store.
       const candidates = readPointerEntries(gitRoot)
         .map((entry) => readManifestAt(entry.appRoot))
         .filter(Boolean);
       if (candidates.length > 0) {
         const live = candidates.find((manifest) => hasLiveServer(manifest.appRoot));
-        return { manifest: live || candidates[0], source: 'pointer' };
+        const recovering = live || candidates.find((manifest) => hasActiveDurableSession(manifest.appRoot));
+        return { manifest: recovering || candidates[0], source: 'pointer' };
       }
     }
   }

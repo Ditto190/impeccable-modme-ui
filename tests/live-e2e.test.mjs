@@ -929,6 +929,12 @@ for (const { name, fixture } of fixtures) {
           t.skip('manual scenario filter is active');
           return;
         }
+        const scenarioLimitation = fixture.runtime.missedDoneReloadScenario.knownLimitation;
+        if (scenarioLimitation) {
+          t.diagnostic(`KNOWN LIMITATION: ${scenarioLimitation}`);
+          t.skip(`known limitation: ${scenarioLimitation}`);
+          return;
+        }
         // Deterministic reproduction of the race the CI astro-vite7 timeout
         // exposed: the server-side preflight scaffold write triggers a
         // framework full-reload, and the agent's variant write + `done` SSE

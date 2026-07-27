@@ -239,3 +239,31 @@ describe('review regressions: multi-app pointer', () => {
     }
   });
 });
+
+describe('review regressions: stopped-session recovery', () => {
+  it('prefers the app with an active durable session when no server is alive', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-roots-stopped-')));
+    try {
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      for (const name of ['siteA', 'siteB']) {
+        write(repo, `${name}/vite.config.js`, 'export default {};');
+      }
+      const a = resolveRoots({ cwd: repo, targetPath: join(repo, 'siteA/vite.config.js') }).manifest;
+      const b = resolveRoots({ cwd: repo, targetPath: join(repo, 'siteB/vite.config.js') }).manifest;
+      writeRootsManifest(a);
+      writeRootsManifest(b); // B booted last; both servers are stopped.
+
+      // A holds the interrupted session the user wants to recover.
+      write(repo, 'siteA/.impeccable/live/sessions/ab12cd34.snapshot.json',
+        JSON.stringify({ id: 'ab12cd34', phase: 'variants_ready' }));
+      write(repo, 'siteB/.impeccable/live/sessions/ff00ff00.snapshot.json',
+        JSON.stringify({ id: 'ff00ff00', phase: 'completed' }));
+
+      const resolved = resolveLiveRoots(repo);
+      assert.equal(resolved.source, 'pointer');
+      assert.equal(resolved.manifest.appRoot, join(repo, 'siteA'));
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});

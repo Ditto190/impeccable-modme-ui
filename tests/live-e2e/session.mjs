@@ -200,7 +200,10 @@ export function startDevServer(tmp, runtime) {
   const [cmd, ...args] = runtime.devCommand;
   const child = spawn(cmd, args, {
     cwd: tmp,
-    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+    // runtime.env lets a fixture pin framework behavior. Astro 7 needs
+    // ASTRO_DEV_BACKGROUND set: it auto-detects AI-agent environments and
+    // daemonizes `astro dev`, which the harness reads as a crashed server.
+    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', ...(runtime.env || {}) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
