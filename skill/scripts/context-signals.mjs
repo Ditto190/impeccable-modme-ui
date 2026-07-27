@@ -169,7 +169,10 @@ function gitSignals(cwd) {
     // main; an existing develop therefore outranks the remote default. This
     // is #302's own repro shape, and repos without develop are unaffected.
     addCandidate('develop', revsFor('develop'));
-    for (const head of remoteHeads) addCandidate(head.name, revsFor(head.name));
+    // A remote's advertised default prefers its own remote-tracking rev over
+    // a possibly stale local checkout of the same name, for the same reason
+    // the upstream candidate leads with its rev.
+    for (const head of remoteHeads) addCandidate(head.name, [...new Set([head.rev, ...revsFor(head.name)])]);
     for (const name of ['main', 'master']) addCandidate(name, revsFor(name));
     for (const c of candidates) {
       const rev = c.revs.find((r) => run(['rev-parse', '--verify', '--quiet', r]) !== null);

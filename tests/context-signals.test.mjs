@@ -551,6 +551,32 @@ describe('gatherSignals', () => {
     assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
   });
 
+  it('a remote-advertised default outranks a stale local checkout (#302)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+    write('src/base.css', 'a{}\n');
+    git('add', '.');
+    git('commit', '-qm', 'A');
+    write('src/extra.css', 'b{}\n');
+    git('add', '.');
+    git('commit', '-qm', 'A2');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    git('checkout', '-q', '-b', 'feature/s');
+    write('src/Hero.tsx', 'export const Hero = () => null;\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature work');
+    // The local main checkout is stale (still at A); the remote default is
+    // at A2. Diffing against the stale local would drag src/extra.css in.
+    git('branch', '-f', 'main', 'HEAD~2');
+    const s = await gatherSignals(scratch);
+    assert.equal(s.git.base, 'main');
+    assert.deepEqual(s.git.changedFiles, ['src/Hero.tsx']);
+  });
+
   it('never diffs one integration branch against another (#302)', async () => {
     const { execFileSync } = await import('node:child_process');
     const git = (...args) => execFileSync('git', args, { cwd: scratch, stdio: 'ignore' });
