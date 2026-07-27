@@ -10,9 +10,38 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
+import {
+  analyzeSvelteMarkup,
+  buildPropsScriptV2,
+  loadSvelteCompiler,
+  restoreSvelteMarkup,
+} from './svelte-ast.mjs';
+import {
+  bakeParamValues,
+  collectAllSelectors,
+  collectUnusedSelectors,
+  normalizeSelector,
+  parseStylesheet,
+  pruneUnusedSelectors,
+  reconcileCss,
+  serializeNodes,
+  splitSelectorList,
+} from './accept-css.mjs';
+import { verifyAcceptedSource } from './accept-verify.mjs';
 
+// Preview modules stay under node_modules on purpose: SvelteKit restricts
+// vite's server.fs.allow to src/lib, src/routes, .svelte-kit, and
+// node_modules, so an .impeccable/ tree under the app root 403s (verified
+// against a real SvelteKit dev server). Staleness from node_modules being
+// unwatched is solved by REVISIONED module paths instead: every publish
+// snapshots the variant files into a fresh r<N>/ directory and the browser
+// imports from there, so a republished fix can never be pinned by a
+// transform cache keyed on the old path.
 export const SVELTE_COMPONENT_ROOT = 'node_modules/.impeccable-live';
+// A short-lived interim location; swept so no project keeps a stray tree.
+export const LEGACY_SVELTE_COMPONENT_ROOT = '.impeccable/live/previews';
 export const SVELTE_RUNTIME_FILE = `${SVELTE_COMPONENT_ROOT}/__runtime.js`;
+export const SVELTE_PROBE_FILE = `${SVELTE_COMPONENT_ROOT}/__probe.js`;
 export const DEFERRED_ACCEPTS_FILE = '.impeccable/live/deferred-svelte-component-accepts.json';
 
 const MUSTACHE_RE = /\{([^{}]+)\}/g;
@@ -32,9 +61,18 @@ export function manifestPathForSession(id, cwd = process.cwd()) {
 
 export function ensureRuntimeHelper(cwd = process.cwd()) {
   const file = path.join(cwd, SVELTE_RUNTIME_FILE);
-  if (fs.existsSync(file)) return file;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `export { mount, unmount } from 'svelte';\n`, 'utf-8');
+  if (!fs.existsSync(file)) {
+    fs.writeFileSync(file, `export { mount, unmount } from 'svelte';\n`, 'utf-8');
+  }
+  // Attach-time probe: the browser imports this through the dev server before
+  // the first mount. A 404 here means the resolved app root and the dev
+  // server's root disagree, and the session fails with a named error instead
+  // of a silent fall-back to the picker at first variant.
+  const probe = path.join(cwd, SVELTE_PROBE_FILE);
+  if (!fs.existsSync(probe)) {
+    fs.writeFileSync(probe, `export const impeccableLivePreviewProbe = true;\n`, 'utf-8');
+  }
   return file;
 }
 
@@ -136,6 +174,14 @@ function buildInsertVariantStub(variantNum) {
   return `${buildPropsScript([])}<div class="impeccable-insert-preview">Insert variant ${variantNum}</div>\n\n<style>\n  .impeccable-insert-preview { display: block; }\n</style>\n`;
 }
 
+/**
+ * Scaffold a component-preview session. The scaffold is AST-based: the app's
+ * own svelte compiler parses the selected markup, control-flow blocks are
+ * preserved (an each collection crosses the prop contract as ONE structured
+ * prop, its loop body verbatim), and constructs a detached preview cannot
+ * support return `{ fallback: 'source-preview', reason }` so the caller keeps
+ * the markup inside the route file instead of shipping a wrong preview.
+ */
 export function scaffoldSvelteComponentSession({
   id,
   count,
@@ -145,17 +191,31 @@ export function scaffoldSvelteComponentSession({
   originalLines,
   cwd = process.cwd(),
 }) {
+  const originalMarkup = originalLines.join('\n');
+
+  const compiler = loadSvelteCompiler(cwd);
+  if (!compiler) {
+    return { fallback: 'source-preview', reason: 'svelte 5 compiler not resolvable from the app root' };
+  }
+  const analysis = analyzeSvelteMarkup(originalMarkup, compiler.parse);
+  if (!analysis.ok) {
+    return { fallback: 'source-preview', reason: analysis.reason };
+  }
+
   ensureRuntimeHelper(cwd);
   const dir = componentSessionDir(id, cwd);
   fs.mkdirSync(dir, { recursive: true });
 
-  const originalMarkup = originalLines.join('\n');
-  const contract = buildPropContract(extractMustacheExpressions(originalMarkup));
-  const originalWithProps = substituteExprsWithProps(originalMarkup, contract);
+  const contract = analysis.contract;
+  const seededCss = extractMatchingSourceCss(
+    safeReadSource(path.resolve(cwd, sourceFile)),
+    originalMarkup,
+  );
 
   const manifest = {
     id,
     previewMode: 'svelte-component',
+    contractVersion: 2,
     sourceFile: sourceFile.split(path.sep).join('/'),
     sourceStartLine,
     sourceEndLine,
@@ -163,7 +223,14 @@ export function scaffoldSvelteComponentSession({
     propContract: contract,
     originalMarkup,
     componentDir: path.relative(cwd, dir).split(path.sep).join('/'),
+    // Absolute paths let the browser fall back to /@fs/ imports when the dev
+    // server's base or root makes root-relative URLs miss, and probe whether
+    // the preview tree is reachable at all before blaming a variant.
+    componentDirAbs: dir.split(path.sep).join('/'),
     runtimeModule: `/${SVELTE_RUNTIME_FILE}`,
+    runtimeModuleAbs: path.join(cwd, SVELTE_RUNTIME_FILE).split(path.sep).join('/'),
+    probeModule: `/${SVELTE_PROBE_FILE}`,
+    probeModuleAbs: path.join(cwd, SVELTE_PROBE_FILE).split(path.sep).join('/'),
   };
 
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
@@ -171,7 +238,7 @@ export function scaffoldSvelteComponentSession({
   for (let n = 1; n <= count; n++) {
     const variantFile = path.join(dir, `v${n}.svelte`);
     if (!fs.existsSync(variantFile)) {
-      fs.writeFileSync(variantFile, buildVariantStub(n, originalWithProps, contract), 'utf-8');
+      fs.writeFileSync(variantFile, buildVariantStubV2(n, analysis.markupWithProps, contract, seededCss), 'utf-8');
     }
   }
 
@@ -181,6 +248,59 @@ export function scaffoldSvelteComponentSession({
     componentDir: manifest.componentDir,
     propContract: contract,
   };
+}
+
+function safeReadSource(filePath) {
+  try { return fs.readFileSync(filePath, 'utf-8'); } catch { return ''; }
+}
+
+/**
+ * Seed variant stubs with the source component's rules that already style the
+ * selected markup, so variants start from the real cascade (a detached
+ * preview inherits none of the route's compile-scoped CSS) instead of
+ * reimplementing it blind.
+ */
+export function extractMatchingSourceCss(routeSource, originalMarkup) {
+  const styleMatch = String(routeSource || '').match(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/i);
+  if (!styleMatch) return '';
+  const classNames = new Set();
+  const classRe = /class\s*=\s*(["'])(.*?)\1/g;
+  let m;
+  while ((m = classRe.exec(originalMarkup))) {
+    for (const cls of m[2].split(/\s+/)) if (cls && !cls.includes('{')) classNames.add(cls);
+  }
+  const tagRe = /<([a-z][a-z0-9-]*)/gi;
+  const tags = new Set();
+  while ((m = tagRe.exec(originalMarkup))) tags.add(m[1].toLowerCase());
+  if (classNames.size === 0 && tags.size === 0) return '';
+
+  const selectorMatches = (prelude) => splitSelectorList(prelude).some((selector) => {
+    for (const cls of classNames) if (selector.includes(`.${cls}`)) return true;
+    return false;
+  });
+
+  const pick = (nodes) => {
+    const kept = [];
+    for (const node of nodes) {
+      if (node.type === 'rule' && selectorMatches(node.prelude)) kept.push(node);
+      else if (node.type === 'at' && node.children) {
+        const children = pick(node.children);
+        if (children.length) kept.push({ ...node, children });
+      }
+    }
+    return kept;
+  };
+  return serializeNodes(pick(parseStylesheet(styleMatch[1])));
+}
+
+function buildVariantStubV2(variantNum, markupWithProps, contract, seededCss) {
+  const propsComment = contract.length > 0
+    ? `\n<!-- Props: ${contract.map((c) => `${c.prop} (${c.kind}) <- {${c.expr}}`).join(', ')} -->\n`
+    : '';
+  const css = seededCss
+    ? `\n<style>\n  /* Variant ${variantNum}: seeded from the route's current rules; restyle freely */\n${seededCss.split('\n').map((l) => (l.trim() ? '  ' + l : '')).join('\n')}\n</style>\n`
+    : `\n<style>\n  /* Variant ${variantNum}: add scoped CSS here */\n</style>\n`;
+  return `${buildPropsScriptV2(contract)}${propsComment}${markupWithProps.trim()}\n${css}`;
 }
 
 export function scaffoldSvelteComponentInsertSession({
@@ -213,7 +333,11 @@ export function scaffoldSvelteComponentInsertSession({
     count,
     propContract: [],
     componentDir: path.relative(cwd, dir).split(path.sep).join('/'),
+    componentDirAbs: dir.split(path.sep).join('/'),
     runtimeModule: `/${SVELTE_RUNTIME_FILE}`,
+    runtimeModuleAbs: path.join(cwd, SVELTE_RUNTIME_FILE).split(path.sep).join('/'),
+    probeModule: `/${SVELTE_PROBE_FILE}`,
+    probeModuleAbs: path.join(cwd, SVELTE_PROBE_FILE).split(path.sep).join('/'),
   };
 
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
@@ -238,16 +362,24 @@ export function findSvelteComponentManifest(id, cwd = process.cwd()) {
   if (fs.existsSync(direct)) {
     return readManifest(direct);
   }
-  const root = path.join(cwd, SVELTE_COMPONENT_ROOT);
-  if (!fs.existsSync(root)) return null;
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const candidate = path.join(root, entry.name, 'manifest.json');
-    if (!fs.existsSync(candidate)) continue;
-    try {
-      const manifest = readManifest(candidate);
-      if (manifest?.id === id) return { ...manifest, manifestPath: candidate };
-    } catch { /* skip */ }
+  // Legacy location: a session scaffolded by an older version can still be
+  // accepted after an upgrade.
+  const legacyDirect = path.join(cwd, LEGACY_SVELTE_COMPONENT_ROOT, id, 'manifest.json');
+  if (fs.existsSync(legacyDirect)) {
+    return readManifest(legacyDirect);
+  }
+  for (const rootRel of [SVELTE_COMPONENT_ROOT, LEGACY_SVELTE_COMPONENT_ROOT]) {
+    const root = path.join(cwd, rootRel);
+    if (!fs.existsSync(root)) continue;
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const candidate = path.join(root, entry.name, 'manifest.json');
+      if (!fs.existsSync(candidate)) continue;
+      try {
+        const manifest = readManifest(candidate);
+        if (manifest?.id === id) return { ...manifest, manifestPath: candidate };
+      } catch { /* skip */ }
+    }
   }
   return null;
 }
@@ -451,35 +583,6 @@ function rewriteParamSelectors(selector, paramValues) {
   return { keep, selector: next };
 }
 
-function splitSelectorList(prelude) {
-  const selectors = [];
-  let start = 0;
-  let bracket = 0;
-  let paren = 0;
-  let quote = null;
-  for (let i = 0; i < prelude.length; i++) {
-    const ch = prelude[i];
-    if (quote) {
-      if (ch === '\\') i++;
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === '[') bracket++;
-    else if (ch === ']') bracket = Math.max(0, bracket - 1);
-    else if (ch === '(') paren++;
-    else if (ch === ')') paren = Math.max(0, paren - 1);
-    else if (ch === ',' && bracket === 0 && paren === 0) {
-      selectors.push(prelude.slice(start, i));
-      start = i + 1;
-    }
-  }
-  selectors.push(prelude.slice(start));
-  return selectors;
-}
 
 function selectorHasVariant(selector, variantNum) {
   return variantSelectorRegex(variantNum).test(selector);
@@ -527,10 +630,24 @@ export function inlineSvelteComponentAccept(manifest, variantNum, paramValues = 
 
   const rootTag = matchOpeningTag(markup)?.tag || 'div';
   const contract = manifest.propContract || [];
+  const compiler = loadSvelteCompiler(cwd);
   const mergedMarkup = mergeOriginalTopLevelAttrs(markup, manifest.originalMarkup || '');
-  const restoredMarkup = substitutePropsWithExprs(mergedMarkup, contract)
-    .split('\n')
-    .map((line) => line.trimEnd());
+
+  // Restore props back to route expressions. Contract v2 restores through the
+  // AST so a prop used without braces (each headers, attribute positions)
+  // still maps back to its original expression; v1 falls back to the textual
+  // placeholder swap.
+  let restoredText;
+  if (Number(manifest.contractVersion) === 2 && compiler) {
+    const restored = restoreSvelteMarkup(mergedMarkup, contract, compiler.parse);
+    if (!restored.ok) {
+      return { handled: false, error: 'Accepted variant does not parse: ' + restored.reason, ...resultBase };
+    }
+    restoredText = restored.markup;
+  } else {
+    restoredText = substitutePropsWithExprs(mergedMarkup, contract);
+  }
+  const restoredMarkup = restoredText.split('\n').map((line) => line.trimEnd());
 
   const sourceContent = fs.readFileSync(sourceFile, 'utf-8');
   const sourceLines = sourceContent.split('\n');
@@ -541,10 +658,7 @@ export function inlineSvelteComponentAccept(manifest, variantNum, paramValues = 
   }
 
   const indent = sourceLines[start].match(/^(\s*)/)?.[1] || '';
-  const indentedMarkup = restoredMarkup.map((line) => {
-    if (line.trim() === '') return '';
-    return indent + line.trimStart();
-  });
+  const indentedMarkup = reindentPreservingStructure(restoredMarkup, indent);
 
   let newLines = [
     ...sourceLines.slice(0, start),
@@ -552,23 +666,143 @@ export function inlineSvelteComponentAccept(manifest, variantNum, paramValues = 
     ...sourceLines.slice(end + 1),
   ];
 
-  const sanitizedCss = sanitizeAcceptedSvelteCss(cssLines, variantNum, paramValues, rootTag);
-  const bakedCss = bakeParamValuesInCss(sanitizedCss, paramValues);
-  if (bakedCss.length > 0) {
-    newLines = appendCssToSvelteStyle(newLines, bakedCss);
+  // Selectors that were already unused before this accept are the user's
+  // pre-existing code; the pruning pass must not touch them.
+  const preUnused = compiler ? collectUnusedSelectors(sourceContent, compiler.compile) : new Set();
+
+  // Bake params (declared kinds from params.json drive branch pruning), then
+  // MERGE into the component's existing style block: matching selectors are
+  // replaced, new ones appended. Appending alone is how superseded rules used
+  // to survive their own replacement.
+  const declaredParams = readDeclaredParams(manifest, variantNum, cwd);
+  let variantCss = cssLines.join('\n');
+  if (/data-impeccable-variant|impeccable-variant-ready/.test(variantCss)) {
+    // Defensive: strip preview-wrapper selectors that authoring rules forbid
+    // on this path but an off-spec agent may still emit.
+    variantCss = sanitizeAcceptedSvelteCss(cssLines, variantNum, paramValues, rootTag).join('\n');
+  }
+  const bakedCss = bakeParamValues(variantCss, declaredParams, paramValues || {});
+  const cssStats = { replaced: 0, appended: 0, pruned: [] };
+  if (bakedCss.trim()) {
+    const merged = mergeCssIntoSvelteSource(newLines.join('\n'), bakedCss);
+    newLines = merged.text.split('\n');
+    cssStats.replaced = merged.replaced;
+    cssStats.appended = merged.appended;
+  }
+
+  let finalText = newLines.join('\n');
+  if (compiler) {
+    const pruned = pruneUnusedSelectors(finalText, compiler.compile, { skipSelectors: preUnused });
+    finalText = pruned.source;
+    cssStats.pruned = pruned.removed;
+  }
+
+  // Postcondition: no selector from the user's pre-accept CSS may vanish
+  // unless the compiler-driven prune deliberately removed it. This turns any
+  // parser or reconciler defect into a loud refusal instead of silent damage
+  // to a hand-written style block.
+  const lostSelectors = findLostSelectors(sourceContent, finalText, cssStats.pruned);
+  if (lostSelectors.length > 0) {
+    return {
+      handled: false,
+      error: 'CSS reconciliation would lose selectors from the existing style block: '
+        + lostSelectors.join(', ')
+        + '. Source not modified; accept the variant manually.',
+      mode: 'error',
+      ...resultBase,
+    };
   }
 
   try {
-    fs.writeFileSync(sourceFile, newLines.join('\n'), 'utf-8');
+    fs.writeFileSync(sourceFile, finalText, 'utf-8');
   } catch (err) {
     return { handled: false, error: 'Failed to write Svelte source: ' + err.message, ...resultBase };
   }
   removeSvelteComponentSession(manifest.id, cwd);
 
+  const verify = verifyAcceptedSource(finalText);
   return {
     handled: true,
+    css: cssStats,
+    verify,
     ...resultBase,
   };
+}
+
+/** Re-indent a block onto `indent` while preserving its internal structure. */
+export function reindentPreservingStructure(lines, indent) {
+  const nonEmpty = lines.filter((line) => line.trim() !== '');
+  if (nonEmpty.length === 0) return lines.map(() => '');
+  const minIndent = Math.min(...nonEmpty.map((line) => (line.match(/^\s*/) || [''])[0].length));
+  return lines.map((line) => {
+    if (line.trim() === '') return '';
+    const current = (line.match(/^\s*/) || [''])[0].length;
+    return indent + line.slice(Math.min(minIndent, current));
+  });
+}
+
+function styleBlockText(sourceText) {
+  const match = String(sourceText || '').match(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/i);
+  return match ? match[1] : '';
+}
+
+export function findLostSelectors(beforeSource, afterSource, prunedSelectors = []) {
+  const before = collectAllSelectors(styleBlockText(beforeSource));
+  const after = collectAllSelectors(styleBlockText(afterSource));
+  const pruned = new Set((prunedSelectors || []).map((s) => normalizeSelector(s)));
+  const lost = [];
+  for (const selector of before) {
+    if (!after.has(selector) && !pruned.has(selector)) lost.push(selector);
+  }
+  return lost;
+}
+
+function readDeclaredParams(manifest, variantNum, cwd) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(cwd, manifest.componentDir, 'params.json'), 'utf-8'));
+    const list = raw?.[String(variantNum)];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Merge CSS into a svelte component's top-level style block (created when
+ * absent), replacing rules whose selectors match and appending the rest.
+ */
+export function mergeCssIntoSvelteSource(sourceText, incomingCss) {
+  const text = String(sourceText || '');
+  const styleRe = /<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi;
+  let lastMatch = null;
+  let m;
+  while ((m = styleRe.exec(text))) lastMatch = m;
+
+  if (!lastMatch) {
+    const { css, replaced, appended } = reconcileCss('', incomingCss);
+    return {
+      text: `${text.replace(/\s*$/, '')}\n\n<style>\n${indentCssBlock(css)}\n</style>\n`,
+      replaced,
+      appended,
+    };
+  }
+
+  const inner = lastMatch[1];
+  const { css, replaced, appended } = reconcileCss(inner, incomingCss);
+  const openTag = lastMatch[0].slice(0, lastMatch[0].indexOf('>') + 1);
+  const replacedBlock = `${openTag}\n${indentCssBlock(css)}\n</style>`;
+  return {
+    text: text.slice(0, lastMatch.index) + replacedBlock + text.slice(lastMatch.index + lastMatch[0].length),
+    replaced,
+    appended,
+  };
+}
+
+function indentCssBlock(css) {
+  return String(css || '')
+    .split('\n')
+    .map((line) => (line.trim() === '' ? '' : '  ' + line))
+    .join('\n');
 }
 
 function inlineSvelteComponentInsertAccept({
@@ -601,10 +835,7 @@ function inlineSvelteComponentInsertAccept({
 
   const nearbyLine = sourceLines[insertIndex] ?? sourceLines[insertIndex - 1] ?? '';
   const indent = nearbyLine.match(/^(\s*)/)?.[1] || '';
-  const indentedMarkup = restoredMarkup.map((line) => {
-    if (line.trim() === '') return '';
-    return indent + line.trimStart();
-  });
+  const indentedMarkup = reindentPreservingStructure(restoredMarkup, indent);
 
   let newLines = [
     ...sourceLines.slice(0, insertIndex),
@@ -612,10 +843,15 @@ function inlineSvelteComponentInsertAccept({
     ...sourceLines.slice(insertIndex),
   ];
 
-  const sanitizedCss = sanitizeAcceptedSvelteCss(cssLines, variantNum, paramValues, rootTag);
-  const bakedCss = bakeParamValuesInCss(sanitizedCss, paramValues);
-  if (bakedCss.length > 0) {
-    newLines = appendCssToSvelteStyle(newLines, bakedCss);
+  let variantCss = cssLines.join('\n');
+  if (/data-impeccable-variant|impeccable-variant-ready/.test(variantCss)) {
+    variantCss = sanitizeAcceptedSvelteCss(cssLines, variantNum, paramValues, rootTag).join('\n');
+  }
+  const declaredParams = readDeclaredParams(manifest, variantNum, cwd);
+  const bakedCss = bakeParamValues(variantCss, declaredParams, paramValues || {});
+  if (bakedCss.trim()) {
+    const merged = mergeCssIntoSvelteSource(newLines.join('\n'), bakedCss);
+    newLines = merged.text.split('\n');
   }
 
   try {
@@ -625,8 +861,10 @@ function inlineSvelteComponentInsertAccept({
   }
   removeSvelteComponentSession(manifest.id, cwd);
 
+  const verify = verifyAcceptedSource(newLines.join('\n'));
   return {
     handled: true,
+    verify,
     ...resultBase,
   };
 }
@@ -729,16 +967,122 @@ export function removeSvelteComponentSession(id, cwd = process.cwd()) {
   } catch { /* non-fatal */ }
 }
 
+/**
+ * Snapshot the agent-authored variant files into a fresh revision directory
+ * and stamp the manifest. Called by the server on every publish (`done`
+ * reply) for a component session; the browser imports from the revision dir,
+ * so the dev server can never serve a stale compile of a republished file.
+ */
+export function bumpSvelteComponentPreviewRevision(id, cwd = process.cwd()) {
+  const manifest = findSvelteComponentManifest(id, cwd);
+  if (!manifest || !manifest.manifestPath) return null;
+  const sessionDir = path.dirname(manifest.manifestPath);
+  const revision = Number(manifest.revision || 0) + 1;
+  const revDirName = `r${revision}`;
+  const revDir = path.join(sessionDir, revDirName);
+  try {
+    fs.mkdirSync(revDir, { recursive: true });
+    let entries = [];
+    try { entries = fs.readdirSync(sessionDir, { withFileTypes: true }); } catch { /* empty */ }
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      if (entry.name === 'manifest.json') continue;
+      fs.copyFileSync(path.join(sessionDir, entry.name), path.join(revDir, entry.name));
+    }
+    // Previous revision dirs are dead the moment a new one exists.
+    for (const entry of entries) {
+      if (entry.isDirectory() && /^r\d+$/.test(entry.name) && entry.name !== revDirName) {
+        try { fs.rmSync(path.join(sessionDir, entry.name), { recursive: true, force: true }); } catch { /* non-fatal */ }
+      }
+    }
+    const relSessionDir = path.relative(cwd, sessionDir).split(path.sep).join('/');
+    const updated = {
+      ...manifest,
+      revision,
+      revisionDir: `${relSessionDir}/${revDirName}`,
+      revisionDirAbs: revDir.split(path.sep).join('/'),
+    };
+    delete updated.manifestPath;
+    fs.writeFileSync(manifest.manifestPath, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
+    return { revision, revisionDir: updated.revisionDir };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Stop-path sweep. The whole `node_modules/.impeccable-live` tree is
+ * impeccable-owned and gitignored, so once no session should survive there is
+ * nothing left worth keeping: the per-session dirs, the generated
+ * `__runtime.js`, and the parent directory all go. The old per-entry loop
+ * skipped `__*` entries and the parent, which left the runtime shim and an
+ * empty directory in every project that ever ran live mode once.
+ */
 export function removeAllSvelteComponentSessions(cwd = process.cwd()) {
-  const root = path.join(cwd, SVELTE_COMPONENT_ROOT);
-  if (!fs.existsSync(root)) return;
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith('__')) continue;
+  for (const rootRel of [SVELTE_COMPONENT_ROOT, LEGACY_SVELTE_COMPONENT_ROOT]) {
+    const root = path.join(cwd, rootRel);
+    if (!fs.existsSync(root)) continue;
     try {
-      fs.rmSync(path.join(root, entry.name), { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
     } catch { /* non-fatal */ }
   }
+}
+
+/**
+ * Boot-path sweep. A restart must not delete the tree wholesale: sessions
+ * recorded in the session store may still be mid-generation. Remove only the
+ * session dirs whose id has no active snapshot, then drop `__runtime.js` and
+ * the parent directory when nothing is left to serve.
+ *
+ * @param {Iterable<string>} activeIds session ids that must be preserved
+ * @returns {{ removed: string[], removedRoot: boolean, kept: string[] }}
+ */
+export function sweepInactiveSvelteComponentSessions(activeIds = [], cwd = process.cwd()) {
+  const result = { removed: [], removedRoot: false, kept: [] };
+  const active = new Set();
+  for (const id of activeIds || []) {
+    if (typeof id === 'string' && id) active.add(id);
+  }
+
+  for (const rootRel of [SVELTE_COMPONENT_ROOT, LEGACY_SVELTE_COMPONENT_ROOT]) {
+    const root = path.join(cwd, rootRel);
+    if (!fs.existsSync(root)) continue;
+
+    let entries;
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    let keptHere = 0;
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('__')) continue;
+      if (active.has(entry.name)) {
+        result.kept.push(entry.name);
+        keptHere++;
+        continue;
+      }
+      try {
+        fs.rmSync(path.join(root, entry.name), { recursive: true, force: true });
+        result.removed.push(entry.name);
+      } catch {
+        // Could not remove it, so it still occupies the tree; treat it as kept
+        // so the parent directory is not torn out from under it.
+        result.kept.push(entry.name);
+        keptHere++;
+      }
+    }
+
+    if (keptHere === 0) {
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+        result.removedRoot = true;
+      } catch { /* non-fatal */ }
+    }
+  }
+  return result;
 }
 
 export function deferredAcceptsPath(cwd = process.cwd()) {

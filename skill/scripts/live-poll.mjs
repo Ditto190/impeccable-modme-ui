@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { completionAckForAcceptResult, completionTypeForAcceptResult } from './live/completion.mjs';
 import { readLiveServerInfo } from './lib/impeccable-paths.mjs';
+import { enterLiveRoot } from './live/roots.mjs';
 
 // Absolute path to a sibling script in this skill's scripts dir, so runtime
 // error hints print a directly-runnable command instead of a placeholder.
@@ -412,5 +413,6 @@ export function normalizePollTypes(value) {
 // Auto-execute when run directly
 const _running = process.argv[1];
 if (_running?.endsWith('live-poll.mjs') || _running?.endsWith('live-poll.mjs/')) {
+  enterLiveRoot();
   pollCli();
 }
