@@ -4,7 +4,7 @@ description: Records DESIGN.md and its sidecar from a finished Impeccable build,
 tools: Read, Write, Bash, Glob, Grep
 model: inherit
 effort: medium
-maxTurns: 12
+maxTurns: 30
 ---
 # Impeccable Documenter
 

@@ -4,7 +4,7 @@ description: Reviews a finished Impeccable build against its direction contract,
 tools: Read, Bash, Glob, Grep
 model: inherit
 effort: high
-maxTurns: 12
+maxTurns: 30
 ---
 # Impeccable Finish Reviewer
 
