@@ -334,12 +334,16 @@ export function stripParamSelector(selector, id, kind, chosenValue) {
       drop = true;
       return '';
     }
-    // toggle: attribute presence means "on".
-    if (expected != null && String(expected) !== String(chosenValue) && !isToggleOn(chosenValue)) {
+    // toggle: the runtime sets data-p-<id>="on" when on and removes the
+    // attribute when off. A branch survives baking only if it actually
+    // matched at preview time with the chosen state: the presence form and
+    // the literal "on" form match while on; every other valued form
+    // (["false"], ["0"], ...) never matched and is dead regardless of state.
+    if (expected != null && expected !== 'on') {
       drop = true;
       return '';
     }
-    if (expected == null && !isToggleOn(chosenValue)) {
+    if (!isToggleOn(chosenValue)) {
       drop = true;
       return '';
     }

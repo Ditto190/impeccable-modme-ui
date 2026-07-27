@@ -197,3 +197,15 @@ describe('review regressions: parser boundaries', () => {
     assert.deepEqual([...selectors].sort(), ['.a', '.b', '.c']);
   });
 });
+
+describe('review regressions: toggle branch truth', () => {
+  it('drops valued toggle branches that never matched at preview, keeps on-forms only while on', () => {
+    assert.equal(stripParamSelector('[data-p-flag="false"] .a', 'flag', 'toggle', true), null);
+    assert.equal(stripParamSelector('[data-p-flag="false"] .a', 'flag', 'toggle', false), null);
+    assert.equal(stripParamSelector('[data-p-flag="0"] .a', 'flag', 'toggle', false), null);
+    assert.equal(stripParamSelector('[data-p-flag="on"] .a', 'flag', 'toggle', true), '.a');
+    assert.equal(stripParamSelector('[data-p-flag="on"] .a', 'flag', 'toggle', false), null);
+    assert.equal(stripParamSelector('[data-p-flag] .a', 'flag', 'toggle', true), '.a');
+    assert.equal(stripParamSelector('[data-p-flag] .a', 'flag', 'toggle', false), null);
+  });
+});

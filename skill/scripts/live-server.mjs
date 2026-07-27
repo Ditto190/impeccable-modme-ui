@@ -175,7 +175,16 @@ function chatAgentLikelyActive() {
 const MAX_ANNOTATION_BYTES = 10 * 1024 * 1024;
 
 function enqueueEvent(event) {
-  if (!event || (event.id && state.pendingEvents.some((entry) => entry.event?.id === event.id && entry.event?.type === event.type))) return;
+  if (!event) return;
+  // Dedupe by (session, type), except mount failures, which are per-variant:
+  // variant 2 failing must not be swallowed because variant 1's failure is
+  // still queued.
+  const duplicate = event.id && state.pendingEvents.some((entry) => (
+    entry.event?.id === event.id
+    && entry.event?.type === event.type
+    && (event.type !== 'variant_mount_failed' || entry.event?.variant === event.variant)
+  ));
+  if (duplicate) return;
   state.pendingEvents.push({ event, leaseUntil: 0, seq: state.nextEventSeq++ });
   flushPendingPolls();
 }

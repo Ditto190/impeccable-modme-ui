@@ -5696,6 +5696,10 @@
   }
 
   async function injectSvelteComponentsFromManifest(manifestPath, sessionId) {
+    // Every (re)injection is a fresh attempt: reset the failure dedupe so a
+    // republish that is STILL broken at the same URL reports again instead of
+    // being swallowed while the agent believes the repair landed.
+    lastReportedMountFailure = null;
     const url = 'http://localhost:' + PORT + '/source?token=' + TOKEN + '&path=' + encodeURIComponent(manifestPath);
     try {
       const res = await fetch(url);

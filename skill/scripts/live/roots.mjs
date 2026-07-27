@@ -366,9 +366,24 @@ export function resolveLiveRoots(cwd = process.cwd(), { targetPath = null } = {}
         .map((entry) => readManifestAt(entry.appRoot))
         .filter(Boolean);
       if (candidates.length > 0) {
-        const live = candidates.find((manifest) => hasLiveServer(manifest.appRoot));
-        const recovering = live || candidates.find((manifest) => hasActiveDurableSession(manifest.appRoot));
-        return { manifest: recovering || candidates[0], source: 'pointer' };
+        const liveApps = candidates.filter((manifest) => hasLiveServer(manifest.appRoot));
+        const recoveringApps = liveApps.length > 0
+          ? liveApps
+          : candidates.filter((manifest) => hasActiveDurableSession(manifest.appRoot));
+        const tier = recoveringApps.length > 0 ? recoveringApps : candidates;
+        // Multiple apps qualifying at the same tier is inherent ambiguity:
+        // intent is unknowable from the repo root. The choice stays
+        // deterministic (most recent boot first), but it must be LOUD, not
+        // silent, so the agent can re-anchor when it meant the other app.
+        if (tier.length > 1) {
+          const chosen = tier[0].appRoot;
+          const others = tier.slice(1).map((manifest) => manifest.appRoot).join(', ');
+          process.stderr.write(
+            `[impeccable live] Multiple apps in this repo have live state; using ${chosen}. `
+            + `Other candidate(s): ${others}. Run from the app directory (or pass --target) to address a specific app.\n`,
+          );
+        }
+        return { manifest: tier[0], source: 'pointer' };
       }
     }
   }
