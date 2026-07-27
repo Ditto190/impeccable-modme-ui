@@ -17,16 +17,26 @@ import { checkContentHiddenAtRest } from '../../rules/checks.mjs';
 // GPU, so contrast measurement is unaffected. Scope this to Windows only: other
 // platforms do not have the bug, so they keep the pinned bundled build for
 // consistent measurement across machines. Fall back to bundled when the switch
-// fails (Chrome not installed, or channel resolution fails).
+// fails (Chrome not installed, or channel resolution fails). If the bundled
+// launch then also fails, surface the original system-Chrome error as the
+// cause so the real failure is not lost.
 async function launchBrowser(puppeteer, { headless = true, args = [] } = {}) {
+  let channelError;
   if (process.platform === 'win32') {
     try {
       return await puppeteer.default.launch({ channel: 'chrome', headless, args });
-    } catch {
-      // No system Chrome available; fall through to the bundled browser.
+    } catch (err) {
+      // System Chrome unavailable or unlaunchable; fall through to the bundled
+      // browser, but keep the error in case the fallback fails too.
+      channelError = err;
     }
   }
-  return await puppeteer.default.launch({ headless, args });
+  try {
+    return await puppeteer.default.launch({ headless, args });
+  } catch (err) {
+    if (channelError && err && err.cause === undefined) err.cause = channelError;
+    throw err;
+  }
 }
 
 // Reveal sweep + invisible-text measurement for the content-hidden-at-rest
