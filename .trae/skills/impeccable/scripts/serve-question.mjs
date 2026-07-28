@@ -411,8 +411,25 @@ function page() {
   h1 { font-family: var(--ks-font-display); font-weight: 100; font-size: clamp(2.6rem, 5vw, 4.2rem); letter-spacing: -0.01em; line-height: 1.02; color: var(--ks-champagne); }
   .question { color: var(--ks-text-muted); margin-top: .7rem; max-width: 52rem; }
   main { flex: 1; display: flex; align-items: center; width: 100%; max-width: 90rem; margin: 0 auto; }
-  .stage { width: 100%; display: flex; flex-direction: column; gap: 1.5rem; }
-  .grid { display: grid; gap: 1.6rem; grid-template-columns: repeat(auto-fit, minmax(min(23rem, 100%), 1fr)); width: 100%; }
+  .stage { width: 100%; display: flex; flex-direction: column; gap: 1.5rem; position: relative; }
+  /* One row in a wide viewport, one column in a tall one; the deck scrolls on
+     its axis with snap points and the arrows page it card by card. */
+  .grid { display: flex; gap: 1.6rem; width: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; padding: 6px 2px; align-items: stretch; }
+  .grid::-webkit-scrollbar { display: none; }
+  .grid > .card { flex: 0 0 clamp(20rem, 27vw, 27rem); scroll-snap-align: center; }
+  .nav { position: absolute; z-index: 6; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: oklch(7% 0.006 95 / 0.78); border: 1px solid var(--ks-rule); color: var(--ks-kinpaku); cursor: pointer; backdrop-filter: blur(6px); transition: border-color .2s, color .2s, opacity .2s; }
+  .nav:hover { border-color: var(--ks-kinpaku-deep); color: var(--ks-kinpaku-pale); }
+  .nav[disabled] { opacity: .25; cursor: default; }
+  .nav[hidden] { display: none; }
+  .nav svg { width: 16px; height: 16px; }
+  .nav.prev { left: -10px; top: 50%; transform: translateY(-50%); }
+  .nav.next { right: -10px; top: 50%; transform: translateY(-50%); }
+  @media (max-aspect-ratio: 1/1) {
+    .grid { flex-direction: column; overflow-x: hidden; overflow-y: auto; scroll-snap-type: y mandatory; max-height: min(68dvh, 44rem); }
+    .grid > .card { flex: 0 0 auto; }
+    .nav.prev { left: 50%; top: -8px; transform: translate(-50%, 0) rotate(90deg); }
+    .nav.next { right: auto; left: 50%; top: auto; bottom: -8px; transform: translate(-50%, 0) rotate(90deg); }
+  }
   .card { position: relative; perspective: 1400px; transform: rotate(var(--fan, 0deg)); transition: transform .25s cubic-bezier(.16, 1, .3, 1); }
   .card:hover { transform: rotate(0deg) translateY(-4px); }
   .card-inner { position: relative; height: 100%; transform-style: preserve-3d; transition: transform .7s cubic-bezier(.16, 1, .3, 1); }
@@ -461,6 +478,9 @@ function page() {
   .media.sketching { position: relative; }
   .media.sketching .shimmer { position: absolute; inset: 0; }
   .media img.sketch { position: relative; z-index: 1; }
+  /* The generic .media img display:block would defeat [hidden] and float an
+     empty block over the shimmer; an unloaded sketch must truly not render. */
+  .media img[hidden] { display: none; }
   /* The standing exit as a card: present with full anatomy, never dressed as a
      contender. Graphite instead of kinpaku, and it never takes the lead ring. */
   .card.canon .face { border-color: var(--ks-rule); background: var(--ks-graphite); }
@@ -510,6 +530,8 @@ function page() {
     </div>
     ${payload.question ? `<p class="question">${esc(payload.question)}</p>` : ''}
     <div class="grid">${cards}</div>
+    <button class="nav prev" hidden aria-label="Previous card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5 8 12l6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="nav next" hidden aria-label="Next card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5 16 12l-6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
 </main>
 <footer>
@@ -535,7 +557,11 @@ function page() {
   // Deal from the stack: cards begin piled at the grid's center, blurred,
   // then travel to their seats with a stagger.
   const cards = [...document.querySelectorAll('.card')];
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches && cards.length) {
+  // The deal is decoration: a hidden tab throttles rAF, so never let the
+  // animation hold the cards at opacity 0. Skip it when hidden, and force
+  // the final state after a beat no matter what the animation did.
+  setTimeout(() => cards.forEach(c => { c.style.opacity = ''; c.style.transform = ''; c.style.filter = ''; c.style.transition = ''; c.style.zIndex = ''; }), 1600);
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches && cards.length && !document.hidden) {
     const grid = document.querySelector('.grid').getBoundingClientRect();
     const cx = grid.left + grid.width / 2, cy = grid.top + grid.height / 2;
     cards.forEach((card, i) => {
@@ -596,6 +622,36 @@ function page() {
     lightbox.hidden = false;
     requestAnimationFrame(() => lightbox.classList.add('open'));
   }));
+
+  // Deck paging: arrows appear only when the deck overflows its axis, page
+  // one card at a time, and follow the aspect-ratio flip between row and column.
+  const deck = document.querySelector('.grid');
+  const prevBtn = document.querySelector('.nav.prev');
+  const nextBtn = document.querySelector('.nav.next');
+  const vertical = () => matchMedia('(max-aspect-ratio: 1/1)').matches;
+  function updateNav() {
+    if (!deck || !prevBtn) return;
+    const v = vertical();
+    const overflow = v ? deck.scrollHeight > deck.clientHeight + 4 : deck.scrollWidth > deck.clientWidth + 4;
+    prevBtn.hidden = nextBtn.hidden = !overflow;
+    if (!overflow) return;
+    const pos = v ? deck.scrollTop : deck.scrollLeft;
+    const max = v ? deck.scrollHeight - deck.clientHeight : deck.scrollWidth - deck.clientWidth;
+    prevBtn.toggleAttribute('disabled', pos <= 2);
+    nextBtn.toggleAttribute('disabled', pos >= max - 2);
+  }
+  function pageDeck(dir) {
+    const card = deck.querySelector('.card');
+    if (!card) return;
+    const r = card.getBoundingClientRect();
+    const step = (vertical() ? r.height : r.width) + 26;
+    deck.scrollBy(vertical() ? { top: dir * step, behavior: 'smooth' } : { left: dir * step, behavior: 'smooth' });
+  }
+  prevBtn?.addEventListener('click', () => pageDeck(-1));
+  nextBtn?.addEventListener('click', () => pageDeck(1));
+  deck?.addEventListener('scroll', updateNav, { passive: true });
+  addEventListener('resize', updateNav);
+  updateNav();
 
   // Ambient: the hovered card's visible art bleeds into the page ground.
   const ambient = document.getElementById('ambient');
@@ -685,7 +741,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ ready: Boolean(pending && fs.existsSync(pending)) }));
     return;
   }
-  const imageMatch = req.method === 'GET' && req.url?.match(/^\/img\/(\d+)$/);
+  const imageMatch = req.method === 'GET' && req.url?.match(/^\/img\/(\d+)(?:\?.*)?$/);
   if (imageMatch) {
     const abs = localImages[Number(imageMatch[1])];
     if (!abs || !fs.existsSync(abs)) { res.writeHead(404); res.end(); return; }
