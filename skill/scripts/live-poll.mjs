@@ -119,8 +119,11 @@ export async function postReply(base, token, reply) {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    const parts = [body.error || res.statusText, body.reason, body.hint].filter(Boolean);
-    throw new Error(parts.join(': '));
+    const failureLines = Array.isArray(body.failures)
+      ? body.failures.map((f) => `  ${f.file}${f.line != null ? `:${f.line}` : ''} ${f.message}`).join('\n')
+      : null;
+    const parts = [body.error || res.statusText, body.reason, body.hint, failureLines, body._instructions].filter(Boolean);
+    throw new Error(parts.join('\n'));
   }
 }
 

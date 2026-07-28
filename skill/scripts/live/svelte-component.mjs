@@ -309,9 +309,13 @@ function buildVariantStubV2(variantNum, markupWithProps, contract, seededCss) {
   const propsComment = contract.length > 0
     ? `\n<!-- Props: ${contract.map((c) => `${c.prop} (${c.kind}) <- {${c.expr}}`).join(', ')} -->\n`
     : '';
+  // The guard comments must never contain the literal "<style" character
+  // sequence: agents (and the fake test agent) locate the style block with
+  // string searches, and a mention inside a comment truncates their surgery
+  // mid-comment.
   const css = seededCss
-    ? `\n<style>\n  /* Variant ${variantNum}: seeded from the route's current rules; restyle freely */\n${seededCss.split('\n').map((l) => (l.trim() ? '  ' + l : '')).join('\n')}\n</style>\n`
-    : `\n<style>\n  /* Variant ${variantNum}: add scoped CSS here */\n</style>\n`;
+    ? `\n<style>\n  /* Variant ${variantNum}: seeded from the route's current rules; restyle or delete freely.\n     ALL rules go inside THIS block. Svelte allows exactly one top-level style\n     element per component; appending a second one is a compile error. */\n${seededCss.split('\n').map((l) => (l.trim() ? '  ' + l : '')).join('\n')}\n</style>\n`
+    : `\n<style>\n  /* Variant ${variantNum}: add all CSS inside THIS block. Svelte allows exactly\n     one top-level style element; a second one is a compile error. */\n</style>\n`;
   return `${buildPropsScriptV2(contract)}${propsComment}${markupWithProps.trim()}\n${css}`;
 }
 
@@ -1040,6 +1044,41 @@ export function removeSvelteComponentSession(id, cwd = process.cwd()) {
   try {
     fs.rmSync(dir, { recursive: true, force: true });
   } catch { /* non-fatal */ }
+}
+
+/**
+ * Compile-check every variant component of a session with the app's own
+ * compiler, BEFORE the browser ever imports them. A variant that does not
+ * compile (the classic: a second top-level <style> appended next to the
+ * seeded one) used to surface as a red Vite overlay in the user's page plus
+ * a mount-failure round trip; bounced at publish time it is a private
+ * agent-side fix with the exact file and line.
+ */
+export function compileCheckVariants(id, cwd = process.cwd()) {
+  const manifest = findSvelteComponentManifest(id, cwd);
+  if (!manifest || !manifest.manifestPath) return { ok: true, failures: [], checked: 0 };
+  const compiler = loadSvelteCompiler(cwd);
+  if (!compiler || typeof compiler.compile !== 'function') return { ok: true, failures: [], checked: 0 };
+  const sessionDir = path.dirname(manifest.manifestPath);
+  const failures = [];
+  let checked = 0;
+  let entries = [];
+  try { entries = fs.readdirSync(sessionDir); } catch { return { ok: true, failures: [], checked: 0 }; }
+  for (const name of entries) {
+    if (!/^v\d+\.svelte$/.test(name)) continue;
+    checked++;
+    try {
+      compiler.compile(fs.readFileSync(path.join(sessionDir, name), 'utf-8'), { generate: false });
+    } catch (err) {
+      failures.push({
+        file: `${manifest.componentDir}/${name}`,
+        line: err?.start?.line ?? null,
+        column: err?.start?.column ?? null,
+        message: String(err?.message || err).split('\n')[0].slice(0, 300),
+      });
+    }
+  }
+  return { ok: failures.length === 0, failures, checked };
 }
 
 /**

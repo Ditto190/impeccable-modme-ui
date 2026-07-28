@@ -55,6 +55,7 @@ import {
 import {
   applyDeferredSvelteComponentAccepts,
   bumpSvelteComponentPreviewRevision,
+  compileCheckVariants,
   removeAllSvelteComponentSessions,
   sweepInactiveSvelteComponentSessions,
 } from './live/svelte-component.mjs';
@@ -1322,9 +1323,24 @@ function handlePollPost(req, res) {
     // variant files into a fresh revision dir before the browser is told:
     // the import path changes every publish, so no transform cache can pin a
     // stale compile of a republished module (node_modules is unwatched).
+    // Broken variants are bounced HERE, before the browser imports anything:
+    // a compile error that reaches the page is a red overlay in the user's
+    // face; bounced at publish it is a private fix with file and line.
     if (replyFileMeta.previewMode === 'svelte-component'
         && msg.id
         && (msg.type === 'done' || !msg.type)) {
+      let compileCheck = { ok: true, failures: [] };
+      try { compileCheck = compileCheckVariants(msg.id, process.cwd()); } catch { /* best-effort */ }
+      if (!compileCheck.ok) {
+        res.writeHead(422, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'variant_compile_failed',
+          id: msg.id,
+          failures: compileCheck.failures,
+          _instructions: 'The publish was NOT delivered: the listed variant file(s) do not compile, so the browser never saw them. Fix each failure at the given file and line (the most common cause is a second top-level <style> element; Svelte allows exactly one, so merge all rules into the existing block), then send the same --reply done again.',
+        }));
+        return;
+      }
       try { bumpSvelteComponentPreviewRevision(msg.id, process.cwd()); } catch { /* best-effort */ }
     }
     if (state.sessionStore && msg.id && !skipJournalReply) {

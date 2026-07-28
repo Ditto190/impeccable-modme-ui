@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
+  compileCheckVariants,
   extractMatchingSourceCss,
   removeSelectorsFromSvelteSource,
   findSvelteComponentManifest,
@@ -351,5 +352,72 @@ describe('review regressions: preview-truth supersession (the Pitch mangle)', ()
     assert.match(text, /\.a \{ color: red; \}/);
     assert.doesNotMatch(text, /color: blue/);
     assert.deepEqual(removed, ['.b']);
+  });
+});
+
+describe('review regressions: publish-time compile gate', () => {
+  it('flags a variant with a duplicate top-level style block, passes after the fix', () => {
+    const tmp3 = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-compile-gate-')));
+    try {
+      mkdirSync(join(tmp3, 'node_modules'), { recursive: true });
+      try {
+        symlinkSync(join(REPO_NODE_MODULES, 'svelte'), join(tmp3, 'node_modules', 'svelte'), 'dir');
+      } catch {
+        cpSync(join(REPO_NODE_MODULES, 'svelte'), join(tmp3, 'node_modules', 'svelte'), { recursive: true });
+      }
+      write(tmp3, 'package.json', JSON.stringify({ name: 'app' }));
+      write(tmp3, 'src/routes/+page.svelte', '<main>\n  <div class="pick">hi</div>\n</main>\n');
+
+      const session = scaffoldSvelteComponentSession({
+        id: 'gate0001',
+        count: 1,
+        sourceFile: 'src/routes/+page.svelte',
+        sourceStartLine: 2,
+        sourceEndLine: 2,
+        originalLines: ['  <div class="pick">hi</div>'],
+        cwd: tmp3,
+      });
+      assert.equal(session.fallback, undefined, session.reason);
+
+      // The exact field failure: the agent kept the seeded block and
+      // appended its own second top-level <style>.
+      write(tmp3, join(session.componentDir, 'v1.svelte'), `<script>
+  let {} = $props();
+</script>
+
+<div class="pick board">hi</div>
+
+<style>
+  .pick { color: red; }
+</style>
+
+<style>
+  .board { margin-top: 86px; }
+</style>
+`);
+      const broken = compileCheckVariants('gate0001', tmp3);
+      assert.equal(broken.ok, false);
+      assert.equal(broken.checked, 1);
+      assert.match(broken.failures[0].message, /single top-level/);
+      assert.match(broken.failures[0].file, /gate0001\/v1\.svelte/);
+      assert.equal(typeof broken.failures[0].line, 'number');
+
+      // Merged into one block: the gate opens.
+      write(tmp3, join(session.componentDir, 'v1.svelte'), `<script>
+  let {} = $props();
+</script>
+
+<div class="pick board">hi</div>
+
+<style>
+  .pick { color: red; }
+  .board { margin-top: 86px; }
+</style>
+`);
+      const fixed = compileCheckVariants('gate0001', tmp3);
+      assert.equal(fixed.ok, true, JSON.stringify(fixed.failures));
+    } finally {
+      rmSync(tmp3, { recursive: true, force: true });
+    }
   });
 });
