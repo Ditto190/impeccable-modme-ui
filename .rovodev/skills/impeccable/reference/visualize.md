@@ -6,7 +6,7 @@ The purpose of a probe is to test composition, narrative, hierarchy, density, fo
 
 ## Generate three compositional options
 
-Render three distinct high-fidelity north-star comps of the requested surface, with whatever generation capability exists, saved under `.impeccable/mocks/` so they survive the session; record the approved comp's path in the surface brief. Base them on the real content and the surface concepts already developed with the user. Three is the number: one comp invites rubber-stamping, and the spread between three is what surfaces the composition worth building.
+Render three distinct high-fidelity north-star comps of the requested surface, with whatever generation capability exists, saved under `.impeccable/mocks/` so they survive the session; record the approved comp's path in the surface brief. Base them on the real content and the surface concepts already developed with the user. Three is the number: one comp invites rubber-stamping, and the spread between three is what surfaces the composition worth building. A decision-page sketch is not a probe: it chose the direction at deliberately unfinished fidelity, so the three comps render regardless, and the chosen card's sketch seeds at most one of them.
 
 - When the user shortlisted multiple concepts, spread the three across them.
 - When one direction is committed, vary the structural uncertainty an image can resolve: topology, sequence, density, hierarchy, focal composition, or interaction framing.
