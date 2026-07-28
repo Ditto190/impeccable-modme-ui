@@ -229,4 +229,9 @@ if (!b64) {
   process.exit(1);
 }
 fs.writeFileSync(out, Buffer.from(b64, 'base64'));
-console.log(`IMAGE: ${out} (${size}, ${quality}, gpt-image-2, billed to your OpenAI key)`);
+// The prompt travels with the asset: any thread that later composes this image
+// can recover the intent behind it without the generating thread's context.
+try {
+  fs.writeFileSync(`${out}.json`, JSON.stringify({ prompt, createdAt: new Date().toISOString(), tool: 'generate-image.mjs', model: 'gpt-image-2' }, null, 2));
+} catch { /* sidecar is best-effort */ }
+console.log(`IMAGE: ${out} (${size}, ${quality}, gpt-image-2, billed to your OpenAI key); prompt sidecar at ${out}.json`);
