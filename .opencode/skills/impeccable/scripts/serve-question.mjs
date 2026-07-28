@@ -394,7 +394,7 @@ function page() {
     --ks-mono: "SFMono-Regular", "Roboto Mono", "JetBrains Mono", Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; }
-  body { background: var(--ks-lacquer); color: var(--ks-text); font: 15px/1.55 var(--ks-font); padding: 1.8rem clamp(1rem, 5vw, 4rem) 2rem; min-height: 100dvh; display: flex; flex-direction: column; }
+  body { background: var(--ks-lacquer); color: var(--ks-text); font: 15px/1.55 var(--ks-font); padding: 1.8rem clamp(1rem, 5vw, 4rem) 2rem; min-height: 100dvh; display: flex; flex-direction: column; overflow-x: clip; }
   #ambient { position: fixed; inset: -40px; z-index: 0; background-size: cover; background-position: center; filter: blur(34px) saturate(1.05); opacity: 0; transition: opacity .55s ease, background-image .2s; pointer-events: none; }
   #scrim { position: fixed; inset: 0; z-index: 0; background: linear-gradient(180deg, oklch(7% 0.006 95 / 0.62), oklch(7% 0.006 95 / 0.78)); pointer-events: none; }
   header, main, footer { position: relative; z-index: 1; }
@@ -411,10 +411,14 @@ function page() {
   h1 { font-family: var(--ks-font-display); font-weight: 100; font-size: clamp(2.6rem, 5vw, 4.2rem); letter-spacing: -0.01em; line-height: 1.02; color: var(--ks-champagne); }
   .question { color: var(--ks-text-muted); margin-top: .7rem; max-width: 52rem; }
   main { flex: 1; display: flex; align-items: center; width: 100%; max-width: 90rem; margin: 0 auto; }
-  .stage { width: 100%; display: flex; flex-direction: column; gap: 1.5rem; position: relative; }
+  .stage { width: 100%; display: flex; flex-direction: column; gap: 1.5rem; }
+  /* The deck bleeds to the viewport edges while the first card aligns with the
+     content column; a carousel cut off at an invisible container edge reads as
+     a rendering bug, but one cut off at the screen edge reads as more cards. */
+  .deck-shell { position: relative; width: 100vw; margin-left: calc(50% - 50vw); }
   /* One row in a wide viewport, one column in a tall one; the deck scrolls on
      its axis with snap points and the arrows page it card by card. */
-  .grid { display: flex; gap: 1.6rem; width: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; padding: 6px 2px; align-items: stretch; }
+  .grid { --deck-inset: max(clamp(1rem, 5vw, 4rem), calc((100vw - 90rem) / 2)); display: flex; gap: 1.6rem; width: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; padding: 6px var(--deck-inset); scroll-padding-inline: var(--deck-inset); align-items: stretch; }
   .grid::-webkit-scrollbar { display: none; }
   .grid > .card { flex: 0 0 clamp(20rem, 27vw, 27rem); scroll-snap-align: center; }
   .nav { position: absolute; z-index: 6; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: oklch(7% 0.006 95 / 0.78); border: 1px solid var(--ks-rule); color: var(--ks-kinpaku); cursor: pointer; backdrop-filter: blur(6px); transition: border-color .2s, color .2s, opacity .2s; }
@@ -422,13 +426,27 @@ function page() {
   .nav[disabled] { opacity: .25; cursor: default; }
   .nav[hidden] { display: none; }
   .nav svg { width: 16px; height: 16px; }
-  .nav.prev { left: -10px; top: 50%; transform: translateY(-50%); }
-  .nav.next { right: -10px; top: 50%; transform: translateY(-50%); }
+  .nav.prev { left: 14px; top: 50%; transform: translateY(-50%); }
+  .nav.next { right: 14px; top: 50%; transform: translateY(-50%); }
+  /* A side that hides more cards fades out; a hard edge means the end. */
+  .fade { position: absolute; z-index: 5; pointer-events: none; opacity: 0; transition: opacity .3s ease; }
+  .fade-prev { left: 0; top: 0; bottom: 0; width: 88px; background: linear-gradient(90deg, var(--ks-lacquer), transparent); }
+  .fade-next { right: 0; top: 0; bottom: 0; width: 88px; background: linear-gradient(270deg, var(--ks-lacquer), transparent); }
+  .deck-shell.can-prev .fade-prev { opacity: 1; }
+  .deck-shell.can-next .fade-next { opacity: 1; }
   @media (max-aspect-ratio: 1/1) {
-    .grid { flex-direction: column; overflow-x: hidden; overflow-y: auto; scroll-snap-type: y mandatory; max-height: min(68dvh, 44rem); }
+    .grid { flex-direction: column; overflow-x: hidden; overflow-y: auto; scroll-snap-type: y mandatory; max-height: min(68dvh, 44rem); scroll-padding-block: 6px; }
     .grid > .card { flex: 0 0 auto; }
-    .nav.prev { left: 50%; top: -8px; transform: translate(-50%, 0) rotate(90deg); }
-    .nav.next { right: auto; left: 50%; top: auto; bottom: -8px; transform: translate(-50%, 0) rotate(90deg); }
+    /* In the vertical deck the pager is the primary way forward, so it grows
+       into a labeled pill instead of a bare chevron nobody notices. */
+    .nav { width: auto; height: 38px; border-radius: 19px; padding: 0 16px; gap: 8px; border-color: var(--ks-kinpaku-deep); background: oklch(7% 0.006 95 / 0.88); font-family: var(--ks-mono); font-size: .62rem; letter-spacing: .2em; text-transform: uppercase; }
+    .nav svg { transform: rotate(90deg); }
+    .nav.prev::after { content: "Back"; }
+    .nav.next::after { content: "More"; }
+    .nav.prev { left: 50%; top: 6px; transform: translate(-50%, 0); }
+    .nav.next { right: auto; left: 50%; top: auto; bottom: 6px; transform: translate(-50%, 0); }
+    .fade-prev { top: 0; left: 0; right: 0; bottom: auto; width: auto; height: 72px; background: linear-gradient(180deg, var(--ks-lacquer), transparent); }
+    .fade-next { top: auto; left: 0; right: 0; bottom: 0; width: auto; height: 72px; background: linear-gradient(0deg, var(--ks-lacquer), transparent); }
   }
   .card { position: relative; perspective: 1400px; transform: rotate(var(--fan, 0deg)); transition: transform .25s cubic-bezier(.16, 1, .3, 1); }
   .card:hover { transform: rotate(0deg) translateY(-4px); }
@@ -470,10 +488,12 @@ function page() {
   .fact-label { display: inline-block; font-family: var(--ks-mono); font-size: .6rem; letter-spacing: .18em; text-transform: uppercase; color: var(--ks-text-faint); margin-right: .55em; transform: translateY(-1px); }
   /* Inspiration rides picture-in-picture: the catalog world explains where the
      direction comes from without promising what the build will look like. */
-  .pip { position: absolute; z-index: 2; left: 10px; bottom: 10px; margin: 0; width: 74px; border: 1px solid var(--ks-rule); border-radius: 6px; overflow: hidden; background: var(--ks-lacquer); cursor: zoom-in; transform-origin: bottom left; transition: transform .3s cubic-bezier(.16,1,.3,1), box-shadow .3s; box-shadow: 0 6px 18px oklch(0% 0 0 / 0.45); }
-  .pip img { display: block; width: 100%; aspect-ratio: 16/10; object-fit: cover; }
-  .pip figcaption { font-family: var(--ks-mono); font-size: .5rem; letter-spacing: .2em; text-transform: uppercase; color: var(--ks-text-faint); text-align: center; padding: 3px 0 4px; }
-  .pip:hover { transform: scale(2.6); box-shadow: 0 14px 40px oklch(0% 0 0 / 0.6); z-index: 3; }
+  /* Hovering the inspiration takes over the whole media region; the sketch is
+     the promise, the inspiration is a glance, so the glance must cost nothing. */
+  .pip { position: absolute; z-index: 2; left: 10px; bottom: 10px; margin: 0; width: 84px; height: 64px; border: 1px solid var(--ks-rule); border-radius: 6px; overflow: hidden; background: var(--ks-lacquer); cursor: zoom-in; transition: left .35s cubic-bezier(.16,1,.3,1), bottom .35s cubic-bezier(.16,1,.3,1), width .35s cubic-bezier(.16,1,.3,1), height .35s cubic-bezier(.16,1,.3,1), border-radius .35s ease; box-shadow: 0 6px 18px oklch(0% 0 0 / 0.45); }
+  .pip img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .pip figcaption { position: absolute; left: 0; right: 0; bottom: 0; font-family: var(--ks-mono); font-size: .5rem; letter-spacing: .2em; text-transform: uppercase; color: var(--ks-text); text-align: center; padding: 3px 0 4px; background: oklch(7% 0.006 95 / 0.72); backdrop-filter: blur(3px); }
+  .pip:hover { left: 0; bottom: 0; width: 100%; height: 100%; border-radius: 0; z-index: 3; }
   .sketch-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--ks-mono); font-size: .66rem; letter-spacing: .22em; text-transform: uppercase; color: var(--ks-text-faint); }
   .media.sketching { position: relative; }
   .media.sketching .shimmer { position: absolute; inset: 0; }
@@ -529,9 +549,13 @@ function page() {
       <h1>${esc(payload.title || 'Choose a direction')}</h1>
     </div>
     ${payload.question ? `<p class="question">${esc(payload.question)}</p>` : ''}
-    <div class="grid">${cards}</div>
-    <button class="nav prev" hidden aria-label="Previous card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5 8 12l6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    <button class="nav next" hidden aria-label="Next card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5 16 12l-6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <div class="deck-shell">
+      <div class="grid">${cards}</div>
+      <div class="fade fade-prev" aria-hidden="true"></div>
+      <div class="fade fade-next" aria-hidden="true"></div>
+      <button class="nav prev" hidden aria-label="Previous card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5 8 12l6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="nav next" hidden aria-label="Next card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5 16 12l-6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
   </div>
 </main>
 <footer>
@@ -631,14 +655,18 @@ function page() {
   const vertical = () => matchMedia('(max-aspect-ratio: 1/1)').matches;
   function updateNav() {
     if (!deck || !prevBtn) return;
+    const shell = deck.closest('.deck-shell');
     const v = vertical();
     const overflow = v ? deck.scrollHeight > deck.clientHeight + 4 : deck.scrollWidth > deck.clientWidth + 4;
     prevBtn.hidden = nextBtn.hidden = !overflow;
-    if (!overflow) return;
     const pos = v ? deck.scrollTop : deck.scrollLeft;
     const max = v ? deck.scrollHeight - deck.clientHeight : deck.scrollWidth - deck.clientWidth;
-    prevBtn.toggleAttribute('disabled', pos <= 2);
-    nextBtn.toggleAttribute('disabled', pos >= max - 2);
+    const canPrev = overflow && pos > 2;
+    const canNext = overflow && pos < max - 2;
+    prevBtn.toggleAttribute('disabled', !canPrev);
+    nextBtn.toggleAttribute('disabled', !canNext);
+    shell?.classList.toggle('can-prev', canPrev);
+    shell?.classList.toggle('can-next', canNext);
   }
   function pageDeck(dir) {
     const card = deck.querySelector('.card');
