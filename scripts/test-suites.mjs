@@ -87,13 +87,14 @@ export const SUITES = {
       /^scripts\/(benchmark-detector|build-browser-detector|build-extension)\.js$/,
       /^site\/(pages\/detector|public\/antipattern|data\/anti-patterns-catalog\.js)/,
       /^tests\/design-system\.test\.mjs$/,
-      /^tests\/(detect-antipatterns|detect-cli-design-contamination|inline-ignores|extension-build|fixtures\/antipatterns)/,
+      /^tests\/(detect-antipatterns|detect-cli-design-contamination|detect-url-launch|inline-ignores|extension-build|fixtures\/antipatterns)/,
     ],
     commands: [
       {
         runner: 'bun',
         files: [
           'tests/detect-antipatterns.test.js',
+          'tests/detect-url-launch.test.mjs',
           'tests/inline-ignores.test.mjs',
           'tests/lib/detector-bundle.test.js',
         ],
