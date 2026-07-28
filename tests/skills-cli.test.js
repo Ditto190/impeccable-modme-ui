@@ -15,6 +15,7 @@ import { mkdtempSync, existsSync, readdirSync, readFileSync, mkdirSync, writeFil
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
+  copyProviderAgents,
   copyProviderHooks,
   copyProviderSkills,
   decideHookInstall,
@@ -104,6 +105,19 @@ function createFakeUniversalBundle(root, providers = ['.claude', '.agents', '.cu
     writeFileSync(join(bundleRoot, '.codex', 'hooks.json'), JSON.stringify({
       hooks: { PostToolUse: [{ matcher: 'apply_patch', hooks: [{ type: 'command', command: 'node ".codex/skills/impeccable/scripts/hook.mjs"' }] }] },
     }, null, 2));
+  }
+  // Native subagent definitions, mirroring the build's provider agents output.
+  if (providers.includes('.github')) {
+    mkdirSync(join(bundleRoot, '.github', 'agents'), { recursive: true });
+    writeFileSync(join(bundleRoot, '.github', 'agents', 'impeccable-finish-reviewer.agent.md'),
+      '---\nname: impeccable-finish-reviewer\ndescription: Reviews a finished build.\n---\nCopilot reviewer body.\n');
+    writeFileSync(join(bundleRoot, '.github', 'agents', 'impeccable-asset-producer.agent.md'),
+      '---\nname: impeccable-asset-producer\ndescription: Produces assets.\n---\nCopilot producer body.\n');
+  }
+  if (providers.includes('.cursor')) {
+    mkdirSync(join(bundleRoot, '.cursor', 'agents'), { recursive: true });
+    writeFileSync(join(bundleRoot, '.cursor', 'agents', 'impeccable-finish-reviewer.md'),
+      '---\nname: impeccable-finish-reviewer\ndescription: Reviews a finished build.\nmodel: inherit\nreadonly: true\nis_background: false\n---\nCursor reviewer body.\n');
   }
   return bundleRoot;
 }
@@ -212,6 +226,84 @@ describe('copyProviderSkills: symlink handling', () => {
     expect(existsSync(join(skillsPath, 'impeccable', 'SKILL.md'))).toBe(true);
     rmSync(tmp, { recursive: true, force: true });
   });
+});
+
+describe('copyProviderAgents: Copilot and Cursor subagents', () => {
+  test('project scope places agents at .github/agents/ and .cursor/agents/', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-project-'));
+    const bundle = createFakeUniversalBundle(tmp, ['.github', '.cursor']);
+
+    const results = copyProviderAgents(bundle, tmp, ['.github', '.cursor'], { scope: 'project' });
+
+    expect(existsSync(join(tmp, '.github', 'agents', 'impeccable-finish-reviewer.agent.md'))).toBe(true);
+    expect(existsSync(join(tmp, '.github', 'agents', 'impeccable-asset-producer.agent.md'))).toBe(true);
+    expect(existsSync(join(tmp, '.cursor', 'agents', 'impeccable-finish-reviewer.md'))).toBe(true);
+    expect(results.map(r => r.provider).sort()).toEqual(['.cursor', '.github']);
+
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('user scope places Copilot agents at ~/.copilot/agents (not ~/.github) and Cursor agents at ~/.cursor/agents, overwriting stale copies', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-user-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-user-home-'));
+    const bundle = createFakeUniversalBundle(tmp, ['.github', '.cursor']);
+    // A stale user-level copy from an older release must be overwritten.
+    mkdirSync(join(home, '.copilot', 'agents'), { recursive: true });
+    writeFileSync(join(home, '.copilot', 'agents', 'impeccable-finish-reviewer.agent.md'), 'stale copy\n');
+
+    copyProviderAgents(bundle, home, ['.github', '.cursor'], { scope: 'user' });
+
+    const copilotAgent = readFileSync(join(home, '.copilot', 'agents', 'impeccable-finish-reviewer.agent.md'), 'utf8');
+    expect(copilotAgent).toContain('Copilot reviewer body.');
+    expect(existsSync(join(home, '.cursor', 'agents', 'impeccable-finish-reviewer.md'))).toBe(true);
+    expect(existsSync(join(home, '.github', 'agents'))).toBe(false);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('project scope reports user-level Copilot agents that shadow the installed ones; Cursor never does (project wins there)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-shadow-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-shadow-home-'));
+    const bundle = createFakeUniversalBundle(tmp, ['.github', '.cursor']);
+    mkdirSync(join(home, '.copilot', 'agents'), { recursive: true });
+    writeFileSync(join(home, '.copilot', 'agents', 'impeccable-finish-reviewer.agent.md'), 'user-level copy\n');
+    mkdirSync(join(home, '.cursor', 'agents'), { recursive: true });
+    writeFileSync(join(home, '.cursor', 'agents', 'impeccable-finish-reviewer.md'), 'user-level copy\n');
+
+    const results = copyProviderAgents(bundle, tmp, ['.github', '.cursor'], { scope: 'project', home });
+
+    const github = results.find(r => r.provider === '.github');
+    const cursor = results.find(r => r.provider === '.cursor');
+    expect(github.shadowed).toEqual(['impeccable-finish-reviewer.agent.md']);
+    expect(cursor.shadowed).toEqual([]);
+    // The project copies still land; the shadow report is a warning, not a block.
+    expect(existsSync(join(tmp, '.github', 'agents', 'impeccable-finish-reviewer.agent.md'))).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('fresh install lays agents down alongside skills and reports them', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-install-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-install-home-'));
+    execSync('git init', { cwd: tmp });
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.github', '.cursor']);
+
+    const output = run('skills install -y --no-hooks --providers=github,cursor', {
+      cwd: tmp,
+      env: { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot },
+    });
+
+    expect(output).toContain('Installed impeccable into: .github, .cursor (project)');
+    expect(output).toContain('Installed GitHub Copilot agents into:');
+    expect(output).toContain('Installed Cursor agents into:');
+    expect(existsSync(join(tmp, '.github', 'agents', 'impeccable-finish-reviewer.agent.md'))).toBe(true);
+    expect(existsSync(join(tmp, '.cursor', 'agents', 'impeccable-finish-reviewer.md'))).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
 });
 
 describe('skills install: already-installed detection', () => {

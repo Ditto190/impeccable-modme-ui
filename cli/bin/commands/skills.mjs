@@ -1189,6 +1189,71 @@ function copyProviderSkills(bundleDir, root, targets, { scope } = {}) {
   return written;
 }
 
+// Native subagent definitions that ship in the bundle next to a provider's
+// skills. GitHub Copilot's live at `.github/agents/impeccable-*.agent.md`:
+// project installs commit them at `<repo>/.github/agents/`, user-level
+// installs go to `~/.copilot/agents/` (Copilot's user-scope dir, NOT
+// `~/.github/`). On a name conflict Copilot lets the user-level file shadow
+// the project one, so both paths overwrite existing impeccable-* copies and a
+// project install reports any same-named user-level agents that would shadow
+// it. Cursor's live at `.cursor/agents/impeccable-*.md`, user scope
+// `~/.cursor/agents/`; project agents take precedence there, so no shadow
+// warning is needed.
+const PROVIDER_AGENT_ARTIFACTS = {
+  '.github': {
+    ext: '.agent.md',
+    userDir: home => join(home, '.copilot', 'agents'),
+    userShadowsProject: true,
+  },
+  '.cursor': {
+    ext: '.md',
+    userDir: home => join(home, '.cursor', 'agents'),
+    userShadowsProject: false,
+  },
+};
+
+function copyProviderAgents(bundleDir, root, providers, { scope, home = homedir() } = {}) {
+  const targets = Array.isArray(providers) ? providers : [providers];
+  const results = [];
+  for (const provider of targets) {
+    const artifact = PROVIDER_AGENT_ARTIFACTS[provider];
+    if (!artifact) continue;
+    const srcDir = join(bundleDir, provider, 'agents');
+    if (!existsSync(srcDir)) continue;
+    const agentFiles = readdirSync(srcDir).filter(name => name.endsWith(artifact.ext));
+    if (agentFiles.length === 0) continue;
+
+    const destDir = scope === 'user'
+      ? artifact.userDir(root)
+      : join(root, provider, 'agents');
+    mkdirSync(destDir, { recursive: true });
+    for (const name of agentFiles) {
+      writeFileSync(join(destDir, name), readFileSync(join(srcDir, name)));
+    }
+
+    // A project install can be shadowed by same-named agents in the user-level
+    // dir; surface them so the freshly installed project agents actually apply.
+    const userDir = artifact.userDir(home);
+    const shadowed = artifact.userShadowsProject && scope !== 'user'
+      ? agentFiles.filter(name => existsSync(join(userDir, name)))
+      : [];
+
+    results.push({ provider, written: agentFiles.length, destDir, userDir, shadowed });
+  }
+  return results;
+}
+
+function reportProviderAgents(results) {
+  for (const result of results || []) {
+    if (result.written === 0) continue;
+    console.log(`Installed ${providerDisplayName(result.provider)} agents into: ${formatPathForDisplay(result.destDir)}`);
+    if (result.shadowed.length > 0) {
+      console.warn(`Warning: user-level agents in ${formatPathForDisplay(result.userDir)} shadow the project copies just installed: ${result.shadowed.join(', ')}.`);
+      console.warn('Run `npx impeccable update --user` to refresh them, or remove them so the project agents apply.');
+    }
+  }
+}
+
 function refreshProviderSkills(bundleDir, root, providers, scope) {
   const unique = deduplicateProviders(root, providers, scope);
   let updated = 0;
@@ -1735,6 +1800,7 @@ async function install(flags) {
       if (!updateCheckSkipped && copyTargets.length > 0 && !isUpToDate(installRoot, copyTargets, bundleDir, scope)) {
         migrateUnprefixImpeccable(installRoot, scope);
         updated = refreshProviderSkills(bundleDir, installRoot, copyTargets, scope);
+        reportProviderAgents(copyProviderAgents(bundleDir, installRoot, copyTargets, { scope }));
         const v = getSkillsVersion(installRoot, scope);
         console.log(`Updated ${updated} skill(s)${v ? ` to v${v}` : ''}.`);
       }
@@ -1791,8 +1857,10 @@ async function install(flags) {
 
   let written = 0;
   let hookTargets = [];
+  let agentResults = [];
   try {
     written = copyProviderSkills(bundleDir, installRoot, targets, { scope });
+    agentResults = copyProviderAgents(bundleDir, installRoot, targets, { scope });
     hookTargets = wantHooks ? copyProviderHooks(bundleDir, hookRoot, targets, { force, skillRoot: installRoot }) : [];
   } catch (e) {
     rmSync(bundleDir, { recursive: true, force: true });
@@ -1806,6 +1874,7 @@ async function install(flags) {
     process.exit(1);
   }
   console.log(`Installed impeccable into: ${targets.join(', ')} (${scope === 'user' ? 'global' : 'project'})`);
+  reportProviderAgents(agentResults);
   if (hookTargets.length > 0) console.log(`Installed hooks into: ${hookTargets.join(', ')}`);
 
   console.log('\nDone! Run /impeccable init in your AI harness to set up design context.\n');
@@ -2062,6 +2131,7 @@ async function update(flags = []) {
     if (migrated > 0) console.log('Migrated a prefixed install back to /impeccable (the i- prefix is no longer used).');
 
     const updated = refreshProviderSkills(tmpDir, root, copyProviders, scope);
+    reportProviderAgents(copyProviderAgents(tmpDir, root, copyProviders, { scope }));
     const wantHooks = installHooks && await decideHookInstall(root, providers, { yes });
     const hookTargets = wantHooks ? copyProviderHooks(tmpDir, root, providers, { force }) : [];
 
@@ -2096,6 +2166,7 @@ function copyDirSync(src, dest) {
 // reimplementation in a helper script (which is how bugs slip through).
 export {
   collectInstallDetections,
+  copyProviderAgents,
   copyProviderHooks,
   copyProviderSkills,
   decideHookInstall,

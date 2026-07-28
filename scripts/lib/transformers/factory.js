@@ -136,6 +136,46 @@ function buildClaudeAgent(agent, body) {
   return `${generateYamlFrontmatter(frontmatter)}\n${body.trim()}\n`;
 }
 
+// GitHub Copilot custom agents are markdown files named `<name>.agent.md`
+// (project scope: `.github/agents/`; user scope: `~/.copilot/agents/`). Only
+// the portable frontmatter fields are emitted: `name` and `description`.
+// `tools` is omitted deliberately -- omitting it grants access to all tools,
+// and Copilot's tool vocabulary differs from ours -- and Copilot has no
+// documented model/effort/max-turns equivalents. VS Code-specific fields
+// (handoffs, argument-hint) are ignored elsewhere, so none are emitted.
+function buildCopilotAgent(agent, body) {
+  const frontmatter = {
+    name: agent.name,
+    description: agent.description,
+  };
+
+  return `${generateYamlFrontmatter(frontmatter)}\n${body.trim()}\n`;
+}
+
+// Cursor subagents are plain markdown files with YAML frontmatter (project
+// scope: `.cursor/agents/`; user scope: `~/.cursor/agents/`). Fields: name,
+// description (drives auto-delegation), model (`inherit` maps directly to our
+// value), readonly, is_background. `readonly` is derived from the agent's own
+// tool list: a role that declares tools but neither Write nor Edit is a
+// reader, and Cursor can enforce that. effort/max-turns are skipped: Cursor's
+// effort option requires an explicit model id, incompatible with `inherit`.
+function buildCursorAgent(agent, body) {
+  const frontmatter = {
+    name: agent.name,
+    description: agent.description,
+    model: agent.model || 'inherit',
+  };
+
+  const tools = String(agent.tools || '').split(',').map(t => t.trim()).filter(Boolean);
+  if (tools.length > 0 && !tools.includes('Write') && !tools.includes('Edit')) {
+    frontmatter.readonly = true;
+  }
+  // The parent thread waits on each role's return; none of these run detached.
+  frontmatter.is_background = false;
+
+  return `${generateYamlFrontmatter(frontmatter)}\n${body.trim()}\n`;
+}
+
 function buildAgentFile(config, agent, body) {
   if (config.agentFormat === 'codex-toml') {
     return {
@@ -148,6 +188,20 @@ function buildAgentFile(config, agent, body) {
     return {
       filename: `${agent.claudeName || agent.name}.md`,
       content: buildClaudeAgent(agent, body),
+    };
+  }
+
+  if (config.agentFormat === 'copilot-agent-md') {
+    return {
+      filename: `${agent.name}.agent.md`,
+      content: buildCopilotAgent(agent, body),
+    };
+  }
+
+  if (config.agentFormat === 'cursor-md') {
+    return {
+      filename: `${agent.name}.md`,
+      content: buildCursorAgent(agent, body),
     };
   }
 
@@ -316,12 +370,15 @@ export function createTransformer(config) {
     if (config.agentFormat) {
       const agentsDir = path.join(providerDir, `${configDir}/agents`);
       for (const skill of skills) {
+        const scriptsPath = `${configDir}/skills/${skill.name}/scripts`;
         for (const agent of skill.agents || []) {
           // Agents can declare `providers: <list>` to limit which harnesses
           // they emit to. Default (no field) ships everywhere with agentFormat.
           if (agent.providers && !agent.providers.includes(provider)) continue;
           let body = compileProviderBlocks(agent.body, providerTags);
           body = replacePlaceholders(body, placeholderKey, [], allSkillNames);
+          body = stripRuleMarkers(body);
+          body = body.replace(/\{\{scripts_path\}\}/g, scriptsPath);
           const agentFile = buildAgentFile(config, agent, body);
           if (!agentFile) continue;
           ensureDir(agentsDir);

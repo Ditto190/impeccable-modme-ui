@@ -16,6 +16,10 @@ export const PROVIDERS = {
     configDir: '.cursor',
     displayName: 'Cursor',
     frontmatterFields: ['license', 'compatibility', 'metadata'],
+    // Cursor subagents: `.cursor/agents/<name>.md` at repo level,
+    // `~/.cursor/agents/` at user level. Project agents take precedence over
+    // user ones, so installs simply overwrite on update.
+    agentFormat: 'cursor-md',
     emitHooks: 'cursor',
     // Cursor reads `.cursor/hooks.json`, not `.cursor/hooks/hooks.json`.
     hooksManifestRel: 'hooks.json',
@@ -68,6 +72,11 @@ export const PROVIDERS = {
     displayName: 'GitHub Copilot',
     placeholderProvider: 'agents',
     frontmatterFields: ['user-invocable', 'argument-hint', 'license', 'compatibility', 'metadata'],
+    // Copilot custom agents: `.github/agents/<name>.agent.md` at repo level,
+    // `~/.copilot/agents/` at user level (the CLI installer handles placement).
+    // The degraded/ fallbacks still ship for Copilot surfaces where the model
+    // fails to delegate; the .agent.md files are the real subagent path.
+    agentFormat: 'copilot-agent-md',
     emitHooks: 'github',
     // GitHub Copilot discovers repo-level hooks under `.github/hooks/*.json`.
     hooksManifestRel: 'hooks/impeccable.json',
