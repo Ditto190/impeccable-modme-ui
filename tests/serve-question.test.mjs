@@ -188,6 +188,8 @@ describe('serve-question', () => {
     mkdirSync(path.dirname(sketchPath), { recursive: true });
     writeFileSync(sketchPath, 'RIFFxxxxWEBP');
     assert.equal((await fetch(url.replace(/\/$/, '') + slot)).status, 200);
+    // The page polls with a cache-busting query; the route must tolerate it.
+    assert.equal((await fetch(url.replace(/\/$/, '') + slot + '?t=1')).status, 200);
     // The answer carries the chosen card's sketch for comp seeding.
     await fetch(`${url}answer`, {
       method: 'POST',
