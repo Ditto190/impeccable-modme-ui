@@ -1038,13 +1038,25 @@ function createRequestHandler({ detectScript, liveScriptParts }) {
         if (msg.type === 'exit') {
           cleanupSvelteComponentSessionsBeforeExit();
         }
+        // An ORPHANED discard is the browser reporting that the session's
+        // wrapper no longer exists in source (edited or regenerated away).
+        // There is no cleanup for an agent to perform, and asking one to run
+        // the normal discard flow would just fail against the missing
+        // scaffolding, so the server terminalizes the session itself and the
+        // event stays out of the poll queue.
+        const orphanedDiscard = msg.type === 'discard' && msg.orphaned === true;
+        if (orphanedDiscard && state.sessionStore && msg.id) {
+          try {
+            state.sessionStore.appendEvent({ type: 'discarded', id: msg.id, orphaned: true });
+          } catch { /* the discard_requested phase already left the resumable set */ }
+        }
         // `variant_mounted` is the happy path: it is journaled above so the
         // snapshot carries render truth, but there is nothing for the agent to
         // do about it, so it stays out of the poll queue and off the SSE bus.
         // `variant_mount_failed` is the opposite: the agent published something
         // the browser could not render, and only the agent can fix it, so it
         // goes to the queue as a first-class event.
-        if (msg.type !== 'checkpoint' && msg.type !== 'variant_mounted') {
+        if (msg.type !== 'checkpoint' && msg.type !== 'variant_mounted' && !orphanedDiscard) {
           enqueueEvent(msg);
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });

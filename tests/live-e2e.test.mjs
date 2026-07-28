@@ -1058,6 +1058,72 @@ for (const { name, fixture } of fixtures) {
       });
     }
 
+    if (shouldRunScenario('orphan') && fixture.runtime.orphanedWrapperScenario) {
+      it('self-discards an orphaned session when its wrapper is edited out of source', liveE2eTestOptions, async (t) => {
+        if (manualOnly || process.env.IMPECCABLE_E2E_MANUAL_SCENARIO) {
+          t.skip('manual scenario filter is active');
+          return;
+        }
+        // Repro of issue #439: a cycling session is abandoned (no Accept or
+        // Discard), the wrapped region is edited out of source, and the page
+        // reloads. The resumed session used to freeze the picker forever;
+        // recovery required a manual live-complete --discarded. It must now
+        // self-discard and hand the surface back to the picker.
+        const agent = createFakeAgent();
+        const session = await bootFixtureSession({
+          name,
+          fixture,
+          browser,
+          agent,
+          wrapTarget: wrapTargetFromPickedElement,
+          log: (m) => t.diagnostic(m),
+        });
+        const { page, appRoot, teardown } = session;
+        const cfg = fixture.runtime.orphanedWrapperScenario;
+        const pickSelector = fixture.runtime.pickSelector || 'h1.hero-title';
+        try {
+          await waitForHandshake(page);
+          const sourceFile = join(appRoot, cfg.sourceFile);
+          const pristine = readFileSync(sourceFile, 'utf-8');
+
+          await pickElement(page, pickSelector, { position: fixture.runtime.pickPosition });
+          await clickGo(page);
+          await waitForCyclingRobust(page, 3, { timeout: 60_000, log: (m) => t.diagnostic(m) });
+          const saved = await readLiveSessionStorage(page);
+          assert.ok(saved?.id, 'cycling session persisted to local storage');
+
+          t.diagnostic('Restoring pristine source (simulated external edit that removes the wrapper)');
+          writeFileSync(sourceFile, pristine);
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await waitForHandshake(page);
+
+          // Resume adopts the cycling session, the source read finds no
+          // wrapper, retries, then self-discards: local session cleared.
+          const deadline = Date.now() + 30_000;
+          for (;;) {
+            const current = await readLiveSessionStorage(page);
+            if (!current?.id) break;
+            if (Date.now() > deadline) throw new Error('orphaned session was never discarded');
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          t.diagnostic('Orphaned session discarded; verifying durable phase + picker rearm');
+
+          const snapshotPath = join(appRoot, '.impeccable/live/sessions', `${saved.id}.snapshot.json`);
+          const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8'));
+          assert.equal(
+            snapshot.phase,
+            'discarded',
+            'an orphaned discard is terminalized server-side without agent involvement',
+          );
+
+          // The regression that mattered: the picker must arm again.
+          await pickElement(page, pickSelector, { position: fixture.runtime.pickPosition });
+        } finally {
+          await teardownAndResetBrowser(teardown);
+        }
+      });
+    }
+
     if (shouldRunScenario('manual') && Array.isArray(fixture.runtime.manualEditScenarios) && fixture.runtime.manualEditScenarios.length > 0) {
       const manualScenarioFilter = process.env.IMPECCABLE_E2E_MANUAL_SCENARIO || '';
       for (const scenario of fixture.runtime.manualEditScenarios) {

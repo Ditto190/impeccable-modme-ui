@@ -6170,6 +6170,22 @@
   const COMPLETED_SOURCE_FALLBACK_RETRY_MS = 1200;
 
   /**
+   * Terminal recovery for a session whose source-side scaffolding no longer
+   * exists. The discard event is best-effort: with no agent polling it parks
+   * the durable session in discard_requested, which no resume path adopts;
+   * with an agent attached it triggers the normal discard finalization.
+   */
+  function discardOrphanedSession(reason) {
+    const sessionId = currentSessionId;
+    if (!sessionId) return;
+    console.warn('[impeccable] Discarding orphaned session ' + sessionId + ': ' + reason);
+    sendEvent({ type: 'discard', id: sessionId, orphaned: true }).catch(() => {});
+    markSessionHandled();
+    cleanup({ instantChrome: true });
+    showToast('The previous live session no longer matches the source file, so it was discarded. Pick an element to start fresh.', 6000);
+  }
+
+  /**
    * No-HMR fallback: fetch the raw source file from the live server,
    * parse it, extract the variant wrapper, and inject it into the live DOM.
    * This works even when the dev server caches HTML (Bun, static servers).
@@ -6205,6 +6221,25 @@
         srcWrapper = doc.querySelector('[data-impeccable-variants="' + sessionId + '"]');
         if (!srcWrapper) {
           console.warn('[impeccable] Variant wrapper not found in source file.');
+          // A resumed cycling session whose wrapper is gone from source is an
+          // ORPHAN: the file was edited or regenerated out from under it, so
+          // no reload, HMR push, or server restart can ever complete it, and
+          // the frozen picker it leaves behind used to need a manual
+          // live-complete --discarded. Retry a few reads first (an agent
+          // rewrite or HMR patch may be mid-flight), then self-discard and
+          // hand the surface back to the picker.
+          if (opts.orphanDiscard && sessionId === currentSessionId) {
+            const attempt = opts._orphanAttempt || 0;
+            if (attempt < COMPLETED_SOURCE_FALLBACK_RETRIES) {
+              setTimeout(() => {
+                if (sessionId !== currentSessionId) return;
+                if (state !== 'GENERATING' && state !== 'CYCLING') return;
+                injectVariantsFromSource(filePath, sessionId, { ...opts, _orphanAttempt: attempt + 1 });
+              }, COMPLETED_SOURCE_FALLBACK_RETRY_MS);
+            } else {
+              discardOrphanedSession('variant wrapper missing from source');
+            }
+          }
           return;
         }
 
@@ -8802,7 +8837,14 @@ void main() {
       ? currentPreviewFile
       : (currentSourceFile || currentPreviewFile);
     if (restoreFile) {
-      injectVariantsFromSource(restoreFile, currentSessionId);
+      // A restored CYCLING session promises variants already written into
+      // source; if they are not there (after retries), the session is an
+      // orphan and must self-discard instead of freezing the picker (#439).
+      // GENERATING restores make no such promise: deferred-wrapper flows
+      // legitimately have no wrapper in source until the agent's write lands.
+      injectVariantsFromSource(restoreFile, currentSessionId, {
+        orphanDiscard: savedState === 'CYCLING' && !isFrameworkComponentPreviewMode(currentPreviewMode),
+      });
       return true;
     }
 
