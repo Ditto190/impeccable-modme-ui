@@ -330,14 +330,12 @@ function hasLiveServer(appRoot) {
       return false;
     }
   }
-  // Legacy server.json without a port/token: best-effort identity check.
-  if (process.platform === 'win32') return true;
-  try {
-    const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
-    return /live-server|\b(node|bun)\b/.test(command);
-  } catch {
-    return false;
-  }
+  // Every server.json this codebase has ever written records port + token
+  // (see writeLiveServerInfo). A record without them is malformed or foreign
+  // and cannot be authenticated, so it does not count as a live helper;
+  // resolution falls to the durable-session tier, which is the correct
+  // recovery path for a stopped or crashed helper anyway.
+  return false;
 }
 
 const TERMINAL_SESSION_PHASES = new Set(['completed', 'discarded']);
