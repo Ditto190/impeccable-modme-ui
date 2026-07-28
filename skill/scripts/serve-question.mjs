@@ -476,6 +476,12 @@ function page() {
   .face { background: var(--ks-lacquer-raised); border: 1px solid var(--ks-rule); border-radius: 10px; box-shadow: 0 18px 40px oklch(0% 0 0 / 0.35); overflow: hidden; display: flex; flex-direction: column; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
   .face.front { position: relative; height: 100%; }
   .face.back { position: absolute; inset: 0; transform: rotateY(180deg); }
+  /* Only the visible face is interactive: a hidden backface still hit-tests
+     in Chrome, so the front's pip would otherwise sit invisibly over the
+     back's chips, showing its zoom cursor and eating the flip-back click. */
+  .face.back { pointer-events: none; }
+  .card.flipped .face.back { pointer-events: auto; }
+  .card.flipped .face.front { pointer-events: none; }
   .face.lead { border-color: var(--ks-kinpaku); box-shadow: 0 0 0 1px var(--ks-kinpaku), 0 18px 40px oklch(0% 0 0 / 0.45); }
   .card:hover .face { border-color: var(--ks-kinpaku-deep); }
   .card:hover .face.lead { border-color: var(--ks-kinpaku); }
