@@ -442,13 +442,22 @@ export function resolveLiveRoots(cwd = process.cwd(), { targetPath = null } = {}
 export function consumeTargetArg(argv = process.argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--target' && typeof argv[i + 1] === 'string') {
+    if (arg === '--target') {
       const value = argv[i + 1];
+      // A --target with no usable value must not degrade into implicit root
+      // selection: these helpers mutate session state, and "the most recent
+      // app" is exactly what the caller was trying NOT to get.
+      if (typeof value !== 'string' || value === '' || value.startsWith('--')) {
+        throw new Error('--target requires a path value (use --target <path> or --target=<path>)');
+      }
       argv.splice(i, 2);
       return value;
     }
     if (typeof arg === 'string' && arg.startsWith('--target=')) {
       const value = arg.slice('--target='.length);
+      if (value === '') {
+        throw new Error('--target requires a path value (use --target <path> or --target=<path>)');
+      }
       argv.splice(i, 1);
       return value;
     }
@@ -462,12 +471,19 @@ export function consumeTargetArg(argv = process.argv) {
  * with the boot. An explicit `--target <path>` on the helper's command line
  * overrides pointer resolution, which is what disambiguates a repo with
  * several live apps (the multi-app warning names this escape hatch, so it
- * has to actually work on every helper). Returns the manifest. Never
- * throws; on selection ambiguity it stays in the current directory (the
- * boot flow handles prompting).
+ * has to actually work on every helper). Returns the manifest. On selection
+ * ambiguity it stays in the current directory (the boot flow handles
+ * prompting); a malformed --target exits with an error instead of silently
+ * falling back to implicit selection, which could mutate the wrong app.
  */
 export function enterLiveRoot(cwd = process.cwd()) {
-  const targetPath = consumeTargetArg(process.argv);
+  let targetPath;
+  try {
+    targetPath = consumeTargetArg(process.argv);
+  } catch (err) {
+    console.error(`[impeccable live] ${err.message}`);
+    process.exit(1);
+  }
   const resolved = resolveLiveRoots(cwd, targetPath ? { targetPath } : {});
   if (!resolved.manifest) return null;
   const appRoot = resolved.manifest.appRoot;

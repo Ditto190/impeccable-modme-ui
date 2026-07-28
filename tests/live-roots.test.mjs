@@ -6,6 +6,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
+  consumeTargetArg,
   discoverAppCandidates,
   findGitRoot,
   resolveLiveRoots,
@@ -318,6 +319,45 @@ describe('review regressions: helper --target', () => {
       const out = JSON.parse(res.stdout.trim().split('\n').pop());
       assert.equal(realpathSync(out.cwd), join(repo, 'appB'));
       assert.equal(out.argvHasTarget, false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a --target with no usable value instead of falling back to implicit selection', () => {
+    for (const argv of [
+      ['node', 'live-complete.mjs', '--target'],
+      ['node', 'live-complete.mjs', '--target='],
+      ['node', 'live-complete.mjs', '--target', '--id'],
+    ]) {
+      assert.throws(() => consumeTargetArg([...argv]), /--target requires a path value/);
+    }
+    // Well-formed values still parse and are consumed.
+    const argv = ['node', 'live-complete.mjs', '--target', 'appB', '--id', 'x'];
+    assert.equal(consumeTargetArg(argv), 'appB');
+    assert.deepEqual(argv, ['node', 'live-complete.mjs', '--id', 'x']);
+  });
+
+  it('enterLiveRoot exits with an error on a valueless --target rather than picking an app', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-roots-target-bad-')));
+    try {
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      write(repo, 'appA/vite.config.js', 'export default {};');
+      const a = resolveRoots({ cwd: repo, targetPath: join(repo, 'appA/vite.config.js') }).manifest;
+      writeRootsManifest(a);
+      write(repo, 'appA/.impeccable/live/server.json', JSON.stringify({ pid: process.pid, port: 1, token: 't' }));
+
+      const res = spawnSync(process.execPath, [
+        '-e',
+        `import(${JSON.stringify(ROOTS_MODULE)}).then((m) => {
+          process.argv.push('--target');
+          m.enterLiveRoot();
+          console.log('reached:' + process.cwd());
+        });`,
+      ], { cwd: repo, encoding: 'utf-8' });
+      assert.notEqual(res.status, 0, 'malformed --target must not proceed');
+      assert.match(res.stderr, /--target requires a path value/);
+      assert.doesNotMatch(res.stdout, /reached:/, 'helper body must not run');
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
