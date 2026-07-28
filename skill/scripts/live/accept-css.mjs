@@ -247,8 +247,15 @@ export function reconcileCss(existingCss, variantCss) {
           }
           touched.add(key);
         } else {
-          existingNodes.push({ ...node });
-          index.set(key, existingNodes[existingNodes.length - 1]);
+          // New base rules go BEFORE the existing top-level media blocks:
+          // appended after them, an equal-specificity base rule wins the
+          // cascade over the stylesheet's earlier responsive overrides and
+          // silently weakens the mobile styles for any still-shared class.
+          const appendedNode = { ...node };
+          const firstAt = existingNodes.findIndex((n) => n.type === 'at' && n.children);
+          if (firstAt === -1) existingNodes.push(appendedNode);
+          else existingNodes.splice(firstAt, 0, appendedNode);
+          index.set(key, appendedNode);
           touched.add(key);
           appended++;
         }

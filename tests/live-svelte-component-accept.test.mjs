@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
   extractMatchingSourceCss,
+  removeSelectorsFromSvelteSource,
   findSvelteComponentManifest,
   inlineSvelteComponentAccept,
   mergeCssIntoSvelteSource,
@@ -228,5 +229,127 @@ describe('svelte component scaffold + accept pipeline', () => {
     assert.match(css, /\.pit-board/);
     assert.match(css, /\.stage/);
     assert.doesNotMatch(css, /\.footer/);
+  });
+});
+
+describe('review regressions: preview-truth supersession (the Pitch mangle)', () => {
+  const PITCH_SOURCE = `<script>
+  let verdicts = [
+    { label: 'True positive', detail: 'Fix it' },
+    { label: 'False positive', detail: 'Dismiss it' },
+  ];
+</script>
+
+<section class="pitch">
+  <div class="decisions">
+    {#each verdicts as verdict}
+      <div class="cell">
+        <h3>{verdict.label}</h3>
+        <p>{verdict.detail}</p>
+      </div>
+    {/each}
+  </div>
+</section>
+
+<style>
+  .pitch { padding: 40px; }
+  .decisions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .decisions > .cell { border: 1px solid #333; }
+  @media (max-width: 700px) {
+    .decisions { grid-template-columns: 1fr; }
+    .pitch { padding: 16px; }
+  }
+</style>
+`;
+
+  it('removes seeded rules the variant did not re-declare and orders new base rules before media blocks', () => {
+    const tmp2 = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-pitch-mangle-')));
+    try {
+      mkdirSync(join(tmp2, 'node_modules'), { recursive: true });
+      try {
+        symlinkSync(join(REPO_NODE_MODULES, 'svelte'), join(tmp2, 'node_modules', 'svelte'), 'dir');
+      } catch {
+        cpSync(join(REPO_NODE_MODULES, 'svelte'), join(tmp2, 'node_modules', 'svelte'), { recursive: true });
+      }
+      write(tmp2, 'package.json', JSON.stringify({ name: 'app' }));
+      write(tmp2, 'src/lib/Pitch.svelte', PITCH_SOURCE);
+
+      // Picked element: the .decisions block (lines 10-17, 1-indexed).
+      const lines = PITCH_SOURCE.split('\n');
+      const startLine = lines.findIndex((l) => l.includes('class="decisions"')) + 1;
+      const endLine = lines.findIndex((l, i) => i >= startLine && l.trim() === '</div>' && lines[i + 1]?.includes('</section>')) + 1;
+      const originalLines = lines.slice(startLine - 1, endLine);
+
+      const session = scaffoldSvelteComponentSession({
+        id: 'pitchm1',
+        count: 1,
+        sourceFile: 'src/lib/Pitch.svelte',
+        sourceStartLine: startLine,
+        sourceEndLine: endLine,
+        originalLines,
+        cwd: tmp2,
+      });
+      assert.equal(session.fallback, undefined, session.reason);
+      // Seeded selectors recorded for accept-time supersession.
+      assert.equal(session.manifest.seededSelectors.includes('.decisions'), true);
+
+      // The agent's variant: a NEW class, no re-declaration of .decisions.
+      write(tmp2, join(session.componentDir, 'v1.svelte'), `<script>
+  let { verdicts = [] } = $props();
+</script>
+
+<div class="disposition-board">
+  {#each verdicts as verdict}
+    <div class="lane">
+      <h3>{verdict.label}</h3>
+      <p>{verdict.detail}</p>
+    </div>
+  {/each}
+</div>
+
+<style>
+  .disposition-board { display: flex; flex-direction: column; gap: 8px; }
+  .disposition-board .lane { border-left: 3px solid #7df; padding: 8px 12px; }
+  @media (max-width: 700px) {
+    .disposition-board .lane { padding: 6px 8px; }
+  }
+</style>
+`);
+      const manifest = findSvelteComponentManifest('pitchm1', tmp2);
+      const result = inlineSvelteComponentAccept(manifest, 1, null, tmp2);
+      assert.equal(result.handled, true, result.error);
+      const out = readFileSync(join(tmp2, 'src/lib/Pitch.svelte'), 'utf-8');
+
+      // The superseded grid rules are GONE: they never applied in the
+      // preview the user approved, and the root keeps the old class.
+      assert.doesNotMatch(out, /grid-template-columns: repeat\(3, 1fr\)/);
+      assert.doesNotMatch(out, /\.decisions > \.cell/);
+      assert.equal(result.css.superseded.includes('.decisions'), true);
+      // The untouched sibling rule survives.
+      assert.match(out, /\.pitch \{ padding: 40px; \}/);
+      // Source media block survives for the surviving class...
+      assert.match(out, /\.pitch \{ padding: 16px; \}/);
+      // ...and no longer carries the superseded selector.
+      assert.doesNotMatch(out, /\.decisions \{ grid-template-columns: 1fr; \}/);
+      // New base rules sit BEFORE the source's @media block (cascade order).
+      const baseIdx = out.indexOf('.disposition-board {');
+      const mediaIdx = out.indexOf('@media (max-width: 700px)');
+      assert.equal(baseIdx > -1 && mediaIdx > -1 && baseIdx < mediaIdx, true,
+        `expected base rules before media, got base@${baseIdx} media@${mediaIdx}`);
+      assert.equal(result.verify.clean, true, JSON.stringify(result.verify.findings));
+    } finally {
+      rmSync(tmp2, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps seeded rules the variant re-declares', () => {
+    const { text, removed } = removeSelectorsFromSvelteSource('<div class="a">x</div>\n<style>\n  .a { color: red; }\n  .b { color: blue; }\n</style>', new Set(['.b']));
+    assert.match(text, /\.a \{ color: red; \}/);
+    assert.doesNotMatch(text, /color: blue/);
+    assert.deepEqual(removed, ['.b']);
   });
 });

@@ -211,6 +211,12 @@ export function scaffoldSvelteComponentSession({
     safeReadSource(path.resolve(cwd, sourceFile)),
     originalMarkup,
   );
+  // The preview compiles in isolation, so NONE of these source rules applied
+  // to what the user approved. Accept enforces that preview truth: any of
+  // them the variant does not re-declare is superseded and removed, instead
+  // of re-attaching to the accepted markup through kept class names (the
+  // ".decisions grid grabs the new board" failure).
+  const seededSelectors = [...collectAllSelectors(seededCss)];
 
   const manifest = {
     id,
@@ -222,6 +228,7 @@ export function scaffoldSvelteComponentSession({
     count,
     propContract: contract,
     originalMarkup,
+    seededSelectors,
     componentDir: path.relative(cwd, dir).split(path.sep).join('/'),
     // Absolute paths let the browser fall back to /@fs/ imports when the dev
     // server's base or root makes root-relative URLs miss, and probe whether
@@ -247,6 +254,11 @@ export function scaffoldSvelteComponentSession({
     manifestFile: path.relative(cwd, path.join(dir, 'manifest.json')).split(path.sep).join('/'),
     componentDir: manifest.componentDir,
     propContract: contract,
+    // Inlined so the generate event's scaffold payload carries the stub
+    // shape; the agent edits vN.svelte in place instead of spending reads on
+    // the manifest and stub files (or deleting and recreating them).
+    stubMarkup: analysis.markupWithProps,
+    seededCss,
   };
 }
 
@@ -682,7 +694,7 @@ export function inlineSvelteComponentAccept(manifest, variantNum, paramValues = 
     variantCss = sanitizeAcceptedSvelteCss(cssLines, variantNum, paramValues, rootTag).join('\n');
   }
   const bakedCss = bakeParamValues(variantCss, declaredParams, paramValues || {});
-  const cssStats = { replaced: 0, appended: 0, pruned: [] };
+  const cssStats = { replaced: 0, appended: 0, pruned: [], superseded: [] };
   if (bakedCss.trim()) {
     const merged = mergeCssIntoSvelteSource(newLines.join('\n'), bakedCss);
     newLines = merged.text.split('\n');
@@ -691,6 +703,22 @@ export function inlineSvelteComponentAccept(manifest, variantNum, paramValues = 
   }
 
   let finalText = newLines.join('\n');
+
+  // Preview truth: the detached preview never applied the source rules that
+  // styled the replaced selection, so the user approved a design without
+  // them. Any seeded selector the variant did not re-declare is superseded;
+  // left in place it re-attaches through kept class names (the accepted root
+  // keeps its original classes) and re-layouts markup it no longer owns.
+  const incomingSelectors = collectAllSelectors(bakedCss);
+  const superseded = (manifest.seededSelectors || [])
+    .map((selector) => normalizeSelector(selector))
+    .filter((selector) => selector && !incomingSelectors.has(selector));
+  if (superseded.length > 0) {
+    const scrubbed = removeSelectorsFromSvelteSource(finalText, new Set(superseded));
+    finalText = scrubbed.text;
+    cssStats.superseded = scrubbed.removed;
+  }
+
   if (compiler) {
     const pruned = pruneUnusedSelectors(finalText, compiler.compile, { skipSelectors: preUnused });
     finalText = pruned.source;
@@ -698,10 +726,13 @@ export function inlineSvelteComponentAccept(manifest, variantNum, paramValues = 
   }
 
   // Postcondition: no selector from the user's pre-accept CSS may vanish
-  // unless the compiler-driven prune deliberately removed it. This turns any
-  // parser or reconciler defect into a loud refusal instead of silent damage
-  // to a hand-written style block.
-  const lostSelectors = findLostSelectors(sourceContent, finalText, cssStats.pruned);
+  // unless the compiler-driven prune or the preview-truth supersession
+  // deliberately removed it. This turns any parser or reconciler defect into
+  // a loud refusal instead of silent damage to a hand-written style block.
+  const lostSelectors = findLostSelectors(sourceContent, finalText, [
+    ...cssStats.pruned,
+    ...cssStats.superseded,
+  ]);
   if (lostSelectors.length > 0) {
     return {
       handled: false,
@@ -744,6 +775,50 @@ export function reindentPreservingStructure(lines, indent) {
 function styleBlockText(sourceText) {
   const match = String(sourceText || '').match(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/i);
   return match ? match[1] : '';
+}
+
+/**
+ * Remove every rule whose (normalized) selector list is fully contained in
+ * `selectors` from the component's style block, at any at-rule nesting depth.
+ * Rules that mix doomed and surviving selectors keep the survivors.
+ */
+export function removeSelectorsFromSvelteSource(sourceText, selectors) {
+  const text = String(sourceText || '');
+  const styleRe = /<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi;
+  let lastMatch = null;
+  let m;
+  while ((m = styleRe.exec(text))) lastMatch = m;
+  if (!lastMatch) return { text, removed: [] };
+
+  const removed = [];
+  const transform = (nodes) => {
+    const kept = [];
+    for (const node of nodes) {
+      if (node.type === 'rule') {
+        const survivors = [];
+        for (const selector of splitSelectorList(node.prelude)) {
+          if (selectors.has(normalizeSelector(selector))) removed.push(normalizeSelector(selector));
+          else survivors.push(selector);
+        }
+        if (survivors.length > 0) kept.push({ ...node, prelude: survivors.join(', ') });
+      } else if (node.type === 'at' && node.children) {
+        const children = transform(node.children);
+        if (children.length > 0) kept.push({ ...node, children });
+      } else {
+        kept.push(node);
+      }
+    }
+    return kept;
+  };
+
+  const nodes = transform(parseStylesheet(lastMatch[1]));
+  if (removed.length === 0) return { text, removed };
+  const openTag = lastMatch[0].slice(0, lastMatch[0].indexOf('>') + 1);
+  const rebuilt = `${openTag}\n${serializeNodes(nodes).split('\n').map((l) => (l.trim() ? '  ' + l : '')).join('\n')}\n</style>`;
+  return {
+    text: text.slice(0, lastMatch.index) + rebuilt + text.slice(lastMatch.index + lastMatch[0].length),
+    removed,
+  };
 }
 
 export function findLostSelectors(beforeSource, afterSource, prunedSelectors = []) {

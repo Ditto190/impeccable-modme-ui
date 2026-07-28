@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveTargetSelection } from './context.mjs';
 import { resolveFiles } from './live-inject.mjs';
 import { readLiveServerInfo } from './lib/impeccable-paths.mjs';
+import { resolveSurfaceBrief } from './lib/surface-briefs.mjs';
 import { resolveLiveTarget } from './live-target.mjs';
 import { resolveRoots, writeRootsManifest } from './live/roots.mjs';
 
@@ -161,7 +162,20 @@ The agent should then:
   const resolvedFiles = resolveFiles(activeCwd, checkResult.config);
   const drift = scanForDrift(activeCwd, resolvedFiles, checkResult.config);
 
-  // 5. Emit everything the agent needs
+  // 5. Emit everything the agent needs. The surface brief rides along so the
+  //    agent does not spend three more tool calls (and a --help miss) on
+  //    surface-brief.mjs before the first poll.
+  let surfaceBrief = null;
+  let surfaceBriefPath = null;
+  try {
+    const resolvedBrief = resolveSurfaceBrief(roots.appRoot, liveTarget.absoluteTargetPath || null);
+    if (resolvedBrief?.brief) {
+      surfaceBrief = resolvedBrief.brief.text ?? safeRead(resolvedBrief.brief.path);
+      surfaceBriefPath = resolvedBrief.brief.path
+        ? path.relative(liveTarget.originalCwd, resolvedBrief.brief.path)
+        : null;
+    }
+  } catch { /* briefs are optional context */ }
   console.log(JSON.stringify({
     ok: true,
     serverPort: serverInfo.port,
@@ -179,6 +193,9 @@ The agent should then:
     hasDesign: !!design,
     design,
     designPath: relOrNull(liveTarget.originalCwd, roots.designPath),
+    hasSurfaceBrief: !!surfaceBrief,
+    surfaceBrief,
+    surfaceBriefPath,
   }, null, 2));
 }
 

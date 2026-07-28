@@ -436,6 +436,7 @@ The agent should insert variant HTML at insertLine.`);
     replaceEndLine: deferredWrapper ? deferredWrapper.replaceEndLine : undefined,
     componentDir: componentSession?.componentDir,
     propContract: componentSession?.propContract,
+    componentStubMarkup: componentSession?.stubMarkup,
     sourceStartLine: componentPreviewActive ? startLine + 1 : undefined,
     sourceEndLine: componentPreviewActive ? endLine + 1 : undefined,
     startLine: outputStartLine,       // 1-indexed for the agent
