@@ -512,6 +512,32 @@ for (const { name, fixture } of fixtures) {
           );
         };
         await assertVisibleVariantStyle(visible);
+        // Optional fixture hook: assert attribute/text values inside the
+        // MOUNTED variant DOM. Component previews hydrate collection items
+        // from the rendered page (text slots and attribute slots); a probe
+        // here catches a preview that mounts but with empty hydrated values,
+        // which every other assertion (style, counter, accept) misses.
+        if (Array.isArray(fixture.runtime.mountedDomProbe)) {
+          for (const probe of fixture.runtime.mountedDomProbe) {
+            const actual = await evaluatePageWithTimeout(
+              page,
+              ({ sel, attr }) => {
+                const query = window.__impeccableLiveQuery || ((s) => document.querySelector(s));
+                const el = query(sel) || document.querySelector(sel);
+                if (!el) return null;
+                return attr ? el.getAttribute(attr) : (el.textContent || '').trim();
+              },
+              { sel: probe.selector, attr: probe.attr || null },
+              5_000,
+              'mounted DOM probe',
+            );
+            assert.equal(
+              actual,
+              probe.expect,
+              `mounted variant DOM: ${probe.selector}${probe.attr ? ` [${probe.attr}]` : ' text'}`,
+            );
+          }
+        }
         for (const targetVariant of cycleSequence) {
           t.diagnostic(`Cycling to variant ${targetVariant}`);
           visible = await cycleToVariant(page, targetVariant, expectedCount, {

@@ -8,9 +8,9 @@
   });
 
   const CATALOG = [
-    { name: 'Design snack', amount: '$12' },
-    { name: 'Studio coffee', amount: '$8' },
-    { name: 'Type license', amount: '$44' },
+    { name: 'Design snack', amount: '$12', doc: '/receipts/snack' },
+    { name: 'Studio coffee', amount: '$8', doc: '/receipts/coffee' },
+    { name: 'Type license', amount: '$44', doc: '/receipts/type' },
   ];
 
   function addExpense() {
@@ -40,6 +40,7 @@
           <li class="expense-row" data-testid="expense-row" data-index={i}>
             <strong class="expense-name">{expense.name}</strong>
             <span class="expense-amount">{expense.amount}</span>
+            <a class="expense-doc" href={expense.doc}>Beleg</a>
           </li>
         {/each}
       </ul>

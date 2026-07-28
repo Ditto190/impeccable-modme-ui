@@ -5446,6 +5446,16 @@
           const texts = collectVisibleTexts(itemEl).filter((t) => !statics.has(t));
           const item = {};
           slots.forEach((slot, i) => { item[slot.key] = texts[i] != null ? texts[i] : ''; });
+          // Attribute-bound values (href={link.href}) hydrate from the
+          // rendered attribute on the live item element or a descendant.
+          for (const slot of entry.item.attrSlots || []) {
+            if (item[slot.key] != null || !slot.tag) continue;
+            const sel = slot.tag + (slot.classes || []).map((c) => '.' + cssEscapeIdent(c)).join('');
+            let el = null;
+            try { el = itemEl.matches(sel) ? itemEl : itemEl.querySelector(sel); } catch { el = null; }
+            const value = el ? el.getAttribute(slot.attr) : null;
+            if (value != null) item[slot.key] = value;
+          }
           // Keyed each: the key field is never rendered, so hydrate it with a
           // unique per-index value or Svelte throws each_key_duplicate.
           if (entry.item.keyField && item[entry.item.keyField] == null) {

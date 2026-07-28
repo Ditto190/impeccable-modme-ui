@@ -434,6 +434,12 @@ function analyzeAttributes(node, analysis, scopes) {
         // Unlike ClassDirective, a style directive stores its value in
         // attribute shape: `true` for the shorthand, else an array of parts.
         const parts = attr.value === true ? [] : (Array.isArray(attr.value) ? attr.value : [attr.value]);
+        for (const part of parts) {
+          if (part?.type === 'ExpressionTag'
+              && failOnMixedExpression(part.expression, scopes, analysis, analysis.source)) {
+            return;
+          }
+        }
         const dynamic = parts.some((part) => part?.type === 'ExpressionTag' && isFree(part.expression, scopes));
         const shorthandFree = attr.value === true && isFree({ type: 'Identifier', name: attr.name }, scopes);
         if (dynamic || shorthandFree) {
@@ -485,9 +491,6 @@ function analyzeAttributes(node, analysis, scopes) {
 function describeEachItem(node, source) {
   const body = node.body;
   const rootEl = (body?.nodes || []).find((n) => n.type === 'RegularElement');
-  const bound = new Set();
-  if (node.context) collectPatternNames(node.context, bound);
-  if (node.index) bound.add(node.index);
 
   const textSlots = [];
   const staticTexts = [];
@@ -508,34 +511,162 @@ function describeEachItem(node, source) {
     }
   };
   collectStatics(body);
-  const walkForSlots = (fragment, scopes) => {
+  const attrSlots = [];
+  // The hydration item is a SHALLOW object whose string fields are the exact
+  // property names the markup accesses, filled from the rendered page. That
+  // model supports one item access per slot, optionally wrapped in a global
+  // transform ({Math.round(r.score)} hydrates `score`). Shapes it cannot
+  // represent split two ways: CRASHY ones would throw at mount time against a
+  // shallow item (deep paths like r.meta.label, method calls like r.format())
+  // and force the source-preview fallback; LOSSY ones render wrong but safe
+  // (bare {r}, multi-access expressions that would double their text) and
+  // also fall back in text position, where the damage is visible.
+  const boundAs = (name, scopeInfos) => {
+    for (let i = scopeInfos.length - 1; i >= 0; i--) {
+      const info = scopeInfos[i];
+      if (info.indexName === name) return 'index';
+      if (info.itemName === name) return 'item';
+      if (info.names.has(name)) return 'field';
+    }
+    return null;
+  };
+  const slotKeysOf = (expression, scopeInfos) => {
+    const keys = new Set();
+    let crashy = false;
+    let lossy = false;
+    let touches = false;
+    const visit = (node, ctx) => {
+      if (!node || typeof node !== 'object' || crashy) return;
+      if (Array.isArray(node)) {
+        for (const item of node) visit(item, {});
+        return;
+      }
+      switch (node.type) {
+        case 'Identifier': {
+          const kind = boundAs(node.name, scopeInfos);
+          if (!kind) return;
+          touches = true;
+          if (kind === 'index') return; // the runtime each provides it
+          if (kind === 'item') { lossy = true; return; } // bare item reference
+          if (ctx.callee) { crashy = true; return; } // field() on a hydrated string
+          keys.add(node.name); // destructured context field
+          return;
+        }
+        case 'MemberExpression': {
+          if (
+            !node.computed
+            && node.object?.type === 'Identifier'
+            && boundAs(node.object.name, scopeInfos) === 'item'
+            && node.property?.type === 'Identifier'
+          ) {
+            touches = true;
+            // item.a.b or item.method(): a shallow string field throws here.
+            if (ctx.memberObject || ctx.callee) { crashy = true; return; }
+            keys.add(node.property.name);
+            return;
+          }
+          visit(node.object, { memberObject: true });
+          if (node.computed) visit(node.property, {});
+          return;
+        }
+        case 'CallExpression':
+          visit(node.callee, { callee: true });
+          for (const arg of node.arguments || []) visit(arg, {});
+          return;
+        case 'ArrowFunctionExpression':
+        case 'FunctionExpression': {
+          // Closures cannot hydrate; only lossy when they capture the item.
+          const roots = collectRootIdentifiers(node);
+          if ([...roots].some((name) => boundAs(name, scopeInfos))) { touches = true; lossy = true; }
+          return;
+        }
+        case 'Property':
+          if (node.computed) visit(node.key, {});
+          visit(node.value, {});
+          return;
+        default: {
+          for (const key of Object.keys(node)) {
+            if (key === 'type' || key === 'start' || key === 'end' || key === 'loc' || key === 'range' || key === 'parent') continue;
+            visit(node[key], {});
+          }
+        }
+      }
+    };
+    visit(expression, {});
+    if (crashy) return { crashy: true };
+    if (lossy || keys.size > 1) return { lossy: true };
+    if (!touches || keys.size === 0) return { skip: true };
+    return { key: [...keys][0] };
+  };
+  const staticClassesOf = (el) => {
+    const classes = [];
+    for (const attr of el?.attributes || []) {
+      if (attr.type === 'Attribute' && attr.name === 'class' && Array.isArray(attr.value)) {
+        for (const part of attr.value) {
+          if (part.type === 'Text') classes.push(...part.data.split(/\s+/).filter(Boolean));
+        }
+      }
+    }
+    return classes;
+  };
+  const scopeInfoOf = (eachNode) => {
+    const names = new Set();
+    if (eachNode.context) collectPatternNames(eachNode.context, names);
+    return {
+      names,
+      itemName: eachNode.context?.type === 'Identifier' ? eachNode.context.name : null,
+      indexName: eachNode.index || null,
+    };
+  };
+  const walkForSlots = (fragment, scopeInfos) => {
     for (const child of fragment?.nodes || []) {
       if (child.type === 'ExpressionTag') {
-        const roots = collectRootIdentifiers(child.expression);
-        const referencesItem = [...roots].some((name) => scopes.some((s) => s.has(name)));
-        if (referencesItem) {
-          textSlots.push({
-            key: derivePropName(exprText(source, child.expression)),
-            expr: exprText(source, child.expression),
-          });
+        const slot = slotKeysOf(child.expression, scopeInfos);
+        if (slot.crashy || slot.lossy) { nestedUnsupported = true; continue; }
+        if (slot.skip) continue;
+        textSlots.push({ key: slot.key, expr: exprText(source, child.expression) });
+      } else if (child.type === 'RegularElement' || child.type === 'SvelteElement') {
+        // Bound values in ATTRIBUTES (href={link.href}, src={item.img}) are
+        // part of the item too: the browser reads the rendered attribute off
+        // the live element, so the preview does not mount with empty links.
+        // Only a single-expression attribute hydrates exactly; a mixed value
+        // ("card {r.status}") stays unhydrated because the rendered attribute
+        // is not separable into its parts, which was the prior behavior.
+        for (const attr of child.attributes || []) {
+          if (attr.type !== 'Attribute' || attr.value === true) continue;
+          if (HANDLER_ATTR_RE.test(attr.name)) continue; // functions cannot hydrate
+          const parts = Array.isArray(attr.value) ? attr.value : [attr.value];
+          const exprParts = parts.filter((part) => part?.type === 'ExpressionTag');
+          for (const part of exprParts) {
+            const slot = slotKeysOf(part.expression, scopeInfos);
+            if (slot.crashy) { nestedUnsupported = true; continue; }
+            if (slot.skip || slot.lossy) continue;
+            if (parts.length !== 1) continue; // mixed static+dynamic value
+            attrSlots.push({
+              key: slot.key,
+              expr: exprText(source, part.expression),
+              attr: attr.name,
+              tag: child.name || null,
+              classes: staticClassesOf(child),
+            });
+          }
         }
+        walkForSlots(child.fragment, scopeInfos);
+        continue;
       } else if (child.type === 'EachBlock') {
         const roots = collectRootIdentifiers(child.expression);
-        const boundNested = [...roots].some((name) => scopes.some((s) => s.has(name)));
+        const boundNested = [...roots].some((name) => boundAs(name, scopeInfos));
         if (boundNested) nestedUnsupported = true; // nested per-item arrays: no hydration plan yet
-        const innerBound = new Set();
-        if (child.context) collectPatternNames(child.context, innerBound);
-        if (child.index) innerBound.add(child.index);
-        walkForSlots(child.body, [...scopes, innerBound]);
+        walkForSlots(child.body, [...scopeInfos, scopeInfoOf(child)]);
       } else if (child.type === 'IfBlock') {
-        walkForSlots(child.consequent, scopes);
-        if (child.alternate) walkForSlots(child.alternate, scopes);
+        walkForSlots(child.consequent, scopeInfos);
+        if (child.alternate) walkForSlots(child.alternate, scopeInfos);
       } else if (child.fragment) {
-        walkForSlots(child.fragment, scopes);
+        walkForSlots(child.fragment, scopeInfos);
       }
     }
   };
-  walkForSlots(body, [bound]);
+  walkForSlots(body, [scopeInfoOf(node)]);
 
   const staticClasses = [];
   for (const attr of rootEl?.attributes || []) {
@@ -550,6 +681,7 @@ function describeEachItem(node, source) {
     rootTag: rootEl?.name || null,
     rootClasses: staticClasses,
     textSlots,
+    attrSlots,
     staticTexts,
     nestedUnsupported,
   };
@@ -635,7 +767,7 @@ export function analyzeSvelteMarkup(markup, parse) {
   }
   for (const entry of analysis.contract) {
     if (entry.kind === 'collection' && entry.item?.nestedUnsupported) {
-      return { ok: false, reason: 'nested per-item each blocks require source-preview mode' };
+      return { ok: false, reason: 'per-item content (nested blocks or expressions) this preview cannot hydrate requires source-preview mode' };
     }
   }
 

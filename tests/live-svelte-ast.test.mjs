@@ -258,3 +258,39 @@ describe('review regressions: mixed and global identifiers', () => {
     assert.equal(topRes.contract.length, 0);
   });
 });
+
+describe('review regressions: attribute slots and hydration honesty', () => {
+  it('records attribute-bound values as attr slots', () => {
+    const src = `<nav>{#each links as link}<a class="nav-link" href={link.href}>{link.text}</a>{/each}</nav>`;
+    const res = analyzeSvelteMarkup(src, parse);
+    assert.equal(res.ok, true, res.reason);
+    const item = res.contract.find((c) => c.kind === 'collection').item;
+    assert.deepEqual(item.textSlots.map((s) => s.key), ['text']);
+    assert.deepEqual(item.attrSlots, [{ key: 'href', expr: 'link.href', attr: 'href', tag: 'a', classes: ['nav-link'] }]);
+  });
+
+  it('falls back for per-item expressions the shallow item cannot represent', () => {
+    for (const src of [
+      `<ul>{#each rows as r}<li>{r.meta.label}</li>{/each}</ul>`,
+      `<ul>{#each rows as r}<li>{r.format()}</li>{/each}</ul>`,
+      `<ul>{#each rows as r}<li>{r}</li>{/each}</ul>`,
+    ]) {
+      const res = analyzeSvelteMarkup(src, parse);
+      assert.equal(res.ok, false, `expected fallback for ${src}`);
+      assert.match(res.reason, /cannot hydrate/);
+    }
+  });
+
+  it('index-only expressions need no slot', () => {
+    const res = analyzeSvelteMarkup(`<ul>{#each rows as r, i}<li>{i}: {r.name}</li>{/each}</ul>`, parse);
+    assert.equal(res.ok, true, res.reason);
+    const item = res.contract.find((c) => c.kind === 'collection').item;
+    assert.deepEqual(item.textSlots.map((s) => s.key), ['name']);
+  });
+
+  it('style directives mixing loop and outer names fall back', () => {
+    const res = analyzeSvelteMarkup(`<ul>{#each rows as r}<li style:width={base + r.pct}>x</li>{/each}</ul>`, parse);
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /mixing loop and outer identifiers/);
+  });
+});
