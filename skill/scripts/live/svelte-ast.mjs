@@ -177,15 +177,50 @@ function exprText(source, node) {
   return source.slice(node.start, node.end);
 }
 
-function isFree(node, scopes) {
+// Identifiers that resolve in ANY module scope. They are neither hydratable
+// props nor evidence of route coupling, so they count as neither free nor
+// bound: `{Math.round(x)}` must not mint a prop named `round`, and
+// `{fmt(stage.label)}` must not pass as global-only.
+const GLOBAL_IDENTIFIERS = new Set([
+  'Math', 'JSON', 'Date', 'Intl', 'Number', 'String', 'Boolean', 'Array',
+  'Object', 'Map', 'Set', 'Promise', 'RegExp', 'NaN', 'Infinity', 'undefined',
+  'isNaN', 'isFinite', 'parseInt', 'parseFloat', 'encodeURIComponent',
+  'decodeURIComponent', 'console', 'window', 'document', 'navigator',
+  'location', 'structuredClone', 'crypto',
+]);
+
+function classifyRoots(node, scopes) {
   const roots = collectRootIdentifiers(node);
-  if (roots.size === 0) return false; // literal-only: nothing to hydrate
+  let bound = 0;
+  let free = 0;
   for (const name of roots) {
-    for (const scope of scopes) {
-      if (scope.has(name)) return false;
-    }
+    if (GLOBAL_IDENTIFIERS.has(name)) continue;
+    if (scopes.some((scope) => scope.has(name))) bound++;
+    else free++;
   }
-  return true;
+  return { bound, free };
+}
+
+function isFree(node, scopes) {
+  const { bound, free } = classifyRoots(node, scopes);
+  return free > 0 && bound === 0;
+}
+
+/**
+ * An expression mixing loop-bound and outer free identifiers (e.g.
+ * `{fmt(stage.label)}` where `fmt` lives in the route script) can neither
+ * become a prop (the bound part varies per item) nor survive detachment
+ * verbatim (the free name is undeclared in the preview and throws at mount,
+ * past the compile gate, because globals make it legal to the compiler).
+ * Source-preview mode is the only correct home for it.
+ */
+function failOnMixedExpression(node, scopes, analysis, source) {
+  const { bound, free } = classifyRoots(node, scopes);
+  if (bound > 0 && free > 0) {
+    analysis.fail(`expression mixing loop and outer identifiers ({${exprText(source, node).slice(0, 60)}}) requires source-preview mode`);
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -214,6 +249,7 @@ function analyzeNode(node, analysis, scopes) {
     case 'Comment':
       return;
     case 'ExpressionTag': {
+      if (failOnMixedExpression(node.expression, scopes, analysis, analysis.source)) return;
       if (isFree(node.expression, scopes)) {
         const text = exprText(analysis.source, node.expression);
         const entry = analysis.propFor(text, 'text');
@@ -223,6 +259,7 @@ function analyzeNode(node, analysis, scopes) {
       return;
     }
     case 'HtmlTag': {
+      if (failOnMixedExpression(node.expression, scopes, analysis, analysis.source)) return;
       if (isFree(node.expression, scopes)) {
         const text = exprText(analysis.source, node.expression);
         const entry = analysis.propFor(text, 'raw');
@@ -235,6 +272,7 @@ function analyzeNode(node, analysis, scopes) {
       // travels with the markup and stays valid only if its inputs do.
       if (node.declaration) {
         for (const decl of node.declaration.declarations || []) {
+          if (decl.init && failOnMixedExpression(decl.init, scopes, analysis, analysis.source)) return;
           if (decl.init && isFree(decl.init, scopes)) {
             const text = exprText(analysis.source, decl.init);
             const entry = analysis.propFor(text, 'text');
@@ -245,6 +283,7 @@ function analyzeNode(node, analysis, scopes) {
       return;
     }
     case 'EachBlock': {
+      if (failOnMixedExpression(node.expression, scopes, analysis, analysis.source)) return;
       if (isFree(node.expression, scopes)) {
         const text = exprText(analysis.source, node.expression);
         const item = describeEachItem(node, analysis.source);
@@ -282,6 +321,7 @@ function analyzeNode(node, analysis, scopes) {
       return;
     }
     case 'IfBlock': {
+      if (failOnMixedExpression(node.test, scopes, analysis, analysis.source)) return;
       if (isFree(node.test, scopes)) {
         const text = exprText(analysis.source, node.test);
         // The browser hydrates a free condition from what the live page
@@ -297,6 +337,7 @@ function analyzeNode(node, analysis, scopes) {
       return;
     }
     case 'KeyBlock': {
+      if (failOnMixedExpression(node.expression, scopes, analysis, analysis.source)) return;
       if (isFree(node.expression, scopes)) {
         const text = exprText(analysis.source, node.expression);
         const entry = analysis.propFor(text, 'text');
@@ -366,6 +407,7 @@ function analyzeAttributes(node, analysis, scopes) {
         const parts = Array.isArray(attr.value) ? attr.value : [attr.value];
         for (const part of parts) {
           if (!part || part.type !== 'ExpressionTag') continue;
+          if (failOnMixedExpression(part.expression, scopes, analysis, analysis.source)) return;
           if (!isFree(part.expression, scopes)) continue;
           const text = exprText(analysis.source, part.expression);
           const kind = HANDLER_ATTR_RE.test(attr.name) ? 'handler' : 'text';
@@ -376,6 +418,7 @@ function analyzeAttributes(node, analysis, scopes) {
       }
       case 'ClassDirective': {
         const expr = attr.expression;
+        if (expr && failOnMixedExpression(expr, scopes, analysis, analysis.source)) return;
         if (expr && isFree(expr, scopes)) {
           const text = exprText(analysis.source, expr);
           // The directive's class name is literal, so the live DOM answers
@@ -417,6 +460,7 @@ function analyzeAttributes(node, analysis, scopes) {
       case 'OnDirective': {
         // Legacy on:click syntax; treat like handler attributes.
         const expr = attr.expression;
+        if (expr && failOnMixedExpression(expr, scopes, analysis, analysis.source)) return;
         if (expr && isFree(expr, scopes)) {
           const text = exprText(analysis.source, expr);
           const entry = analysis.propFor(text, 'handler');

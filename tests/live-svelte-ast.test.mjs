@@ -236,3 +236,25 @@ describe('review regressions: directives', () => {
     assert.equal(res.ok, true, res.reason);
   });
 });
+
+describe('review regressions: mixed and global identifiers', () => {
+  it('falls back for expressions mixing loop bindings with outer names', () => {
+    const src = `<ul>{#each rows as r}<li>{fmt(r.label)}</li>{/each}</ul>`;
+    const res = analyzeSvelteMarkup(src, parse);
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /mixing loop and outer identifiers/);
+  });
+
+  it('treats known globals as neither free nor bound', () => {
+    // Global + bound: stays verbatim, no prop, no fallback.
+    const okRes = analyzeSvelteMarkup(`<ul>{#each rows as r}<li>{Math.round(r.score)}</li>{/each}</ul>`, parse);
+    assert.equal(okRes.ok, true, okRes.reason);
+    assert.equal(okRes.contract.some((c) => c.prop === 'round'), false);
+    assert.match(okRes.markupWithProps, /\{Math\.round\(r\.score\)\}/);
+
+    // Pure-global expression at top level: no prop minted either.
+    const topRes = analyzeSvelteMarkup(`<p>{JSON.stringify(navigator.language)}</p>`, parse);
+    assert.equal(topRes.ok, true, topRes.reason);
+    assert.equal(topRes.contract.length, 0);
+  });
+});
