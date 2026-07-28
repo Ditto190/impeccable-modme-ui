@@ -523,6 +523,11 @@ function page() {
   .pip figcaption { position: absolute; left: 0; right: 0; bottom: 0; font-family: var(--ks-mono); font-size: .5rem; letter-spacing: .2em; text-transform: uppercase; color: var(--ks-text); text-align: center; padding: 3px 0 4px; background: oklch(7% 0.006 95 / 0.72); backdrop-filter: blur(3px); }
   .pip:hover { left: 0; bottom: 0; width: 100%; height: 100%; border-radius: 0; z-index: 3; }
   .sketch-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--ks-mono); font-size: .66rem; letter-spacing: .22em; text-transform: uppercase; color: var(--ks-text-faint); }
+  /* A stand-in is honest about being one: dimmed, labeled, and replaced by
+     the real sketch whenever it lands. */
+  .media.stand-in img.sketch { filter: brightness(.72) saturate(.85); }
+  .media.stand-in .pip { display: none; }
+  .stand-in-label { position: absolute; z-index: 2; left: 0; right: 0; bottom: 0; margin: 0; font-family: var(--ks-mono); font-size: .56rem; letter-spacing: .2em; text-transform: uppercase; color: var(--ks-text); text-align: center; padding: 4px 0 5px; background: oklch(7% 0.006 95 / 0.78); backdrop-filter: blur(3px); }
   .media.sketching { position: relative; }
   .media.sketching .shimmer { position: absolute; inset: 0; }
   .media img.sketch { position: relative; z-index: 1; }
@@ -640,8 +645,13 @@ function page() {
   }
 
   // Sketches stream in after the deal: poll each slot until the file lands,
-  // then swap the shimmer for the image. On a long timeout, promote the
-  // inspiration to full bleed when there is one, otherwise fold to text-only.
+  // then swap the shimmer for the image. Generation is genuinely slow and a
+  // sequential batch puts the last card many minutes out, so patience is the
+  // default: a slot only shows its inspiration as a stand-in when it has
+  // waited four minutes AND nothing has landed anywhere for four minutes, the
+  // stand-in is labeled as such, and polling continues so the real sketch
+  // still swaps in whenever it arrives. Progress anywhere resets patience.
+  const landTracker = { last: Date.now() };
   document.querySelectorAll('.media.sketching').forEach(m => {
     const url = m.dataset.sketch;
     const img = m.querySelector('img.sketch');
@@ -649,19 +659,26 @@ function page() {
     const started = Date.now();
     // A live elapsed count is the difference between "working" and "frozen".
     const tick = setInterval(() => { if (note) note.textContent = 'sketching · ' + Math.round((Date.now() - started) / 1000) + 's'; }, 1000);
-    const settle = () => { clearInterval(tick); m.classList.remove('sketching'); m.querySelector('.shimmer')?.remove(); };
+    const settle = () => { clearInterval(tick); m.classList.remove('sketching', 'stand-in'); m.querySelector('.shimmer')?.remove(); m.querySelector('.stand-in-label')?.remove(); };
+    const standIn = () => {
+      const pip = m.querySelector('.pip img');
+      if (!pip || m.classList.contains('stand-in')) return;
+      img.src = pip.getAttribute('src'); img.hidden = false;
+      m.classList.add('stand-in');
+      m.querySelector('.shimmer')?.remove();
+      clearInterval(tick);
+      const label = document.createElement('p');
+      label.className = 'stand-in-label';
+      label.textContent = 'inspiration · sketch pending';
+      m.appendChild(label);
+    };
     const tryLoad = () => {
       const probe = new Image();
-      probe.onload = () => { img.src = probe.src; img.hidden = false; settle(); };
+      probe.onload = () => { landTracker.last = Date.now(); img.src = probe.src; img.hidden = false; settle(); };
       probe.onerror = () => {
-        if (Date.now() - started > 150000) {
-          const pip = m.querySelector('.pip img');
-          if (pip) { img.src = pip.getAttribute('src'); img.hidden = false; }
-          else { m.closest('.face').classList.add('text-only'); m.remove(); }
-          settle();
-          return;
-        }
-        setTimeout(tryLoad, 2500);
+        const quiet = Date.now() - landTracker.last > 240000;
+        if (Date.now() - started > 240000 && quiet) standIn();
+        setTimeout(tryLoad, m.classList.contains('stand-in') ? 5000 : 2500);
       };
       probe.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
     };
