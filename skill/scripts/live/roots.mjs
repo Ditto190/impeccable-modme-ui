@@ -296,19 +296,33 @@ function readPointerEntries(repoRoot) {
  */
 function hasLiveServer(appRoot) {
   let pid;
+  let port;
   try {
     const info = JSON.parse(fs.readFileSync(path.join(appRoot, '.impeccable', 'live', 'server.json'), 'utf-8'));
     if (!info || typeof info.pid !== 'number') return false;
     pid = info.pid;
+    port = Number(info.port);
     process.kill(pid, 0);
   } catch (err) {
     // EPERM: the process exists but is not signalable by this user.
     if (err?.code !== 'EPERM') return false;
   }
-  if (process.platform === 'win32') return true; // no cheap portable command check
+  // Liveness alone misclassifies a REUSED pid (helper died without removing
+  // server.json, the OS handed the pid to something else, even another node
+  // process). The decisive signal is the recorded PORT: a real helper is
+  // listening on it, a pid squatter is not.
+  if (Number.isInteger(port) && port > 0 && process.platform !== 'win32') {
+    try {
+      execFileSync('bash', ['-c', `exec 3<>/dev/tcp/127.0.0.1/${port}`], { timeout: 1500, stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (process.platform === 'win32') return true; // no cheap portable probe
   try {
     const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
-    return /\b(node|bun|live-server)\b/.test(command);
+    return /live-server|\b(node|bun)\b/.test(command);
   } catch {
     return false;
   }
