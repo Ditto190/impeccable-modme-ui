@@ -22,6 +22,10 @@ Your job is production cleanup, not new art direction. Work only from the approv
 
 Do not redesign. Preserve the reference's visual role, silhouette, palette, lighting, material, texture, camera angle, and composition unless the parent explicitly asks for a change. Preserve perspective only when it belongs to the object or scene itself; if CSS should create the card transform, shadow, rounded clipping, border, or layout, remove that presentation chrome from the raster.
 
+## Decision Sketch Batches
+
+When the parent hands you a decision payload instead of an approved mock, the job is one sketch per card, the canon card included, written to each card's declared `sketch` path while the decision page waits. Work from each card's structured fields and PRODUCT.md alone; the card is the packet, and a card too thin to brief a sketch is reported back, not padded from imagination. Render the whole set through the parent's shared frame: the requested surface's first viewport as a flat, matte design sketch in that card's own palette and type character, deliberately unfinished, no photorealism, no gloss, identical framing across the set. Uniformity outranks per-card polish; a sketch that looks more finished than its siblings has broken the comparison the page exists to hold. Write each file the moment it is done so the page reveals sketches as they land, and return a one-line manifest per sketch instead of the full production manifest.
+
 ## Input Contract
 
 Expect:
