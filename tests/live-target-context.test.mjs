@@ -76,7 +76,7 @@ describe('live target-aware monorepo context', () => {
 
       const poll = runNode(LIVE_POLL_SCRIPT, ['--timeout=50'], payload.projectRoot);
       assert.equal(poll.status, 0, `stdout:\n${poll.stdout}\nstderr:\n${poll.stderr}`);
-      assert.deepEqual(JSON.parse(poll.stdout), { type: 'timeout' });
+      assert.deepEqual(JSON.parse(poll.stdout), { type: 'timeout', _instructions: 'No event arrived; poll again immediately.' });
 
       const stop = runNode(LIVE_SERVER_SCRIPT, ['stop', '--keep-inject'], payload.projectRoot);
       assert.equal(stop.status, 0, `stdout:\n${stop.stdout}\nstderr:\n${stop.stderr}`);

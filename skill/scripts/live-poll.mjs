@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { completionAckForAcceptResult, completionTypeForAcceptResult } from './live/completion.mjs';
 import { readLiveServerInfo } from './lib/impeccable-paths.mjs';
 import { enterLiveRoot } from './live/roots.mjs';
+import { instructionsForEvent } from './live/instructions.mjs';
 
 // Absolute path to a sibling script in this skill's scripts dir, so runtime
 // error hints print a directly-runnable command instead of a placeholder.
@@ -262,6 +263,13 @@ export function writeCarbonizeBanner(event) {
 }
 
 export function printPollEvent(event) {
+  // Situational plumbing rides with the event itself: `_instructions` is the
+  // authoritative next step, with real ids and paths substituted, so the
+  // reference doc can stay lean and can never drift from script behavior.
+  if (event && typeof event === 'object' && !event._instructions) {
+    const instructions = instructionsForEvent(event, { scriptsPath: SELF_DIR });
+    if (instructions) event._instructions = instructions;
+  }
   console.log(JSON.stringify(event));
 }
 

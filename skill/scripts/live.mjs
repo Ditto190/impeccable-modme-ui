@@ -26,6 +26,7 @@ import { resolveFiles } from './live-inject.mjs';
 import { readLiveServerInfo } from './lib/impeccable-paths.mjs';
 import { resolveSurfaceBrief } from './lib/surface-briefs.mjs';
 import { resolveLiveTarget } from './live-target.mjs';
+import { bootInstructions } from './live/instructions.mjs';
 import { resolveRoots, writeRootsManifest } from './live/roots.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -196,6 +197,7 @@ The agent should then:
     hasSurfaceBrief: !!surfaceBrief,
     surfaceBrief,
     surfaceBriefPath,
+    _instructions: bootInstructions({ scriptsPath: __dirname }),
   }, null, 2));
 }
 
