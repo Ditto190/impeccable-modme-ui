@@ -151,7 +151,7 @@ if (hasFlag('schema')) {
     canonCard: { label: 'The category standard', thesis: 'What this category ships, executed impeccably.', viewport: 'The arrangement a visitor expects, at full craft.', sketch: '.impeccable/sketches/canon.webp' },
     steer: true,
   }, null, 2));
-  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/sketch accept URLs or local paths; sketch slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the sketch, never as the promise of the build. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation.');
+  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/sketch accept URLs or local paths; sketch slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the sketch, never as the promise of the build. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation. Keep thesis and each fact to one short sentence: the card front shows thesis, identity, and a two-line risk, while first viewport and the case read on the card back behind the Details chip, so long facts cost the reader a flip, not the page its scanability.');
   process.exit(0);
 }
 
@@ -310,6 +310,8 @@ function page() {
   // carries them; a plain body falls back to the prose block. Palette chips
   // and material tags give a text-only direction an immediate identity that
   // no generation luck can distort.
+  const fact = (label, value, cls = '') => value ? `<p class="fact${cls ? ` ${cls}` : ''}"><span class="fact-label">${label}</span>${esc(value)}</p>` : '';
+  const hasBack = (option) => Boolean(option.viewport || option.case || (option.boardSrc && option.heroSrc));
   const anatomy = (option) => {
     const rows = [];
     if (option.thesis) rows.push(`<p class="thesis">${esc(option.thesis)}</p>`);
@@ -321,31 +323,38 @@ function page() {
       idBits.push(option.materials.slice(0, 4).map((m) => `<span class="tag">${esc(m)}</span>`).join(''));
     }
     if (idBits.length) rows.push(`<div class="identity">${idBits.join('')}</div>`);
-    const fact = (label, value) => value ? `<p class="fact"><span class="fact-label">${label}</span>${esc(value)}</p>` : '';
-    rows.push(fact('First viewport', option.viewport));
-    rows.push(fact('The case', option.case));
-    rows.push(fact('Risk', option.risk));
+    // The front carries only what the choice needs: thesis, identity, and the
+    // honest risk clamped to two lines. First viewport and the case read on
+    // the card's back; once the sketch lands, the first viewport is a picture.
+    rows.push(fact('Risk', option.risk, 'clamp'));
     if (!option.thesis && option.body) rows.push(`<p class="detail">${esc(option.body)}</p>`);
-    else if (option.body && option.thesis) rows.push(`<p class="detail more">${esc(option.body)}</p>`);
+    else if (option.body && option.thesis && !hasBack(option)) rows.push(`<p class="detail more">${esc(option.body)}</p>`);
     return rows.join('\n            ');
   };
+  const backFacts = (option) => [
+    fact('First viewport', option.viewport),
+    fact('The case', option.case),
+    fact('Risk', option.risk),
+    option.body && option.thesis ? `<p class="detail more">${esc(option.body)}</p>` : '',
+  ].filter(Boolean).join('\n            ');
   const media = (option) => {
     const inspiration = option.heroSrc ? `<figure class="pip" title="Inspiration: the world this direction draws from. Your page will not look like this image.">
               <img src="${esc(option.heroSrc)}" alt="">
               <figcaption>inspiration</figcaption>
             </figure>` : '';
+    const details = hasBack(option) ? flipChip('Details') : '';
     if (option.sketchSrc) {
       return `<div class="media sketching" data-sketch="${esc(option.sketchSrc)}">
             <div class="shimmer"><span class="sketch-note">sketching&hellip;</span></div>
             <img class="sketch" alt="" hidden>
             ${inspiration}
-            <div class="chips">${expandChip}${option.boardSrc ? flipChip('Board') : ''}</div>
+            <div class="chips">${expandChip}${details}</div>
           </div>`;
     }
     if (option.heroSrc || option.boardSrc) {
       return `<div class="media">
             <img src="${esc(option.heroSrc || option.boardSrc)}" alt="">
-            <div class="chips">${expandChip}${option.boardSrc && option.heroSrc ? flipChip('Board') : ''}</div>
+            <div class="chips">${expandChip}${details}</div>
           </div>`;
     }
     return '';
@@ -363,14 +372,15 @@ function page() {
             <button class="choose" data-id="${esc(option.id)}">${option.isCanon ? 'Play it straight' : 'Build this'}</button>
           </div>
         </div>
-        ${option.boardSrc && option.heroSrc ? `<div class="face back${index === 0 ? ' lead' : ''}">
-          <div class="media back-media">
+        ${hasBack(option) ? `<div class="face back${index === 0 ? ' lead' : ''}">
+          ${option.boardSrc ? `<div class="media back-media">
             <img src="${esc(option.boardSrc)}" alt="">
-            <div class="chips">${expandChip}${flipChip('Hero')}</div>
-          </div>
-          <div class="body back-bar">
-            <p class="tier">Design-system board &middot; ${esc(option.label)}</p>
-            <button class="choose" data-id="${esc(option.id)}">Build this</button>
+            <div class="chips">${expandChip}${flipChip('Front')}</div>
+          </div>` : `<div class="back-head"><p class="tier">The full read &middot; ${esc(option.label)}</p>${flipChip('Front')}</div>`}
+          <div class="body back-body">
+            ${option.boardSrc ? `<p class="tier">The full read &middot; ${esc(option.label)}</p>` : ''}
+            ${backFacts(option)}
+            <button class="choose" data-id="${esc(option.id)}">${option.isCanon ? 'Play it straight' : 'Build this'}</button>
           </div>
         </div>` : ''}
       </div>
@@ -477,7 +487,7 @@ function page() {
   .face.text-only .body { padding-top: 12px; }
   .media { position: relative; width: 100%; aspect-ratio: 16/9; flex: none; }
   .media img { width: 100%; height: 100%; object-fit: cover; display: block; background: linear-gradient(100deg, var(--ks-graphite) 40%, var(--ks-graphite-2) 50%, var(--ks-graphite) 60%); }
-  .face.back { background: var(--ks-lacquer-deep); }
+  .face.back { background: var(--ks-lacquer-raised); }
   .back-bar { margin-top: auto; background: var(--ks-lacquer-raised); }
   .hero-blank { width: 100%; height: 100%; background: linear-gradient(100deg, var(--ks-graphite) 40%, var(--ks-graphite-2) 50%, var(--ks-graphite) 60%); }
   .back-bar { flex: none; flex-direction: row; align-items: center; justify-content: space-between; gap: .8rem; }
@@ -497,6 +507,13 @@ function page() {
   .tag { font-family: var(--ks-mono); font-size: .6rem; letter-spacing: .14em; text-transform: uppercase; color: var(--ks-text-muted); border: 1px solid var(--ks-rule); border-radius: 4px; padding: 3px 7px; }
   .fact { font-size: .8rem; color: var(--ks-text-muted); line-height: 1.45; }
   .fact-label { display: inline-block; font-family: var(--ks-mono); font-size: .6rem; letter-spacing: .18em; text-transform: uppercase; color: var(--ks-text-faint); margin-right: .55em; transform: translateY(-1px); }
+  .fact.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  /* The back is the full read: first viewport, the case, the whole risk, and
+     the board when the world has one. */
+  .back-head { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding: 14px 14px 0; }
+  .media.back-media { aspect-ratio: 16/6; }
+  .media.back-media img { width: 100%; height: 100%; object-fit: cover; }
+  .body.back-body { overflow-y: auto; flex: 1; scrollbar-width: thin; }
   /* Inspiration rides picture-in-picture: the catalog world explains where the
      direction comes from without promising what the build will look like. */
   /* Hovering the inspiration takes over the whole media region; the sketch is
