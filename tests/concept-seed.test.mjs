@@ -364,6 +364,31 @@ describe('concept seed scopes', () => {
     assert.equal(picks.some(pick => pick.id === 'lone-niche'), true);
   });
 
+  it('weights staging draws by rating without letting the ticket dedupe erase the weight', () => {
+    const pool = [
+      { id: 'flagship-stage', surface: 'persuade', status: 'approved', review: { status: 'approved', rating: 3 } },
+      { id: 'plain-stage', surface: 'persuade', status: 'approved', review: { status: 'approved' } },
+      { id: 'marginal-stage', surface: 'persuade', status: 'approved', review: { status: 'approved', rating: 1 } },
+    ];
+    const counts = { 'flagship-stage': 0, 'plain-stage': 0, 'marginal-stage': 0 };
+    for (let index = 0; index < 300; index += 1) {
+      const picks = selectApprovedStagings({ scope: 'direction', key: `stage-weight-${index}`, mode: 'persuade', sourceCompositions: pool, count: 1 });
+      counts[picks[0].id] += 1;
+    }
+    assert.equal(counts['marginal-stage'], 0, 'a 1-star staging keeps its approval but leaves the draw');
+    // Two tickets should put the flagship first roughly twice as often as the
+    // unrated peer; a generous margin keeps the assertion deterministic-safe.
+    assert.equal(counts['flagship-stage'] > counts['plain-stage'] * 1.3, true,
+      `flagship ${counts['flagship-stage']} vs plain ${counts['plain-stage']}`);
+
+    // A pool of nothing but 1-star keeps still yields stagings.
+    const onlyMarginal = [
+      { id: 'lone-marginal-stage', surface: 'persuade', status: 'approved', review: { status: 'approved', rating: 1 } },
+    ];
+    const fallback = selectApprovedStagings({ scope: 'direction', key: 'stage-lone', mode: 'persuade', sourceCompositions: onlyMarginal });
+    assert.equal(fallback.some(pick => pick.id === 'lone-marginal-stage'), true);
+  });
+
   it('gates stagings by breadth and falls back when every staging is niche', () => {
     const pool = [
       { id: 'broad-stage', surface: 'persuade', status: 'approved' },
