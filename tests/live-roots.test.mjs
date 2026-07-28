@@ -302,3 +302,32 @@ describe('review regressions: helper --target', () => {
     }
   });
 });
+
+describe('review regressions: pid reuse', () => {
+  it('does not classify a non-node process reusing the recorded pid as a live server', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-roots-pidreuse-')));
+    try {
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      for (const name of ['appA', 'appB']) {
+        write(repo, `${name}/vite.config.js`, 'export default {};');
+      }
+      const a = resolveRoots({ cwd: repo, targetPath: join(repo, 'appA/vite.config.js') }).manifest;
+      const b = resolveRoots({ cwd: repo, targetPath: join(repo, 'appB/vite.config.js') }).manifest;
+      writeRootsManifest(a);
+      writeRootsManifest(b); // B booted last.
+
+      // B's helper died; its pid was reused by a non-node process (launchd /
+      // init: pid 1 is alive on every unix and is never a node process).
+      write(repo, 'siteB-unused.txt', '');
+      write(repo, 'appB/.impeccable/live/server.json', JSON.stringify({ pid: 1, port: 2, token: 't' }));
+      // A holds the interrupted session the user is recovering.
+      write(repo, 'appA/.impeccable/live/sessions/aa11bb22.snapshot.json',
+        JSON.stringify({ id: 'aa11bb22', phase: 'variants_ready' }));
+
+      const resolved = resolveLiveRoots(repo);
+      assert.equal(resolved.manifest.appRoot, join(repo, 'appA'));
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});

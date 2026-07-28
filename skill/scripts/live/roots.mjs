@@ -27,6 +27,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { resolveProjectRoot } from '../context.mjs';
 
 const ROOTS_MANIFEST_VERSION = 1;
@@ -284,16 +285,32 @@ function readPointerEntries(repoRoot) {
   }
 }
 
-/** True when the app's live helper server is recorded and its pid is alive. */
+/**
+ * True when the app's live helper server is recorded and its pid is alive.
+ * A liveness signal alone misclassifies a REUSED pid (helper died without
+ * removing server.json, the OS handed the pid to something else), so the
+ * process's command line must also look like a node process; that removes
+ * reuse by arbitrary processes. A pid reused by another node process remains
+ * a residual false positive, which the multi-app warning and --target
+ * escape hatch cover.
+ */
 function hasLiveServer(appRoot) {
+  let pid;
   try {
     const info = JSON.parse(fs.readFileSync(path.join(appRoot, '.impeccable', 'live', 'server.json'), 'utf-8'));
     if (!info || typeof info.pid !== 'number') return false;
-    process.kill(info.pid, 0);
-    return true;
+    pid = info.pid;
+    process.kill(pid, 0);
   } catch (err) {
     // EPERM: the process exists but is not signalable by this user.
-    return err?.code === 'EPERM';
+    if (err?.code !== 'EPERM') return false;
+  }
+  if (process.platform === 'win32') return true; // no cheap portable command check
+  try {
+    const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
+    return /\b(node|bun|live-server)\b/.test(command);
+  } catch {
+    return false;
   }
 }
 
