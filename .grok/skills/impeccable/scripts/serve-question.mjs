@@ -222,14 +222,25 @@ if (hasFlag('start')) {
   const key = arg('key') || Math.random().toString(16).slice(2, 10);
   // In start mode the agent is alive and owns browser routing; the server
   // only opens the system browser itself when --open forces it.
+  // The daemon's output lands in a per-key log so a startup failure can say
+  // what actually went wrong instead of only that it did.
+  const logFile = path.join(QUESTION_DIR, `${key}.log`);
+  const logFd = fs.openSync(logFile, 'a');
   const child = spawn(process.execPath, [
     fileURLToPath(import.meta.url), '--payload', payloadPath, '--detached-serve', '--key', key,
     '--timeout', String(timeoutSec), ...(hasFlag('open') ? [] : ['--no-open']),
-  ], { detached: true, stdio: 'ignore' });
+  ], { detached: true, stdio: ['ignore', logFd, logFd] });
   child.unref();
+  fs.closeSync(logFd);
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline && !fs.existsSync(stateFile(key))) await new Promise((r) => setTimeout(r, 100));
-  if (!fs.existsSync(stateFile(key))) { console.error('serve-question: server failed to start'); process.exit(1); }
+  if (!fs.existsSync(stateFile(key))) {
+    let tail = '';
+    try { tail = fs.readFileSync(logFile, 'utf8').trim().split('\n').slice(-4).join('\n  '); } catch { /* log never written */ }
+    console.error(`serve-question: server failed to start${tail ? `\n  ${tail}` : ''}`);
+    console.error(`serve-question: log at ${path.relative(process.cwd(), logFile) || logFile}. A sandboxed exec that cannot listen on localhost causes exactly this; rerun this command once through the harness's network-enabled or unsandboxed command tool before falling back.`);
+    process.exit(1);
+  }
   const state = JSON.parse(fs.readFileSync(stateFile(key), 'utf8'));
   console.log(`QUESTION URL: ${state.url}`);
   console.log(`QUESTION KEY: ${key}`);
@@ -617,13 +628,16 @@ function page() {
   document.querySelectorAll('.media.sketching').forEach(m => {
     const url = m.dataset.sketch;
     const img = m.querySelector('img.sketch');
+    const note = m.querySelector('.sketch-note');
     const started = Date.now();
-    const settle = () => { m.classList.remove('sketching'); m.querySelector('.shimmer')?.remove(); };
+    // A live elapsed count is the difference between "working" and "frozen".
+    const tick = setInterval(() => { if (note) note.textContent = 'sketching · ' + Math.round((Date.now() - started) / 1000) + 's'; }, 1000);
+    const settle = () => { clearInterval(tick); m.classList.remove('sketching'); m.querySelector('.shimmer')?.remove(); };
     const tryLoad = () => {
       const probe = new Image();
       probe.onload = () => { img.src = probe.src; img.hidden = false; settle(); };
       probe.onerror = () => {
-        if (Date.now() - started > 300000) {
+        if (Date.now() - started > 150000) {
           const pip = m.querySelector('.pip img');
           if (pip) { img.src = pip.getAttribute('src'); img.hidden = false; }
           else { m.closest('.face').classList.add('text-only'); m.remove(); }
