@@ -313,16 +313,23 @@ function hasLiveServer(appRoot) {
   // Liveness alone misclassifies a REUSED pid (helper died without removing
   // server.json, the OS handed the pid to something else, even another node
   // process). The decisive signal is the recorded PORT: a real helper is
-  // listening on it, a pid squatter is not.
-  if (Number.isInteger(port) && port > 0 && process.platform !== 'win32') {
+  // listening on it, a pid squatter is not. The probe is a spawned node
+  // one-liner so it works identically on every platform (no bash, no ps).
+  if (Number.isInteger(port) && port > 0) {
     try {
-      execFileSync('bash', ['-c', `exec 3<>/dev/tcp/127.0.0.1/${port}`], { timeout: 1500, stdio: 'ignore' });
+      execFileSync(process.execPath, ['-e', [
+        "const s = require('node:net').connect({ host: '127.0.0.1', port: Number(process.argv[1]), timeout: 800 });",
+        "s.on('connect', () => { s.destroy(); process.exit(0); });",
+        "s.on('timeout', () => { s.destroy(); process.exit(1); });",
+        "s.on('error', () => process.exit(1));",
+      ].join(''), String(port)], { timeout: 3000, stdio: 'ignore' });
       return true;
     } catch {
       return false;
     }
   }
-  if (process.platform === 'win32') return true; // no cheap portable probe
+  // Legacy server.json without a port: best-effort process identity check.
+  if (process.platform === 'win32') return true;
   try {
     const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
     return /live-server|\b(node|bun)\b/.test(command);
