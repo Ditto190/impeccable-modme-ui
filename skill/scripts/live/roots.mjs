@@ -300,35 +300,37 @@ function readPointerEntries(repoRoot) {
 function hasLiveServer(appRoot) {
   let pid;
   let port;
+  let token;
   try {
     const info = JSON.parse(fs.readFileSync(path.join(appRoot, '.impeccable', 'live', 'server.json'), 'utf-8'));
     if (!info || typeof info.pid !== 'number') return false;
     pid = info.pid;
     port = Number(info.port);
+    token = typeof info.token === 'string' ? info.token : null;
     process.kill(pid, 0);
   } catch (err) {
     // EPERM: the process exists but is not signalable by this user.
     if (err?.code !== 'EPERM') return false;
   }
-  // Liveness alone misclassifies a REUSED pid (helper died without removing
-  // server.json, the OS handed the pid to something else, even another node
-  // process). The decisive signal is the recorded PORT: a real helper is
-  // listening on it, a pid squatter is not. The probe is a spawned node
-  // one-liner so it works identically on every platform (no bash, no ps).
-  if (Number.isInteger(port) && port > 0) {
+  // Liveness alone misclassifies a REUSED pid, and a bare TCP connect
+  // misclassifies a coincidental listener on a reused port. The decisive
+  // signal is IDENTITY: the helper answers its authenticated /status
+  // endpoint with the token server.json records; nothing else on that port
+  // can. The probe is a spawned node one-liner so it works identically on
+  // every platform.
+  if (Number.isInteger(port) && port > 0 && token) {
     try {
       execFileSync(process.execPath, ['-e', [
-        "const s = require('node:net').connect({ host: '127.0.0.1', port: Number(process.argv[1]), timeout: 800 });",
-        "s.on('connect', () => { s.destroy(); process.exit(0); });",
-        "s.on('timeout', () => { s.destroy(); process.exit(1); });",
-        "s.on('error', () => process.exit(1));",
-      ].join(''), String(port)], { timeout: 3000, stdio: 'ignore' });
+        "const req = require('node:http').get({ host: '127.0.0.1', port: Number(process.argv[1]), path: '/status?token=' + encodeURIComponent(process.argv[2]), timeout: 1200 }, (res) => { res.resume(); process.exit(res.statusCode === 200 ? 0 : 1); });",
+        "req.on('timeout', () => { req.destroy(); process.exit(1); });",
+        "req.on('error', () => process.exit(1));",
+      ].join(''), String(port), token], { timeout: 4000, stdio: 'ignore' });
       return true;
     } catch {
       return false;
     }
   }
-  // Legacy server.json without a port: best-effort process identity check.
+  // Legacy server.json without a port/token: best-effort identity check.
   if (process.platform === 'win32') return true;
   try {
     const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });

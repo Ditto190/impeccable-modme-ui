@@ -1,10 +1,9 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   discoverAppCandidates,
@@ -212,13 +211,25 @@ describe('review regressions: multi-app pointer', () => {
       writeRootsManifest(a);
       writeRootsManifest(b); // B booted last: a naive pointer now points at B
 
-      // A's helper server is the one alive: a real listener on a real port
-      // (the liveness check probes the recorded port, so a bare pid is not
-      // enough to count as running).
-      const srv = createServer();
-      await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+      // A's helper server is the one alive: an authenticated /status
+      // responder on a real port, hosted in a CHILD process because the
+      // probe is execFileSync and a same-process responder could never
+      // accept while the event loop is blocked (production helpers are
+      // always separate processes).
+      const responder = spawn(process.execPath, ['-e', [
+        "const s = require('node:http').createServer((q, r) => {",
+        "  const ok = q.url === '/status?token=t';",
+        "  r.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' });",
+        "  r.end('{}');",
+        "});",
+        "s.listen(0, '127.0.0.1', () => console.log(s.address().port));",
+      ].join('\n')], { stdio: ['ignore', 'pipe', 'ignore'] });
+      const livePort = await new Promise((resolve, reject) => {
+        responder.stdout.once('data', (chunk) => resolve(Number(String(chunk).trim())));
+        responder.once('error', reject);
+        setTimeout(() => reject(new Error('responder never became ready')), 5000);
+      });
       try {
-        const livePort = srv.address().port;
         write(repo, 'siteA/.impeccable/live/server.json', JSON.stringify({ pid: process.pid, port: livePort, token: 't' }));
         write(repo, 'siteB/.impeccable/live/server.json', JSON.stringify({ pid: 999999999, port: 2, token: 't' }));
 
@@ -226,7 +237,7 @@ describe('review regressions: multi-app pointer', () => {
         assert.equal(resolved.source, 'pointer');
         assert.equal(resolved.manifest.appRoot, join(repo, 'siteA'));
       } finally {
-        await new Promise((resolve) => srv.close(resolve));
+        responder.kill();
       }
     } finally {
       rmSync(repo, { recursive: true, force: true });
