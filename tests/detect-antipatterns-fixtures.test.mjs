@@ -1331,3 +1331,35 @@ describe('em-dash overuse — browser adapter parity (checkEmDashOveruse)', () =
     assert.equal(id(findings), 'em-dash-overuse');
   });
 });
+
+describe('detectHtml — CSS patterns in prose (css-in-prose fixtures)', () => {
+  // CSS-property regexes must scan only real style carriers (<style> blocks,
+  // style="" attributes, linked stylesheets, class="" attributes). Prose,
+  // <code>/<pre> samples, and comments documenting a pattern are not styling.
+  // Live FP: impeccable.style's changelog line
+  // `<code>background-clip: text</code> gradients stop tripping contrast`.
+  const SCOPED_RULE_IDS = ['gradient-text', 'ai-color-palette', 'side-tab', 'pulsing-dot'];
+
+  it('documentation about the patterns adds no findings', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'css-in-prose-should-pass.html'));
+    const hits = f.filter(r => SCOPED_RULE_IDS.includes(r.antipattern));
+    assert.equal(
+      hits.length, 0,
+      `prose/code/comment mentions must not flag, got: ${hits.map(r => `${r.antipattern}:${r.snippet}`).join('; ')}`
+    );
+  });
+
+  it('the same patterns applied as real styling still flag', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'css-in-prose-should-flag.html'));
+    const gradient = f.filter(r => r.antipattern === 'gradient-text');
+    assert.ok(
+      gradient.some(r => /background-clip: text \+ gradient/.test(r.snippet || '')),
+      'expected the CSS-mechanism gradient-text finding'
+    );
+    assert.ok(
+      gradient.some(r => /bg-clip-text \+ bg-gradient \(Tailwind\)/.test(r.snippet || '')),
+      'expected the Tailwind gradient-text finding'
+    );
+    assert.ok(f.some(r => r.antipattern === 'ai-color-palette'), 'expected ai-color-palette');
+  });
+});

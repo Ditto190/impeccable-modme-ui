@@ -896,6 +896,47 @@ describe('detectHtml — static HTML/CSS engine', () => {
     expect(findingIds(f)).toContain('side-tab');
   });
 
+  test('gradient-text: a style="" attribute alone carries the page-level flag', async () => {
+    await withStaticFixture({
+      'index.html': `<!DOCTYPE html><html><head><title>t</title></head><body>
+        <h2 style="background: linear-gradient(90deg, #667eea, #764ba2); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">Inline gradient heading</h2>
+        <p>Body copy long enough to make this a real page for the scanners.</p>
+      </body></html>`,
+    }, async ({ file }) => {
+      const f = await detectHtml(file);
+      expect(f.some(r => r.antipattern === 'gradient-text' && /background-clip/.test(r.snippet))).toBe(true);
+    });
+  });
+
+  test('gradient-text: a <style> rule alone carries the page-level flag', async () => {
+    await withStaticFixture({
+      'index.html': `<!DOCTYPE html><html><head><style>
+        .t { background: linear-gradient(90deg, #667eea, #764ba2); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+      </style></head><body>
+        <h2 class="t">Styled gradient heading</h2>
+        <p>Body copy long enough to make this a real page for the scanners.</p>
+      </body></html>`,
+    }, async ({ file }) => {
+      const f = await detectHtml(file);
+      expect(f.some(r => r.antipattern === 'gradient-text' && /background-clip/.test(r.snippet))).toBe(true);
+    });
+  });
+
+  test('gradient-text: prose and code samples about the pattern do not flag', async () => {
+    await withStaticFixture({
+      'index.html': `<!DOCTYPE html><html><head><title>changelog</title></head><body>
+        <h1>Changelog</h1>
+        <p><code>background-clip: text</code> gradients stop tripping the contrast rules.</p>
+        <pre><code>.hero { background: linear-gradient(135deg, #667eea, #764ba2); background-clip: text; }</code></pre>
+        <p>Pair bg-clip-text with bg-gradient-to-r and both utilities together are the tell.</p>
+      </body></html>`,
+    }, async ({ file }) => {
+      const f = await detectHtml(file);
+      expect(f.filter(r => r.antipattern === 'gradient-text')).toHaveLength(0);
+      expect(f.filter(r => r.antipattern === 'ai-color-palette')).toHaveLength(0);
+    });
+  });
+
   test('flattens @layer, resolves CSS variables and fallbacks, and skips unsupported selectors', async () => {
     await withStaticFixture({
       'index.html': `<!DOCTYPE html>
