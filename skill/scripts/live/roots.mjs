@@ -141,7 +141,10 @@ export function discoverAppCandidates(rootDir, depth = CANDIDATE_SCAN_DEPTH) {
       if (!entry.isDirectory()) continue;
       if (entry.name.startsWith('.') || CANDIDATE_SCAN_IGNORED.has(entry.name)) continue;
       const abs = path.join(dir, entry.name);
-      if (hasDevConfig(abs)) {
+      // Same criterion as the upward walk (isAppRoot): a live-configured
+      // plain-static site with no bundler markers is still an app, and
+      // missing it here would silently fall back to the wrong root.
+      if (isAppRoot(abs)) {
         found.push(abs);
         continue; // nested apps below an app root are that app's business
       }

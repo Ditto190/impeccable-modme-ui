@@ -341,3 +341,20 @@ describe('review regressions: pid reuse', () => {
     }
   });
 });
+
+describe('review regressions: discovery parity', () => {
+  it('discovers a live-configured static site with no bundler markers', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-roots-static-')));
+    try {
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      write(repo, 'package.json', '{"name":"cli"}');
+      write(repo, 'docs-site/.impeccable/live/config.json', '{"files":["index.html"]}');
+      write(repo, 'docs-site/index.html', '<html></html>');
+      const { manifest, selection } = resolveRoots({ cwd: repo });
+      assert.equal(selection, undefined);
+      assert.equal(manifest.appRoot, join(repo, 'docs-site'));
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
