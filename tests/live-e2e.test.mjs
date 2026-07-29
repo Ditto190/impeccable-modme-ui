@@ -1124,6 +1124,82 @@ for (const { name, fixture } of fixtures) {
       });
     }
 
+    if (shouldRunScenario('foreign') && fixture.runtime.foreignSessionScenario) {
+      it('clears another project\'s leftover browser session instead of resuming it', liveE2eTestOptions, async (t) => {
+        if (manualOnly || process.env.IMPECCABLE_E2E_MANUAL_SCENARIO) {
+          t.skip('manual scenario filter is active');
+          return;
+        }
+        // Repro of the cross-project leak: localStorage is per-ORIGIN, and two
+        // projects routinely reuse the same localhost port across time. A
+        // leftover cycling session from the other project used to be resumed
+        // ("Variants ready" with no user action), and its checkpoints
+        // materialized a ghost session in THIS project's durable store that
+        // kept reattaching after every discard.
+        const agent = createFakeAgent();
+        const session = await bootFixtureSession({
+          name,
+          fixture,
+          browser,
+          agent,
+          wrapTarget: wrapTargetFromPickedElement,
+          log: (m) => t.diagnostic(m),
+        });
+        const { page, appRoot, teardown } = session;
+        const pickSelector = fixture.runtime.pickSelector || 'h1.hero-title';
+        try {
+          await waitForHandshake(page);
+
+          const cases = [
+            // Stamped with another app's root: dropped at load time, before
+            // any server roundtrip.
+            { id: 'f0e1d2c3', appRoot: '/somewhere/else/entirely' },
+            // Legacy shape without a stamp: dropped when the server refuses
+            // its first checkpoint as unknown_session.
+            { id: 'deadf00d' },
+          ];
+          for (const foreign of cases) {
+            t.diagnostic(`Seeding foreign session ${foreign.id}${foreign.appRoot ? ' (stamped)' : ' (legacy shape)'}`);
+            await page.evaluate((saved) => {
+              localStorage.setItem('impeccable-live-session', JSON.stringify(saved));
+              localStorage.removeItem('impeccable-live-session-handled');
+            }, {
+              id: foreign.id,
+              state: 'CYCLING',
+              expected: 3,
+              arrived: 3,
+              visible: 1,
+              sourceFile: 'src/App.jsx',
+              pageUrl: '/',
+              checkpointRevision: 5,
+              ...(foreign.appRoot ? { appRoot: foreign.appRoot } : {}),
+            });
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await waitForHandshake(page);
+
+            const deadline = Date.now() + 20_000;
+            for (;;) {
+              const current = await readLiveSessionStorage(page);
+              if (!current || current.id !== foreign.id) break;
+              if (Date.now() > deadline) throw new Error(`foreign session ${foreign.id} was never cleared`);
+              await new Promise((resolve) => setTimeout(resolve, 250));
+            }
+            const sessionsDir = join(appRoot, '.impeccable/live/sessions');
+            assert.equal(
+              existsSync(join(sessionsDir, `${foreign.id}.jsonl`)),
+              false,
+              `no ghost journal for ${foreign.id} may materialize in this project's store`,
+            );
+          }
+
+          // The surface is genuinely back: a fresh pick must work.
+          await pickElement(page, pickSelector, { position: fixture.runtime.pickPosition });
+        } finally {
+          await teardownAndResetBrowser(teardown);
+        }
+      });
+    }
+
     if (shouldRunScenario('manual') && Array.isArray(fixture.runtime.manualEditScenarios) && fixture.runtime.manualEditScenarios.length > 0) {
       const manualScenarioFilter = process.env.IMPECCABLE_E2E_MANUAL_SCENARIO || '';
       for (const scenario of fixture.runtime.manualEditScenarios) {

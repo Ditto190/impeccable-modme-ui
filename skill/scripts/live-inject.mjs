@@ -205,9 +205,19 @@ Output (JSON):
     process.exit(1);
   }
   // Optional server token: appended to the /live.js src so the token-gated
-  // /live.js handler authorizes the browser fetch. `live.mjs` always passes it.
+  // /live.js handler authorizes the browser fetch. `live.mjs` always passes
+  // it; a manual `--port`-only invocation reads the running helper's token
+  // from server.json instead of writing an unauthenticated URL that 401s.
   const tokenIdx = args.indexOf('--token');
-  const token = tokenIdx !== -1 ? args[tokenIdx + 1] : undefined;
+  let token = tokenIdx !== -1 ? args[tokenIdx + 1] : undefined;
+  if (!token) {
+    try {
+      const info = JSON.parse(fs.readFileSync(path.join(cwd, '.impeccable', 'live', 'server.json'), 'utf-8'));
+      // A record for a DIFFERENT port is a stale or foreign helper; its token
+      // would 401 just the same, so only adopt a matching one.
+      if (info?.token && Number(info.port) === port) token = info.token;
+    } catch { /* no running helper recorded; keep legacy tokenless behavior */ }
+  }
 
   // Reconcile before writing anything. Artifacts this run is about to own are
   // kept (so a repeat inject stays byte-idempotent); artifacts left behind by

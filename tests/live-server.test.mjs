@@ -74,6 +74,29 @@ async function drainPolls(server) {
   } while (drained.type !== 'timeout');
 }
 
+/**
+ * Seed a session journal via its creating event. Progress events (checkpoints,
+ * mount acks) for unknown sessions are refused with 404 unknown_session, so
+ * tests that exercise them must create the session first, as the browser does.
+ */
+async function createSession(server, id, count = 3) {
+  const res = await fetch(`http://localhost:${server.port}/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: server.token,
+      type: 'generate',
+      id,
+      action: 'impeccable',
+      count,
+      pageUrl: '/',
+      element: { outerHTML: '<button>Ok</button>' },
+    }),
+  });
+  if (res.status !== 200) throw new Error(`createSession(${id}) failed: HTTP ${res.status}`);
+  await drainPolls(server);
+}
+
 async function waitForManualActivity(server, type, { timeoutMs = 1000 } = {}) {
   const startedAt = Date.now();
   let last;
@@ -201,6 +224,57 @@ describe('live-server integration', () => {
     assert.equal(data.activeSessions.some((s) => s.id === 'a1b2c3d5'), true);
     assert.equal(data.pendingEvents.some((e) => e.id === 'a1b2c3d5' && e.type === 'generate'), true);
 
+    await drainPolls(server);
+  });
+
+  it('rejects progress events for sessions this store has never seen', async () => {
+    await drainPolls(server);
+    // A checkpoint (or any non-creating event) for an unknown id must NOT
+    // materialize a session journal: that is exactly how a browser carrying
+    // another project's per-origin localStorage state (two apps sharing a
+    // localhost port) used to mint ghost sessions that kept reattaching.
+    const foreignId = 'feedbeef';
+    for (const msg of [
+      { type: 'checkpoint', id: foreignId, revision: 1, revisionDomain: 'browser', reason: 'browser_resumed_without_wrapper' },
+      { type: 'discard', id: foreignId },
+      { type: 'variant_mount_failed', id: foreignId, variant: 1, url: 'http://localhost/', error: 'mount exploded' },
+    ]) {
+      const res = await fetch(`http://localhost:${server.port}/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: server.token, ...msg }),
+      });
+      assert.equal(res.status, 404, `${msg.type} for an unknown session must be refused`);
+      const body = await res.json();
+      assert.equal(body.error, 'unknown_session');
+    }
+    assert.equal(
+      existsSync(join(getLiveSessionsDir(server.cwd), `${foreignId}.jsonl`)),
+      false,
+      'no ghost journal may be created for a refused session',
+    );
+
+    // The creating event is allowed, and afterwards progress events land.
+    const createRes = await fetch(`http://localhost:${server.port}/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: server.token,
+        type: 'generate',
+        id: foreignId,
+        action: 'impeccable',
+        count: 1,
+        pageUrl: '/',
+        element: { outerHTML: '<button>Ok</button>' },
+      }),
+    });
+    assert.equal(createRes.status, 200);
+    const checkpointRes = await fetch(`http://localhost:${server.port}/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: server.token, type: 'checkpoint', id: foreignId, revision: 2, revisionDomain: 'browser', reason: 'go' }),
+    });
+    assert.equal(checkpointRes.status, 200);
     await drainPolls(server);
   });
 
@@ -2339,6 +2413,9 @@ colors: {}
 
   it('accepts checkpoint events without exposing them as agent poll work', async () => {
     await drainPolls(server);
+    // Checkpoints only land on sessions the store knows, so create both first.
+    await createSession(server, 'a1b2c3d7');
+    await createSession(server, 'a1b2c3da');
     const partialRes = await fetch(`http://localhost:${server.port}/events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2487,6 +2564,7 @@ colors: {}
   });
 
   it('streams Svelte component checkpoints as progressive preview updates', async () => {
+    await createSession(server, 'a1b2c3de');
     const controller = new AbortController();
     const sseRes = await fetch(
       `http://localhost:${server.port}/events?token=${server.token}`,
@@ -2526,6 +2604,7 @@ colors: {}
   });
 
   it('streams source checkpoints so no-HMR frameworks can review variant 1', async () => {
+    await createSession(server, 'a1b2c3df');
     const controller = new AbortController();
     const sseRes = await fetch(
       `http://localhost:${server.port}/events?token=${server.token}`,

@@ -91,6 +91,12 @@ function resolveProjectContext() {
 }
 const DEFAULT_POLL_TIMEOUT = 600_000;   // 10 min — agent re-polls on timeout anyway
 const SSE_HEARTBEAT_INTERVAL = 30_000;  // keepalive ping every 30s
+
+// The browser events allowed to mint a NEW session journal. `generate` starts
+// a variant session at Go; `steer` mints its own request id. Every other
+// id-carrying event must land on an existing session (see the unknown_session
+// gate in the /events handler).
+const SESSION_CREATING_EVENT_TYPES = new Set(['generate', 'steer']);
 // The browser checkpoints for several unrelated reasons (see checkpointPayload
 // in live-browser.js). Only these two report that variant availability changed,
 // and only they may drive variant_progress / the *_reviewable phases.
@@ -730,6 +736,7 @@ function createRequestHandler({ detectScript, liveScriptParts }) {
         port: state.port,
         vocabulary: LIVE_COMMANDS,
         commandPrefix: IMPECCABLE_COMMAND_PREFIX,
+        appRoot: process.cwd(),
         parts,
       });
       res.writeHead(200, {
@@ -1018,6 +1025,20 @@ function createRequestHandler({ detectScript, liveScriptParts }) {
           });
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        // Only the events that START a session may create its journal.
+        // Everything else (checkpoints, mount acks, accept/discard) must
+        // reference a session THIS store already knows: appendEvent creates a
+        // journal for any id it is handed, so without this gate a browser
+        // resuming another project's session from per-origin storage (two
+        // apps sharing a localhost port) materializes a ghost session here
+        // that keeps reattaching after every discard.
+        if (msg.id && state.sessionStore
+            && !SESSION_CREATING_EVENT_TYPES.has(msg.type)
+            && !state.sessionStore.has(msg.id)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'unknown_session', id: msg.id }));
           return;
         }
         const missedCompletion = detectMissedGenerationCompletion(msg);

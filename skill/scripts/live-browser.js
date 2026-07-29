@@ -21,6 +21,7 @@
 
   const TOKEN = window.__IMPECCABLE_TOKEN__;
   const PORT = window.__IMPECCABLE_PORT__;
+  const APP_ROOT = window.__IMPECCABLE_APP_ROOT__ || null;
   if (!TOKEN || !PORT) {
     window.__IMPECCABLE_LIVE_INIT__ = false; // reset so the real load can init
     return;
@@ -7132,6 +7133,13 @@
     if (currentSessionId) saveSession();
   }
 
+  // Progress events must never overtake the event that CREATES their session:
+  // the Go-time checkpoint and the generate POST are concurrent fetches, and
+  // when the checkpoint lands first the server rightly refuses it as
+  // unknown_session — which must mean "foreign leftovers", not "you raced
+  // your own Go click". The gate serializes creation before progress.
+  let sessionCreationGate = Promise.resolve();
+
   function sendEvent(msg, opts) {
     msg.token = TOKEN;
     function handleFailure(err) {
@@ -7142,15 +7150,42 @@
       console.debug('[impeccable] Dropped optional live event:', err);
       return null;
     }
-    return fetch('http://localhost:' + PORT + '/events', {
+    const doSend = () => fetch('http://localhost:' + PORT + '/events', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(msg),
     }).then(async res => {
       if (res.ok) return res;
       const body = await res.json().catch(() => ({}));
+      // The server refused to journal progress for a session it has never
+      // seen: this browser is carrying state from another project or a
+      // wiped store (two apps sharing a localhost port). Continuing to
+      // report it would freeze the picker behind a session that can never
+      // complete, so drop the local state and hand the surface back.
+      if (body.error === 'unknown_session' && msg.type === 'checkpoint'
+          && msg.id && msg.id === currentSessionId) {
+        abandonForeignSession(msg.id);
+        return null;
+      }
       return handleFailure(new Error(body.error || ('HTTP ' + res.status + ' ' + res.statusText)));
     }).catch(handleFailure);
+
+    if (msg.type === 'generate' || msg.type === 'steer') {
+      const creation = doSend();
+      sessionCreationGate = creation.then(() => {}, () => {});
+      return creation;
+    }
+    return sessionCreationGate.then(doSend);
+  }
+
+  let abandonedForeignSessionId = null;
+  function abandonForeignSession(sessionId) {
+    if (abandonedForeignSessionId === sessionId || sessionId !== currentSessionId) return;
+    abandonedForeignSessionId = sessionId;
+    console.warn('[impeccable] The live server has no record of session ' + sessionId + '; clearing stale local state.');
+    markSessionHandled();
+    cleanup({ instantChrome: true });
+    showToast('A saved live session belonged to a different project, so it was cleared. Pick an element to start fresh.', 6000);
   }
 
   function checkpointPayload(reason) {
@@ -8894,6 +8929,7 @@ void main() {
     // it here would overwrite the Go-time value every time state changes.
     sessionState.saveSession({
       id: currentSessionId,
+      appRoot: APP_ROOT || undefined,
       state,
       action: selectedAction,
       count: selectedCount,
@@ -8915,7 +8951,17 @@ void main() {
   }
 
   function loadSession() {
-    return sessionState.loadSession();
+    const saved = sessionState.loadSession();
+    // localStorage is per-origin, and two projects routinely reuse the same
+    // localhost port. A saved session stamped with another project's appRoot
+    // is that project's leftover, never a session this server can complete;
+    // resuming it freezes the picker behind an unfinishable banner.
+    if (saved?.appRoot && APP_ROOT && saved.appRoot !== APP_ROOT) {
+      console.warn('[impeccable] Ignoring saved live session from another project (' + saved.appRoot + ').');
+      sessionState.clearSession();
+      return null;
+    }
+    return saved;
   }
 
   function clearSession() {
@@ -10205,10 +10251,11 @@ void main() {
     const id = id8();
     steerRequestId = id;
     steerPendingMessage = text;
-    if (steerInputWasFocused) sendSteerCheckpoint(id, 'steer_input_focused', { focused: true });
     lockSteerChat();
     scheduleSteerAwaitTimeout(id);
-    sendSteerCheckpoint(id, 'steer_submitted', { message: text, pageUrl: location.href });
+    // Checkpoints follow the steer event, never precede it: the steer event
+    // is what creates the session journal server-side, and a checkpoint for
+    // a not-yet-created session is rejected as unknown_session.
     sendEvent({
       type: 'steer',
       id,
@@ -10216,9 +10263,11 @@ void main() {
       pageUrl: location.href,
     }).then((res) => {
       if (!res) {
-        sendSteerCheckpoint(id, 'steer_send_failed', { message: text });
         unlockSteerChat({ error: 'Could not reach live server', restoreMessage: text });
+        return;
       }
+      if (steerInputWasFocused) sendSteerCheckpoint(id, 'steer_input_focused', { focused: true });
+      sendSteerCheckpoint(id, 'steer_submitted', { message: text, pageUrl: location.href });
     });
   }
 

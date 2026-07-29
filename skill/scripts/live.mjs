@@ -169,12 +169,20 @@ The agent should then:
   let surfaceBrief = null;
   let surfaceBriefPath = null;
   try {
-    const resolvedBrief = resolveSurfaceBrief(roots.appRoot, liveTarget.absoluteTargetPath || null);
-    if (resolvedBrief?.brief) {
+    // Briefs live under .impeccable/surfaces, which in a nested-app repo sits
+    // at the CONTEXT or repo root, not the app root; context.mjs already finds
+    // them there, and live must not report "no brief" for the same project.
+    const briefRoots = [roots.appRoot, roots.contextRoot, roots.repoRoot]
+      .filter(Boolean)
+      .filter((dir, i, arr) => arr.findIndex((other) => path.resolve(other) === path.resolve(dir)) === i);
+    for (const briefRoot of briefRoots) {
+      const resolvedBrief = resolveSurfaceBrief(briefRoot, liveTarget.absoluteTargetPath || null);
+      if (!resolvedBrief?.brief) continue;
       surfaceBrief = resolvedBrief.brief.text ?? safeRead(resolvedBrief.brief.path);
       surfaceBriefPath = resolvedBrief.brief.path
         ? path.relative(liveTarget.originalCwd, resolvedBrief.brief.path)
         : null;
+      break;
     }
   } catch { /* briefs are optional context */ }
   console.log(JSON.stringify({

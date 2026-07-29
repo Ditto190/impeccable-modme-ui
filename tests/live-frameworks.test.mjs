@@ -429,3 +429,63 @@ describe('inject journal — crash recovery', () => {
     assert.equal(existsSync(injectJournalPath(tmp)), false);
   });
 });
+
+describe('sveltekit adapter: token revision and byte-exact removal', () => {
+  let adapter;
+  beforeEach(async () => {
+    adapter = await import('../skill/scripts/live/sveltekit-adapter.mjs');
+  });
+
+  const LAYOUT = `<script>
+  import '../app.css';
+
+  let { children } = $props();
+</script>
+
+{@render children()}
+`;
+
+  it('stamps the import with a token-derived revision and swaps it on rotation', () => {
+    const revA = adapter.svelteAdapterRev('token-a');
+    const revB = adapter.svelteAdapterRev('token-b');
+    assert.match(revA, /^[0-9a-f]{8}$/);
+    assert.notEqual(revA, revB, 'a rotated token must change the module specifier');
+
+    const patchedA = adapter.patchSvelteLayout(LAYOUT, { rev: revA });
+    assert.ok(patchedA.includes(`ImpeccableLiveRoot.svelte?impeccable-live=${revA}'`), 'import carries the revision');
+
+    // A re-apply after helper restart replaces the import IN PLACE: exactly
+    // one import, at the new revision, same indentation. A stale specifier
+    // is a cached module with a rotated-out token, which 401s on live.js.
+    const patchedB = adapter.patchSvelteLayout(patchedA, { rev: revB });
+    const importCount = (patchedB.match(/import ImpeccableLiveRoot/g) || []).length;
+    assert.equal(importCount, 1, 'rotation must not stack imports');
+    assert.ok(patchedB.includes(`?impeccable-live=${revB}'`));
+    assert.ok(!patchedB.includes(`?impeccable-live=${revA}'`));
+    assert.match(patchedB, /\n  import ImpeccableLiveRoot/, 'replacement keeps the original indentation');
+  });
+
+  it('removal restores the layout byte-for-byte, including neighbor indentation', () => {
+    // The field failure: the old removal regex used \s* and swallowed the
+    // NEXT line's indentation, de-indenting the user's stylesheet import.
+    for (const rev of [null, adapter.svelteAdapterRev('some-token')]) {
+      const patched = adapter.patchSvelteLayout(LAYOUT, { rev });
+      assert.notEqual(patched, LAYOUT, 'patch must change the layout');
+      const restored = adapter.unpatchSvelteLayout(patched);
+      assert.equal(restored, LAYOUT, `removal must be byte-exact (rev=${rev})`);
+    }
+  });
+
+  it('removal of a created-from-scratch layout leaves no script husk', () => {
+    const patched = adapter.patchSvelteLayout('', { rev: adapter.svelteAdapterRev('t') });
+    const restored = adapter.unpatchSvelteLayout(patched);
+    assert.doesNotMatch(restored, /ImpeccableLiveRoot|impeccable-live-svelte/);
+    assert.doesNotMatch(restored, /<script>\s*<\/script>/);
+  });
+
+  it('the root component embeds the tokened URL and reports load failures', () => {
+    const body = adapter.buildSvelteLiveRootComponent(4321, 'tok123');
+    assert.match(body, /live\.js\?token=tok123/);
+    assert.match(body, /onerror/, 'a stale-token 401 must be diagnosable from the console');
+  });
+});

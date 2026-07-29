@@ -120,6 +120,18 @@ export function createLiveSessionStore({ cwd = process.cwd(), sessionId } = {}) 
       return next;
     },
     /**
+     * True when a journal exists for the id in either root. appendEvent
+     * CREATES a journal for any id it is handed, so callers that should only
+     * ever touch existing sessions (browser checkpoints, mount acks) check
+     * here first — otherwise a stale id from another project's browser
+     * storage materializes a ghost session in this store.
+     */
+    has(id) {
+      if (!id || typeof id !== 'string') return false;
+      return fs.existsSync(getJournalPath(rootDir, id))
+        || fs.existsSync(getJournalPath(legacyRootDir, id));
+    },
+    /**
      * Read-only. `live-status` and `live-resume` call this against a session a
      * running server owns; writing the snapshot file here made every read a
      * write and let a reader's replay of a half-written journal land on disk.

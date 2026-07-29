@@ -179,6 +179,7 @@
     ],
     "orphanedWrapperScenario": {
       "sourceFile": "src/App.jsx"
-    }
+    },
+    "foreignSessionScenario": true
   }
 }
