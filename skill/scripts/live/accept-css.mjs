@@ -535,11 +535,20 @@ function removeSelectorAt(source, start, end) {
   if (braceIdx === -1) return { changed: false, selector, source };
   const bodyEnd = scanBlockEnd(source, braceIdx + 1);
 
-  // Prelude spans backward from the brace to the previous } ; { or style open.
+  // Prelude spans backward from the brace to the previous } ; { or the end
+  // of the <style> open tag. A bare `>` is NOT a boundary: it is the child
+  // combinator, and cutting there truncates a selector list like
+  // `.a > .b, .c` mid-prelude. Only a `>` that closes a `<style ...>` tag
+  // bounds the walk.
   let preludeStart = start;
   for (let i = start - 1; i >= 0; i--) {
     const ch = source[i];
-    if (ch === '}' || ch === '{' || ch === ';' || ch === '>') { preludeStart = i + 1; break; }
+    if (ch === '}' || ch === '{' || ch === ';') { preludeStart = i + 1; break; }
+    if (ch === '>') {
+      const styleOpen = source.lastIndexOf('<style', i);
+      if (styleOpen !== -1 && source.indexOf('>', styleOpen) === i) { preludeStart = i + 1; break; }
+      continue; // child combinator inside the prelude
+    }
     if (i === 0) preludeStart = 0;
   }
   const prelude = source.slice(preludeStart, braceIdx);

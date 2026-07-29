@@ -137,6 +137,33 @@ describe('compiler-driven pruning', () => {
     const { source } = pruneUnusedSelectors('<div>{broken', () => { throw new Error('nope'); });
     assert.equal(source, '<div>{broken');
   });
+
+  it('prunes past child combinators without truncating the selector list', () => {
+    // The prelude walk must not treat the child combinator as a boundary:
+    // cutting at the `>` of `.wrap > .item` used to rewrite the list from
+    // mid-prelude.
+    const component = `<div class="wrap"><p class="item">x</p></div>\n<style>\n  .wrap > .item, .orphan { font-weight: bold; }\n  .wrap { padding: 4px; }\n</style>`;
+    const { source, removed } = pruneUnusedSelectors(component, compile);
+    assert.deepEqual(removed, ['.orphan']);
+    assert.match(source, /\.wrap > \.item \{ font-weight: bold; \}/);
+    assert.match(source, /\.wrap \{ padding: 4px; \}/);
+    const { warnings } = compile(source, { generate: false });
+    assert.deepEqual(warnings.filter((w) => w.code === 'css_unused_selector'), []);
+  });
+
+  it('removes a fully unused combinator rule without leaving a dangling fragment', () => {
+    // The corruption shape: after a mid-prelude cut, every remaining fragment
+    // equals the flagged selector, so the whole-rule branch deleted from the
+    // cut point and left `.wrap >` dangling in source.
+    const component = `<div class="wrap"><p class="item">x</p></div>\n<style>\n  .wrap > .orphan, .orphan { color: blue; }\n  .wrap { padding: 4px; }\n</style>`;
+    const { source } = pruneUnusedSelectors(component, compile);
+    assert.doesNotMatch(source, /\.orphan/);
+    assert.doesNotMatch(source, /\.wrap >\s*\{/, 'no dangling combinator fragment');
+    assert.doesNotMatch(source, /\.wrap >\s*$/m, 'no dangling combinator line');
+    assert.match(source, /\.wrap \{ padding: 4px; \}/);
+    const { warnings } = compile(source, { generate: false });
+    assert.deepEqual(warnings.filter((w) => w.code === 'css_unused_selector'), []);
+  });
 });
 
 describe('postcondition scanner', () => {
