@@ -5,7 +5,8 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, appendFileSync, readFileSync } from 'node:fs';
+import fs from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, appendFileSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -392,5 +393,376 @@ describe('live-session-store', () => {
     assert.equal(snapshot.phase, 'generate_requested');
     assert.equal(snapshot.generationPhase, 'source_ready');
     assert.deepEqual(snapshot.generationTimings.source_ready, { at: 1234, durationMs: 42 });
+  });
+
+  describe('derived-state cache', () => {
+    /**
+     * Counts reads of one journal while `body` runs. The store patches nothing
+     * to make this observable: it calls fs.readFileSync on the module object
+     * this test also holds, so a replay is directly countable.
+     */
+    function countJournalReads(journalPath, body) {
+      const original = fs.readFileSync;
+      let reads = 0;
+      fs.readFileSync = (target, ...rest) => {
+        if (String(target) === journalPath) reads++;
+        return original(target, ...rest);
+      };
+      try {
+        body();
+      } finally {
+        fs.readFileSync = original;
+      }
+      return reads;
+    }
+
+    function countWrites(body) {
+      const originalWrite = fs.writeFileSync;
+      const originalAppend = fs.appendFileSync;
+      let writes = 0;
+      fs.writeFileSync = (...args) => { writes++; return originalWrite(...args); };
+      fs.appendFileSync = (...args) => { writes++; return originalAppend(...args); };
+      try {
+        body();
+      } finally {
+        fs.writeFileSync = originalWrite;
+        fs.appendFileSync = originalAppend;
+      }
+      return writes;
+    }
+
+    it('appends without replaying the journal it just wrote', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'append-cost' });
+      store.appendEvent({ type: 'generate', id: 'append-cost', count: 3, element: { classes: ['hero'] } });
+      const journalPath = join(getLiveSessionsDir(tmp), 'append-cost.jsonl');
+
+      const reads = countJournalReads(journalPath, () => {
+        for (let revision = 1; revision <= 25; revision++) {
+          store.appendEvent({ type: 'checkpoint', id: 'append-cost', revision, phase: 'cycling', visibleVariant: 1 });
+        }
+      });
+
+      assert.equal(
+        reads,
+        0,
+        'event=live_session_store.append_replay actor=server operation=append_event risk=quadratic_journal_replay expected=0 journal reads actual=' + reads,
+      );
+      const snapshot = store.getSnapshot('append-cost');
+      assert.equal(snapshot.checkpointRevision, 25);
+      assert.equal(snapshot.expectedVariants, 3);
+    });
+
+    it('keeps a full replay equivalent to the incremental result', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'equivalence' });
+      store.appendEvent({ type: 'generate', id: 'equivalence', count: 3, element: { classes: ['hero'] } });
+      store.appendEvent({ type: 'checkpoint', id: 'equivalence', revision: 4, phase: 'cycling', visibleVariant: 2 });
+      store.appendEvent({ type: 'checkpoint', id: 'equivalence', revision: 1, phase: 'cycling', visibleVariant: 9 });
+      store.appendEvent({ type: 'variant_mounted', id: 'equivalence', variant: 2 });
+      store.appendEvent({ type: 'variants_ready', id: 'equivalence', file: 'src/App.jsx', arrivedVariants: 3 });
+      const incremental = store.getSnapshot('equivalence');
+
+      // A store that has never seen this session has nothing cached and no
+      // usable snapshot file for it either, so it takes the replay path.
+      rmSync(join(getLiveSessionsDir(tmp), 'equivalence.snapshot.json'));
+      const replayed = createLiveSessionStore({ cwd: tmp }).getSnapshot('equivalence');
+
+      assert.deepEqual(
+        { ...replayed, updatedAt: null },
+        { ...incremental, updatedAt: null },
+        'event=live_session_store.incremental_drift actor=store operation=apply_event risk=cached_snapshot_diverges_from_journal',
+      );
+    });
+
+    it('answers reads without writing anything', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'read-only' });
+      store.appendEvent({ type: 'generate', id: 'read-only', count: 2, element: { classes: ['hero'] } });
+      const snapshotPath = join(getLiveSessionsDir(tmp), 'read-only.snapshot.json');
+      const before = { stat: statSync(snapshotPath).mtimeMs, body: readFileSync(snapshotPath, 'utf-8') };
+
+      // A separate instance stands in for live-status / live-resume, which run
+      // in their own process against a session the server owns.
+      const reader = createLiveSessionStore({ cwd: tmp });
+      const writes = countWrites(() => {
+        reader.getSnapshot('read-only');
+        reader.listActiveSessions();
+        reader.getSnapshot('read-only', { includeCompleted: true });
+      });
+
+      assert.equal(
+        writes,
+        0,
+        'event=live_session_store.read_writes actor=agent operation=get_snapshot risk=status_command_mutates_session_state expected=0 writes actual=' + writes,
+      );
+      assert.equal(statSync(snapshotPath).mtimeMs, before.stat);
+      assert.equal(readFileSync(snapshotPath, 'utf-8'), before.body);
+    });
+
+    it('reuses a snapshot file that still describes the journal, and skips one that does not', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'hydrate' });
+      store.appendEvent({ type: 'generate', id: 'hydrate', count: 3, element: { classes: ['hero'] } });
+      store.appendEvent({ type: 'variants_ready', id: 'hydrate', file: 'src/App.jsx', arrivedVariants: 3 });
+      const journalPath = join(getLiveSessionsDir(tmp), 'hydrate.jsonl');
+      const snapshotPath = join(getLiveSessionsDir(tmp), 'hydrate.snapshot.json');
+
+      const fresh = createLiveSessionStore({ cwd: tmp });
+      const hydratedReads = countJournalReads(journalPath, () => {
+        assert.equal(fresh.getSnapshot('hydrate').arrivedVariants, 3);
+      });
+      assert.equal(
+        hydratedReads,
+        0,
+        'event=live_session_store.list_replay actor=agent operation=list_active_sessions risk=every_status_call_replays_every_journal expected=0 journal reads actual=' + hydratedReads,
+      );
+
+      // A snapshot file whose recorded journal size no longer matches is not
+      // evidence of anything; the journal wins.
+      const stale = JSON.parse(readFileSync(snapshotPath, 'utf-8'));
+      stale.arrivedVariants = 99;
+      stale.__journalBytes = 1;
+      writeFileSync(snapshotPath, JSON.stringify(stale, null, 2));
+      const afterStale = createLiveSessionStore({ cwd: tmp }).getSnapshot('hydrate');
+      assert.equal(
+        afterStale.arrivedVariants,
+        3,
+        'event=live_session_store.stale_snapshot_trusted actor=store operation=get_snapshot risk=cache_outranks_journal expected=3 actual=' + afterStale.arrivedVariants,
+      );
+    });
+
+    it('ignores a corrupt snapshot file instead of failing the read', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'corrupt-cache' });
+      store.appendEvent({ type: 'generate', id: 'corrupt-cache', count: 2, element: { classes: ['hero'] } });
+      writeFileSync(join(getLiveSessionsDir(tmp), 'corrupt-cache.snapshot.json'), '{ not json');
+
+      const snapshot = createLiveSessionStore({ cwd: tmp }).getSnapshot('corrupt-cache');
+      assert.equal(snapshot.phase, 'generate_requested');
+      assert.equal(snapshot.expectedVariants, 2);
+    });
+
+    it('converges two store instances writing the same session from different processes', () => {
+      const server = createLiveSessionStore({ cwd: tmp, sessionId: 'two-writers' });
+      const publisher = createLiveSessionStore({ cwd: tmp, sessionId: 'two-writers' });
+
+      server.appendEvent({ type: 'generate', id: 'two-writers', count: 3, element: { classes: ['hero'] } });
+      // The publisher's first append must see the server's event, not start
+      // from an empty snapshot with sequence 1 again.
+      publisher.appendEvent({ type: 'checkpoint', id: 'two-writers', revision: 2, phase: 'cycling', arrivedVariants: 1 });
+      server.appendEvent({ type: 'variant_mounted', id: 'two-writers', variant: 1 });
+      publisher.appendEvent({ type: 'variants_ready', id: 'two-writers', file: 'src/App.jsx', arrivedVariants: 3 });
+
+      const fromServer = server.getSnapshot('two-writers');
+      const fromPublisher = publisher.getSnapshot('two-writers');
+      assert.deepEqual({ ...fromServer, updatedAt: null }, { ...fromPublisher, updatedAt: null });
+      assert.equal(fromServer.arrivedVariants, 3);
+      assert.equal(fromServer.expectedVariants, 3);
+      assert.deepEqual(fromServer.mountedVariants, [1]);
+
+      const seqs = readFileSync(join(getLiveSessionsDir(tmp), 'two-writers.jsonl'), 'utf-8')
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line).seq);
+      assert.deepEqual(
+        seqs,
+        [1, 2, 3, 4],
+        'event=live_session_store.seq_collision actor=publisher operation=append_event risk=two_processes_reuse_sequence_numbers actual=' + JSON.stringify(seqs),
+      );
+    });
+
+    it('re-derives when another process appends behind a cached reader', () => {
+      const reader = createLiveSessionStore({ cwd: tmp, sessionId: 'external-append' });
+      const writer = createLiveSessionStore({ cwd: tmp, sessionId: 'external-append' });
+      writer.appendEvent({ type: 'generate', id: 'external-append', count: 3, element: { classes: ['hero'] } });
+      assert.equal(reader.getSnapshot('external-append').phase, 'generate_requested');
+
+      writer.appendEvent({ type: 'accept', id: 'external-append', variantId: '2' });
+      assert.equal(
+        reader.getSnapshot('external-append').phase,
+        'accept_requested',
+        'event=live_session_store.cache_staleness actor=agent operation=get_snapshot risk=reader_serves_pre_accept_state',
+      );
+      assert.equal(reader.getSnapshot('external-append').visibleVariant, 2);
+    });
+
+    it('flushes the snapshot file on demand without appending an event', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'flushable' });
+      store.appendEvent({ type: 'generate', id: 'flushable', count: 1, element: { classes: ['hero'] } });
+      const snapshotPath = join(getLiveSessionsDir(tmp), 'flushable.snapshot.json');
+      rmSync(snapshotPath);
+
+      const flushed = createLiveSessionStore({ cwd: tmp }).flush('flushable');
+      assert.equal(flushed.phase, 'generate_requested');
+      const onDisk = JSON.parse(readFileSync(snapshotPath, 'utf-8'));
+      assert.equal(onDisk.phase, 'generate_requested');
+      const journalBytes = statSync(join(getLiveSessionsDir(tmp), 'flushable.jsonl')).size;
+      assert.equal(onDisk.__journalBytes, journalBytes);
+    });
+
+    it('keeps journal bookkeeping out of the snapshot it hands callers', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'no-meta' });
+      const returned = store.appendEvent({ type: 'generate', id: 'no-meta', count: 1, element: { classes: ['hero'] } });
+      assert.equal(returned.__journalBytes, undefined);
+      assert.equal(returned.__nextSeq, undefined);
+
+      const hydrated = createLiveSessionStore({ cwd: tmp }).getSnapshot('no-meta');
+      assert.equal(hydrated.__journalBytes, undefined);
+      assert.equal(hydrated.__nextSeq, undefined);
+    });
+  });
+
+  describe('render truth', () => {
+    function seedPublishedSession(store, id) {
+      store.appendEvent({ type: 'generate', id, count: 3, element: { classes: ['hero'] } });
+      store.appendEvent({ type: 'variants_ready', id, file: 'src/App.svelte' });
+    }
+
+    it('starts a published cycle as pending, before any browser acknowledgement', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'render-pending' });
+      seedPublishedSession(store, 'render-pending');
+
+      const snapshot = store.getSnapshot('render-pending');
+      assert.equal(
+        snapshot.arrivedVariants,
+        3,
+        'the published-variant backfill stays for compatibility',
+      );
+      assert.equal(
+        snapshot.renderState,
+        'pending',
+        'event=live_session_store.render_truth actor=agent operation=publish risk=published_mistaken_for_rendered expected=pending actual=' + snapshot.renderState,
+      );
+      assert.deepEqual(snapshot.mountedVariants, []);
+      assert.deepEqual(snapshot.mountFailures, []);
+    });
+
+    it('records distinct mounted variants and flips renderState to mounted', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'render-mounted' });
+      seedPublishedSession(store, 'render-mounted');
+      store.appendEvent({ type: 'variant_mounted', id: 'render-mounted', variant: 2 });
+      store.appendEvent({ type: 'variant_mounted', id: 'render-mounted', variant: 2 });
+      store.appendEvent({ type: 'variant_mounted', id: 'render-mounted', variant: 1 });
+
+      const snapshot = store.getSnapshot('render-mounted');
+      assert.deepEqual(snapshot.mountedVariants, [1, 2]);
+      assert.equal(snapshot.renderState, 'mounted');
+      assert.equal(snapshot.diagnostics.length, 0, 'mount acks are known event types');
+    });
+
+    it('reports failed while nothing has mounted, and caps the failure history at five', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'render-failed' });
+      seedPublishedSession(store, 'render-failed');
+      for (let i = 1; i <= 7; i++) {
+        store.appendEvent({
+          type: 'variant_mount_failed',
+          id: 'render-failed',
+          variant: i,
+          url: '/preview/v' + i + '.svelte',
+          error: 'import failed ' + i,
+          at: 1000 + i,
+        });
+      }
+
+      const snapshot = store.getSnapshot('render-failed');
+      assert.equal(snapshot.renderState, 'failed');
+      assert.equal(snapshot.mountFailures.length, 5);
+      assert.deepEqual(
+        snapshot.mountFailures.map((failure) => failure.variant),
+        [3, 4, 5, 6, 7],
+        'the newest failures are the ones worth keeping',
+      );
+      assert.deepEqual(snapshot.mountFailures[4], {
+        variant: 7,
+        url: '/preview/v7.svelte',
+        error: 'import failed 7',
+        at: 1007,
+      });
+    });
+
+    it('lets one successful mount outrank earlier failures', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'render-mixed' });
+      seedPublishedSession(store, 'render-mixed');
+      store.appendEvent({
+        type: 'variant_mount_failed', id: 'render-mixed', variant: 2, url: '/v2.svelte', error: 'boom',
+      });
+      assert.equal(store.getSnapshot('render-mixed').renderState, 'failed');
+      store.appendEvent({ type: 'variant_mounted', id: 'render-mixed', variant: 1 });
+
+      const snapshot = store.getSnapshot('render-mixed');
+      assert.equal(snapshot.renderState, 'mounted');
+      assert.equal(snapshot.mountFailures.length, 1, 'the failure stays on the record');
+    });
+
+    it('resets render truth when a new generate starts the next cycle', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'render-reset' });
+      seedPublishedSession(store, 'render-reset');
+      store.appendEvent({ type: 'variant_mounted', id: 'render-reset', variant: 1 });
+      store.appendEvent({
+        type: 'variant_mount_failed', id: 'render-reset', variant: 3, url: '/v3.svelte', error: 'boom',
+      });
+      store.appendEvent({ type: 'generate', id: 'render-reset', count: 2, element: { classes: ['hero'] } });
+
+      const snapshot = store.getSnapshot('render-reset');
+      assert.deepEqual(snapshot.mountedVariants, []);
+      assert.deepEqual(snapshot.mountFailures, []);
+      assert.equal(snapshot.renderState, null);
+    });
+
+    it('survives a journal replay in a fresh process', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'render-replay' });
+      seedPublishedSession(store, 'render-replay');
+      store.appendEvent({
+        type: 'variant_mount_failed', id: 'render-replay', variant: 1, url: '/v1.svelte', error: 'boom',
+      });
+
+      const restarted = createLiveSessionStore({ cwd: tmp, sessionId: 'render-replay' });
+      const snapshot = restarted.getSnapshot('render-replay');
+      assert.equal(snapshot.renderState, 'failed');
+      assert.equal(snapshot.mountFailures[0].url, '/v1.svelte');
+    });
+
+    it('diagnoses a mount ack with no usable variant instead of trusting it', () => {
+      const store = createLiveSessionStore({ cwd: tmp, sessionId: 'render-bad' });
+      seedPublishedSession(store, 'render-bad');
+      store.appendEvent({ type: 'variant_mounted', id: 'render-bad', variant: 0 });
+
+      const snapshot = store.getSnapshot('render-bad');
+      assert.deepEqual(snapshot.mountedVariants, []);
+      assert.equal(snapshot.renderState, 'pending');
+      assert.equal(snapshot.diagnostics.some((d) => d.error === 'malformed_mount_ack'), true);
+    });
+  });
+});
+
+describe('review regressions: durable mount failures', () => {
+  it('variant_mount_failed survives a helper restart as the pending event', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'impeccable-store-mountfail-'));
+    try {
+      const store = createLiveSessionStore({ cwd: tmp });
+      store.appendEvent({ type: 'generate', id: 'mf123456', count: 3, pageUrl: '/', element: { tagName: 'h1' } });
+      store.appendEvent({ type: 'agent_done', id: 'mf123456' });
+      store.appendEvent({ type: 'variant_mount_failed', id: 'mf123456', variant: 2, url: 'http://x/v2.svelte', error: 'boom' });
+
+      // A second store instance = the restarted helper.
+      const restarted = createLiveSessionStore({ cwd: tmp });
+      const snapshot = restarted.getSnapshot('mf123456');
+      assert.equal(snapshot.pendingEvent?.type, 'variant_mount_failed');
+      assert.equal(snapshot.pendingEvent?.variant, 2);
+
+      // The repair reply retires it.
+      restarted.appendEvent({ type: 'agent_done', id: 'mf123456', sourceEventType: 'variant_mount_failed' });
+      assert.equal(restarted.getSnapshot('mf123456').pendingEvent, null);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('a mount failure does not clobber a still-pending generate', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'impeccable-store-mountfail2-'));
+    try {
+      const store = createLiveSessionStore({ cwd: tmp });
+      store.appendEvent({ type: 'generate', id: 'mf223456', count: 3, pageUrl: '/', element: { tagName: 'h1' } });
+      store.appendEvent({ type: 'variant_mount_failed', id: 'mf223456', variant: 1, url: 'http://x/v1.svelte', error: 'early' });
+      assert.equal(store.getSnapshot('mf223456').pendingEvent?.type, 'generate');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

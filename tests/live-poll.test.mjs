@@ -169,3 +169,66 @@ describe('live-poll stream helpers', () => {
   });
 
 });
+
+describe('just-in-time event instructions', () => {
+  it('attaches situation-specific _instructions per event type', async () => {
+    const { instructionsForEvent } = await import('../skill/scripts/live/instructions.mjs');
+    const sp = '/scripts';
+
+    const steer = instructionsForEvent({ type: 'steer', id: 'ev1', message: 'x' }, { scriptsPath: sp });
+    assert.match(steer, /--reply ev1 steer_done/);
+
+    const mountFailed = instructionsForEvent({ type: 'variant_mount_failed', id: 'ev2', variant: 2, url: 'http://x/v2.svelte', error: 'boom' }, { scriptsPath: sp });
+    assert.match(mountFailed, /variant 2/);
+    assert.match(mountFailed, /--reply ev2 done --file/);
+
+    // Svelte component generate: only svelte guidance, with concrete paths.
+    const svelteGen = instructionsForEvent({
+      type: 'generate', id: 'ev3', count: 3, action: 'impeccable',
+      scaffold: { previewMode: 'svelte-component', componentDir: 'node_modules/.impeccable-live/ev3', file: 'node_modules/.impeccable-live/ev3/manifest.json', sourceFile: 'src/routes/+page.svelte' },
+    }, { scriptsPath: sp });
+    assert.match(svelteGen, /EDIT the existing stubs node_modules\/\.impeccable-live\/ev3\/v1\.svelte/);
+    assert.match(svelteGen, /params\.json/);
+    assert.doesNotMatch(svelteGen, /JSX|template literal/);
+    assert.match(svelteGen, /--reply ev3 done --file/);
+
+    // Deferred source-preview generate: single-edit rule with real line numbers.
+    const deferredGen = instructionsForEvent({
+      type: 'generate', id: 'ev4', count: 3, action: 'bolder',
+      scaffold: { sourceWritten: false, file: 'src/App.tsx', wrapperBlock: 'x', replaceStartLine: 12, replaceEndLine: 40 },
+    }, { scriptsPath: sp });
+    assert.match(deferredGen, /replace lines 12-40/);
+    assert.match(deferredGen, /ONE edit/);
+    assert.match(deferredGen, /reference\/bolder\.md/);
+    assert.doesNotMatch(deferredGen, /params\.json sidecar|componentDir/);
+
+    // Carbonize accept: the five steps inline with the real file + complete cmd.
+    const accept = instructionsForEvent({
+      type: 'accept', id: 'ev5', _acceptResult: { handled: true, carbonize: true, file: 'public/index.html' }, _completionAck: { ok: true },
+    }, { scriptsPath: sp });
+    assert.match(accept, /public\/index\.html/);
+    assert.match(accept, /live-complete\.mjs --id ev5/);
+
+    const mechanicalAccept = instructionsForEvent({
+      type: 'accept', id: 'ev6', _acceptResult: { handled: true, carbonize: false }, _completionAck: { ok: true },
+    }, { scriptsPath: sp });
+    assert.match(mechanicalAccept, /nothing to clean up/i);
+
+    const timeout = instructionsForEvent({ type: 'timeout' }, { scriptsPath: sp });
+    assert.match(timeout, /poll again/i);
+  });
+
+  it('printPollEvent embeds _instructions in the emitted JSON', async () => {
+    const { printPollEvent } = await import('../skill/scripts/live-poll.mjs');
+    const lines = [];
+    const orig = console.log;
+    console.log = (s) => lines.push(s);
+    try {
+      printPollEvent({ type: 'steer', id: 'zz1', message: 'hello' });
+    } finally {
+      console.log = orig;
+    }
+    const parsed = JSON.parse(lines[0]);
+    assert.match(parsed._instructions, /--reply zz1 steer_done/);
+  });
+});

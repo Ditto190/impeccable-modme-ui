@@ -7,11 +7,15 @@
     window.__impeccableStatefulMounts = (window.__impeccableStatefulMounts || 0) + 1;
   });
 
+  const CATALOG = [
+    { name: 'Design snack', amount: '$12', doc: '/receipts/snack' },
+    { name: 'Studio coffee', amount: '$8', doc: '/receipts/coffee' },
+    { name: 'Type license', amount: '$44', doc: '/receipts/type' },
+  ];
+
   function addExpense() {
-    expenses = [
-      ...expenses,
-      { id: expenses.length + 1, name: 'Design snack', amount: '$12' },
-    ];
+    const next = CATALOG[expenses.length % CATALOG.length];
+    expenses = [...expenses, { id: expenses.length + 1, ...next }];
   }
 </script>
 
@@ -31,10 +35,15 @@
         <p>Fügt die nächste gemeinsame Ausgabe hinzu, dann landet sie hier.</p>
       </article>
     {:else}
-      <article class="expense-row" data-testid="expense-row">
-        <strong>{expenses[0].name}</strong>
-        <span>{expenses[0].amount}</span>
-      </article>
+      <ul class="expense-list" data-testid="expense-list">
+        {#each expenses as expense, i}
+          <li class="expense-row" data-testid="expense-row" data-index={i}>
+            <strong class="expense-name">{expense.name}</strong>
+            <span class="expense-amount">{expense.amount}</span>
+            <a class="expense-doc" href={expense.doc}>Beleg</a>
+          </li>
+        {/each}
+      </ul>
     {/if}
   </section>
 
@@ -96,18 +105,33 @@
     color: #1b3329;
   }
 
-  .empty-card,
-  .expense-row {
+  .empty-card {
     border: 1px solid #16332b;
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.62);
     padding: 26px;
   }
 
+  /* The padding is what the E2E picker aims at: a container whose centre is
+     covered by a child can never be hovered, so the list keeps a band of its
+     own around the rows. */
+  .expense-list {
+    display: grid;
+    gap: 14px;
+    margin: 0;
+    padding: 24px;
+    list-style: none;
+    font-weight: 500;
+  }
+
   .expense-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    border: 1px solid #16332b;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.62);
+    padding: 26px;
   }
 
   .detect-target {

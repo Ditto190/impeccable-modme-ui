@@ -36,6 +36,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const LIVE_MD_PATH = path.join(REPO_ROOT, 'skill', 'reference', 'live.md');
 
+// Frontier default: gpt-5.6-terra at medium reasoning effort. Haiku stayed
+// too far below the models that actually drive live sessions in the field;
+// a spec change Haiku tolerates can still confuse or be confused by the
+// frontier tier, so the harness should exercise the tier users run.
+const DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra';
+const DEFAULT_OPENAI_REASONING_EFFORT = 'medium';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-4-5';
 // DeepSeek model list: https://api-docs.deepseek.com/api/list-models
 const DEFAULT_DEEPSEEK_MODEL = 'deepseek-v4-flash';
@@ -199,6 +205,17 @@ const STEER_SYSTEM_INSTRUCTIONS = [
 export function resolveLlmAgentConfig(opts = {}, env = process.env) {
   const provider = resolveProvider(opts, env);
 
+  if (provider === 'openai') {
+    return {
+      provider,
+      model: opts.model || env.IMPECCABLE_E2E_LLM_MODEL || DEFAULT_OPENAI_MODEL,
+      apiKey: opts.apiKey || env.OPENAI_API_KEY,
+      requiredEnv: 'OPENAI_API_KEY',
+      baseURL: opts.baseURL || env.OPENAI_BASE_URL,
+      reasoningEffort: opts.reasoningEffort || env.IMPECCABLE_E2E_LLM_EFFORT || DEFAULT_OPENAI_REASONING_EFFORT,
+    };
+  }
+
   if (provider === 'anthropic') {
     return {
       provider,
@@ -225,9 +242,51 @@ export function resolveLlmAgentConfig(opts = {}, env = process.env) {
 function resolveProvider(opts, env) {
   const explicit = opts.provider || env.IMPECCABLE_E2E_LLM_PROVIDER;
   if (explicit) return String(explicit).trim().toLowerCase();
+  if (env.OPENAI_API_KEY) return 'openai';
   if (env.ANTHROPIC_API_KEY) return 'anthropic';
   if (env.DEEPSEEK_API_KEY) return 'deepseek';
-  return 'anthropic';
+  return 'openai';
+}
+
+/**
+ * Anthropic-SDK-shaped shim over the `ai` SDK for OpenAI models, so the
+ * three text-only call sites in this file stay provider-agnostic. system
+ * blocks are joined (OpenAI caches long prefixes automatically; the
+ * cache_control marker is Anthropic-specific), temperature is omitted
+ * (reasoning models reject it), and the reasoning effort rides through
+ * providerOptions.
+ */
+async function createOpenAiShim({ apiKey, baseURL, reasoningEffort, }) {
+  const [{ generateText }, { createOpenAI }] = await Promise.all([
+    import('ai'),
+    import('@ai-sdk/openai'),
+  ]);
+  const provider = createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  return {
+    messages: {
+      async create({ model, system, messages, max_tokens }, { timeout } = {}) {
+        const systemText = Array.isArray(system)
+          ? system.map((block) => block?.text || '').filter(Boolean).join('\n\n')
+          : String(system || '');
+        const result = await generateText({
+          model: provider(model),
+          system: systemText,
+          messages: messages.map((m) => ({ role: m.role, content: String(m.content) })),
+          maxOutputTokens: max_tokens,
+          abortSignal: timeout ? AbortSignal.timeout(timeout) : undefined,
+          providerOptions: { openai: { reasoningEffort } },
+        });
+        return {
+          content: [{ type: 'text', text: result.text }],
+          usage: {
+            input_tokens: result.usage?.inputTokens ?? 0,
+            output_tokens: result.usage?.outputTokens ?? 0,
+            cache_read_input_tokens: result.usage?.cachedInputTokens ?? 0,
+          },
+        };
+      },
+    },
+  };
 }
 
 /**
@@ -242,7 +301,9 @@ export async function createLlmAgent(opts = {}) {
   const log = opts.log || (() => {});
 
   const liveMd = opts.includeLiveSpec === false ? null : await fs.readFile(LIVE_MD_PATH, 'utf-8');
-  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  const client = provider === 'openai'
+    ? await createOpenAiShim({ apiKey, baseURL, reasoningEffort: config.reasoningEffort })
+    : new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
   const systemBlocks = (instructions) => [
     {
       type: 'text',

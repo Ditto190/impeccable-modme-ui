@@ -1082,6 +1082,257 @@ describe('live-browser.js regression guards', () => {
     );
   });
 
+  it('acknowledges every successful component mount back to the server', () => {
+    // `arrivedVariants` counts what the agent published. Without this ack the
+    // server has no way to tell "the user is comparing three variants" from
+    // "three modules 404'd and the page is blank".
+    assert.match(
+      SOURCE,
+      /reportVariantMounted\(sessionId, variantNum, moduleUrl\);/,
+      'a successful mount must post variant_mounted so the journal carries render truth',
+    );
+    assert.match(
+      SOURCE,
+      /function reportVariantMounted\([\s\S]{0,400}?sendEvent\(\{\s*type: 'variant_mounted',/,
+      'variant_mounted must go through the normal event POST helper',
+    );
+  });
+
+  it('reports mount failures to the server instead of only logging them', () => {
+    assert.match(
+      SOURCE,
+      /console\.error\('\[impeccable\] Failed to mount component variant[\s\S]{0,200}?reportVariantMountFailed\(sessionId, variantNum, moduleUrl, err\);/,
+      'event=live_browser.silent_mount_failure actor=browser operation=mount_component_variant risk=agent_never_learns_render_failed expected=variant_mount_failed posted actual=console.error only',
+    );
+    assert.match(
+      SOURCE,
+      /function reportVariantMountFailed\([\s\S]{0,900}?sendEvent\(\{ type: 'variant_mount_failed', id: sessionId, variant, url, error: message \}\);/,
+      'variant_mount_failed must carry the failed module URL and the error text',
+    );
+    // Both the first mount and a variant switch route through this one catch,
+    // so the switch path can no longer revert with zero feedback.
+    assert.match(
+      SOURCE,
+      /reportVariantMountFailed\(sessionId, variantNum, moduleUrl, err\);[\s\S]{0,300}?showMountErrorCard\(sessionId, \{/,
+      'a failed mount must raise the persistent error card from the shared catch',
+    );
+  });
+
+  it('keeps the session alive when a component variant fails to mount', () => {
+    const abort = SOURCE.match(
+      /function abortSvelteComponentInjection\(sessionId, details\) \{[\s\S]*?\n  \}\n/,
+    );
+    assert.ok(abort, 'abortSvelteComponentInjection must still exist');
+    const body = abort[0];
+    assert.doesNotMatch(
+      body,
+      /clearSession\(\)/,
+      'event=live_browser.mount_failure_wipe actor=browser operation=abort_svelte_injection risk=durable_session_orphaned expected=localStorage preserved actual=clearSession() called',
+    );
+    assert.doesNotMatch(
+      body,
+      /currentSessionId = null/,
+      'the session id is the only handle Retry and a republish have; abort must not drop it',
+    );
+    assert.doesNotMatch(
+      body,
+      /setLiveState\('PICKING'\)/,
+      'a mount failure is not the end of the session, so the bar must not fall back to PICKING',
+    );
+    assert.doesNotMatch(
+      body,
+      /showToast\(/,
+      'the 5s toast was replaced by a persistent card; a toast that vanishes reads as no feedback at all',
+    );
+    assert.match(body, /showMountErrorCard\(/, 'abort must raise the persistent error card');
+    assert.match(body, /saveSession\(\)/, 'abort must keep the localStorage cache in step with the server');
+  });
+
+  it('gives the manifest fetch failure and the session mismatch the same error card', () => {
+    assert.doesNotMatch(
+      SOURCE,
+      /if \(manifest\.id !== sessionId\) return;/,
+      'event=live_browser.silent_manifest_mismatch actor=browser operation=inject_from_manifest risk=bar_stuck_in_generating expected=error card actual=bare return',
+    );
+    assert.match(
+      SOURCE,
+      /if \(manifest\.id !== sessionId\) \{[\s\S]{0,700}?showMountErrorCard\(sessionId, \{/,
+      'a manifest belonging to another session must surface, not disappear',
+    );
+    assert.match(
+      SOURCE,
+      /Failed to mount component-preview variants:[\s\S]{0,400}?reportVariantMountFailed\(sessionId, visibleVariant \|\| 1, manifestPath, err\);/,
+      'a manifest that cannot be read is a render failure the agent must hear about',
+    );
+    assert.doesNotMatch(
+      SOURCE,
+      /reportVariantMountFailed\(sessionId, visibleVariant \|\| 1, url,/,
+      'the /source fetch URL carries the live token and must never be journaled; report the manifest path',
+    );
+  });
+
+  it('offers a retry that re-runs injection for the same session', () => {
+    assert.match(
+      SOURCE,
+      /function retryMountErrorCard\(\) \{[\s\S]{0,900}?injectSvelteComponentsFromManifest\(manifestPath, sessionId\);/,
+      'the Retry button must re-enter the normal injection path rather than restarting the session',
+    );
+    assert.match(
+      SOURCE,
+      /function truncateMiddle\(value, max\)/,
+      'the card shows the failed module URL truncated in the middle so both ends stay readable',
+    );
+  });
+
+  it('rehydrates from the server when localStorage has no session', () => {
+    assert.doesNotMatch(
+      SOURCE,
+      /function restoreSessionWithoutWrapper\(reason, activeSessions\) \{\s*const saved = loadSession\(\);/,
+      'event=live_browser.storage_gated_restore actor=browser operation=sse_connected risk=durable_session_unreachable expected=server summary can seed a restore actual=localStorage is a gate',
+    );
+    assert.match(
+      SOURCE,
+      /const adopted = cached\?\.id \? null : findAdoptableServerSession\(activeSessions\);/,
+      'a page with no cached session must be able to adopt the durable one the server reports',
+    );
+    assert.match(
+      SOURCE,
+      /function findAdoptableServerSession\(activeSessions\) \{[\s\S]{0,600}?&& session\.pageUrl\s*&& pageMatchesCurrent\(session\.pageUrl\)/,
+      'adoption must require an explicit pageUrl match so it cannot hijack an unrelated route',
+    );
+    assert.match(
+      SOURCE,
+      /function findAdoptableServerSession\(activeSessions\) \{[\s\S]{0,600}?!isTerminalSessionSummary\(session\)/,
+      'accepted, discarded, and completed sessions must never be adopted',
+    );
+  });
+
+  it('carries no agent phase the server cannot emit', () => {
+    // Every one of these lived in PHASE_RANK and, for most, in a status string
+    // the user could never see: recordAgentPhase() in live-server.mjs has
+    // never emitted them. The validator now rejects them outright, so a
+    // leftover branch here is a branch that cannot run.
+    for (const retired of [
+      'first_variant_generating',
+      'first_variant_validating',
+      'remaining_variants_generating',
+      'remaining_variants_validating',
+      'variant_parameters_generating',
+      'variant_parameters_validating',
+      'parameters_ready',
+    ]) {
+      assert.doesNotMatch(
+        SOURCE,
+        new RegExp(retired),
+        'event=live_browser.dead_agent_phase actor=browser operation=phase_rank risk=ui_branches_on_phase_nothing_sends phase=' + retired,
+      );
+    }
+    // The phases the server does emit must all still rank.
+    for (const live of [
+      'picked_up', 'scaffolding', 'scaffold_fallback', 'source_ready',
+      'generation_ready', 'first_reviewable', 'second_reviewable', 'all_variants_ready',
+    ]) {
+      assert.match(SOURCE, new RegExp('\\n\\s+' + live + ': \\d+,'), live + ' must keep a rank');
+    }
+  });
+
+  it('renders the cycling counter through one function with one denominator', () => {
+    // buildCyclingRow showed visibleVariant/expectedVariants while
+    // syncCyclingControls wrote shown/arrivedVariants, so the same unchanged
+    // state rendered as "2/3" or "2/2" depending on which path ran last.
+    assert.doesNotMatch(
+      SOURCE,
+      /visibleVariant \+ '\/' \+ expectedVariants/,
+      'event=live_browser.counter_drift actor=browser operation=cycling_counter risk=two_denominators_for_one_counter',
+    );
+    assert.doesNotMatch(SOURCE, /shown \+ '\/' \+ arrivedVariants/);
+    assert.match(
+      SOURCE,
+      /function cyclingCounterText\(\) \{[\s\S]{0,300}?arrivedVariants > 0 \? arrivedVariants : expectedVariants/,
+      'the denominator policy is arrived-when-known, expected otherwise, in one place',
+    );
+    const counterAssignments = SOURCE.match(/-variant-counter'\)?;?[\s\S]{0,120}?textContent = ([^;]+);/g) || [];
+    for (const assignment of counterAssignments) {
+      assert.match(assignment, /cyclingCounterText\(\)/, 'every counter write goes through cyclingCounterText');
+    }
+  });
+
+  it('gives the steer bar a visible Send control alongside Enter', () => {
+    assert.match(
+      SOURCE,
+      /pageChatSendBtn = el\('button'/,
+      'event=live_browser.steer_send_affordance actor=user operation=steer risk=enter_only_submit_reads_as_dead_input',
+    );
+    assert.match(SOURCE, /pageChatSendBtn\.id = PREFIX \+ '-page-chat-send'/);
+    assert.match(
+      SOURCE,
+      /function syncPageChatSendButton\(\)[\s\S]{0,900}?pageChatSendBtn\.disabled = !visible \|\| !hasText/,
+      'Send is disabled with an empty input',
+    );
+    assert.match(
+      SOURCE,
+      /function syncPageChatSendButton\(\)[\s\S]{0,900}?const visible = !steerLocked/,
+      'Send disappears while a steer is in flight',
+    );
+    // Enter must still submit.
+    assert.match(
+      SOURCE,
+      /if \(e\.key === 'Enter'\) \{\s*e\.preventDefault\(\);\s*submitSteerMessage\(\);/,
+      'keyboard submit stays',
+    );
+    assert.match(
+      SOURCE,
+      /PREFIX \+ '-page-chat-send'\] \}/,
+      'the Send control must be registered as live UI chrome so it is excluded from capture',
+    );
+  });
+
+  it('says a queued steer is queued instead of pulsing at the user', () => {
+    assert.match(
+      SOURCE,
+      /function steerQueuedBehindGeneration\(\) \{[\s\S]{0,220}?steerLocked && !agentPollingConnected && agentHasWorkInFlight\(\)/,
+      'event=live_browser.steer_queue_feedback actor=user operation=steer_during_generation risk=queued_request_reads_as_lost',
+    );
+    assert.match(SOURCE, /Queued behind current generation/);
+    assert.match(
+      SOURCE,
+      /function syncSteerQueueHint\(\)[\s\S]{0,400}?pageChatDotsEl\.style\.display = 'none'/,
+      'the queue hint replaces the bare dots rather than sitting beside them',
+    );
+    assert.match(SOURCE, /function syncAgentPollingUi\(connected\) \{[\s\S]{0,140}?syncSteerQueueHint\(\)/);
+  });
+
+  it('names the actual cause when a steer times out', () => {
+    assert.doesNotMatch(
+      SOURCE,
+      /Check that live-poll is running and replies with steer_done/,
+      'event=live_browser.steer_timeout_copy actor=user operation=steer_timeout risk=blames_live_poll_for_a_busy_agent',
+    );
+    assert.match(
+      SOURCE,
+      /function steerTimeoutMessage\(\)[\s\S]{0,900}?steerQueuedBehindGeneration\(\)[\s\S]{0,400}?!agentPollingConnected/,
+      'the timeout message branches on agent-busy vs nobody-polling',
+    );
+  });
+
+  it('distinguishes an empty DESIGN.md from a missing one in the design panel', () => {
+    assert.match(
+      SOURCE,
+      /function designEmptyMessage\(\)[\s\S]{0,700}?designState\.hasMd && !designState\.hasSidecar[\s\S]{0,300}?DESIGN\.md found, no structured tokens to display/,
+      'event=live_browser.design_empty_state actor=user operation=open_design_panel risk=present_design_md_reported_as_missing',
+    );
+    assert.match(
+      SOURCE,
+      /const beforeCount = body\.childElementCount;/,
+      'the empty check must ignore the stale hint and CTA the caller already appended',
+    );
+    assert.doesNotMatch(
+      SOURCE,
+      /msgDiv\('empty', 'No design system data available\.'\)/,
+      'the bare message may only survive as the genuinely-absent branch of designEmptyMessage',
+    );
+  });
+
   it('editing focus timeout does not read a stale inline edit row', () => {
     assert.doesNotMatch(
       SOURCE,
@@ -1094,4 +1345,28 @@ describe('live-browser.js regression guards', () => {
       'edit-mode delayed focus should capture the element before scheduling and no-op if editing ended before the timeout fires',
     );
   });
+  it('adopts only variant comparisons from the server, never steer or manual sessions', () => {
+    // A completed-steer session is non-terminal and carries a sourceFile;
+    // adopting it as a comparison hunts for a variant wrapper that never
+    // existed and wedges the bar before the user's next pick (found by the
+    // vite8-react-base-path e2e after server-first rehydration landed).
+    assert.match(
+      SOURCE,
+      /function findAdoptableServerSession\([\s\S]{0,900}?Number\(session\.expectedVariants\) > 0/,
+      'adoption must require a generation-shaped session (expectedVariants > 0)',
+    );
+    assert.match(
+      SOURCE,
+      /function findAdoptableServerSession\([\s\S]{0,900}?ADOPTABLE_SESSION_PHASES\.has\(String\(session\.phase/,
+      'adoption must be limited to the comparison-phase allowlist',
+    );
+    // Accept/carbonize phases are agent-side work; adopting them resurrects
+    // the bar over a decided comparison (the slow-CI astro accept hang).
+    assert.doesNotMatch(
+      SOURCE,
+      /ADOPTABLE_SESSION_PHASES = new Set\(\[[\s\S]{0,200}?(accept_requested|carbonize|steer|manual_edit)/,
+      'accept, carbonize, steer, and manual-edit phases must not be adoptable',
+    );
+  });
+
 });

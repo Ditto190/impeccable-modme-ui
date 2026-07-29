@@ -12,7 +12,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,7 @@ import { detectCsp } from '../skill/scripts/detect-csp.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPTS_DIR = join(__dirname, '..', 'skill', 'scripts');
+const REPO_ROOT = join(__dirname, '..');
 const FIXTURES_DIR = join(__dirname, 'framework-fixtures');
 
 function listFixtures() {
@@ -45,6 +46,22 @@ function stageFixture(name) {
   writeFileSync(join(tmp, '.gitignore'), gitignore);
   mkdirSync(join(tmp, '.impeccable', 'live'), { recursive: true });
   writeFileSync(join(tmp, '.impeccable', 'live', 'config.json'), JSON.stringify(fixture.config));
+
+  // The AST scaffolder resolves the app's svelte compiler from the staged
+  // root; the runtime suite gets it from a real npm install, the static sweep
+  // links this repo's devDependency so svelte fixtures take the
+  // component-preview path here too.
+  const repoSvelte = join(REPO_ROOT, 'node_modules', 'svelte');
+  if (existsSync(repoSvelte) && !existsSync(join(tmp, 'node_modules', 'svelte'))) {
+    mkdirSync(join(tmp, 'node_modules'), { recursive: true });
+    try {
+      symlinkSync(repoSvelte, join(tmp, 'node_modules', 'svelte'), 'dir');
+    } catch {
+      // Windows without Developer Mode cannot symlink; copying is slower but
+      // keeps the suite runnable there.
+      cpSync(repoSvelte, join(tmp, 'node_modules', 'svelte'), { recursive: true });
+    }
+  }
 
   execFileSync('git', ['init', '-q'], { cwd: tmp });
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: tmp });

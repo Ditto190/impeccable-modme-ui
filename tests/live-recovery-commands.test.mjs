@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -15,6 +15,13 @@ function withTempProject(fn) {
   const cwd = mkdtempSync(join(tmpdir(), 'impeccable-live-recovery-'));
   try { return fn(cwd); }
   finally { rmSync(cwd, { recursive: true, force: true }); }
+}
+
+function snapshotDir(dir) {
+  return readdirSync(dir).sort().map((name) => {
+    const filePath = join(dir, name);
+    return { name, mtimeMs: statSync(filePath).mtimeMs, body: readFileSync(filePath, 'utf-8') };
+  });
 }
 
 function runJson(script, args, cwd) {
@@ -32,6 +39,26 @@ describe('live recovery CLI commands', () => {
     assert.equal(status.activeSessions.length, 1);
     assert.equal(status.activeSessions[0].id, 'cli-recover-1');
     assert.match(status.recoveryHint, /Start live-server/);
+  }));
+
+  it('leaves every session file untouched while reporting status', () => withTempProject((cwd) => {
+    const store = createLiveSessionStore({ cwd });
+    store.appendEvent({ type: 'generate', id: 'cli-readonly-1', action: 'impeccable', count: 2, pageUrl: '/', element: { outerHTML: '<section>Hero</section>' } });
+    store.appendEvent({ type: 'variants_ready', id: 'cli-readonly-1', file: 'src/App.jsx', arrivedVariants: 2 });
+
+    const sessionsDir = join(cwd, '.impeccable', 'live', 'sessions');
+    const before = snapshotDir(sessionsDir);
+
+    // Both commands run in their own process against a session a live server
+    // may still own. Reporting on it must not rewrite it.
+    runJson(STATUS_SCRIPT, [], cwd);
+    runJson(RESUME_SCRIPT, ['--id', 'cli-readonly-1'], cwd);
+
+    assert.deepEqual(
+      snapshotDir(sessionsDir),
+      before,
+      'event=live_recovery.read_mutates_state actor=agent operation=status_and_resume risk=reporting_rewrites_session_files',
+    );
   }));
 
   it('resumes the pending event and reports the next safe agent action', () => withTempProject((cwd) => {
@@ -98,6 +125,48 @@ describe('live recovery CLI commands', () => {
       /Finish carbonize cleanup in src\/App\.jsx/,
       'event=live_resume.carbonize_next_action actor=agent operation=recover_carbonize risk=carbonize_cleanup_hidden_after_accept expected=cleanup-specific action actual=' + resume.nextAction,
     );
+  }));
+
+  it('reports render truth so published is never read as rendered', () => withTempProject((cwd) => {
+    const store = createLiveSessionStore({ cwd });
+    store.appendEvent({ type: 'generate', id: 'cli-render-1', action: 'impeccable', count: 3, pageUrl: '/', element: { outerHTML: '<section>Hero</section>' } });
+    store.appendEvent({ type: 'agent_done', id: 'cli-render-1', file: 'src/App.svelte' });
+    store.appendEvent({ type: 'variant_mounted', id: 'cli-render-1', variant: 1 });
+
+    const resume = runJson(RESUME_SCRIPT, ['--id', 'cli-render-1'], cwd);
+    assert.equal(resume.render.renderState, 'mounted');
+    assert.deepEqual(resume.render.mountedVariants, [1]);
+    assert.deepEqual(resume.render.mountFailures, []);
+
+    const status = runJson(STATUS_SCRIPT, [], cwd);
+    assert.equal(status.render[0].renderState, 'mounted');
+    assert.deepEqual(status.render[0].mountedVariants, [1]);
+  }));
+
+  it('turns a browser mount failure into an actionable next step', () => withTempProject((cwd) => {
+    const store = createLiveSessionStore({ cwd });
+    store.appendEvent({ type: 'generate', id: 'cli-render-2', action: 'impeccable', count: 3, pageUrl: '/', element: { outerHTML: '<section>Hero</section>' } });
+    store.appendEvent({ type: 'agent_done', id: 'cli-render-2', file: 'src/App.svelte' });
+    store.appendEvent({
+      type: 'variant_mount_failed',
+      id: 'cli-render-2',
+      variant: 2,
+      url: '/preview/v2.svelte',
+      error: 'Failed to fetch dynamically imported module',
+    });
+
+    const resume = runJson(RESUME_SCRIPT, ['--id', 'cli-render-2'], cwd);
+    assert.equal(resume.render.renderState, 'failed');
+    assert.match(
+      resume.nextAction,
+      /failed to mount variant 2 from \/preview\/v2\.svelte/,
+      'event=live_resume.mount_failure_action actor=agent operation=recover_session risk=agent_thinks_variants_are_on_screen expected=named failing variant and url actual=' + resume.nextAction,
+    );
+    assert.match(resume.nextAction, /variant_mount_failed/);
+    assert.match(resume.nextAction, /--reply cli-render-2 done --file/);
+
+    const status = runJson(STATUS_SCRIPT, [], cwd);
+    assert.match(status.recoveryHint, /failed to mount variant 2/);
   }));
 
   it('marks a session completed through the canonical completion command', () => withTempProject((cwd) => {

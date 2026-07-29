@@ -5,7 +5,11 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateEvent } from '../skill/scripts/live/event-validation.mjs';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import { AGENT_PHASES, CLIENT_EVENT_TYPES, validateEvent } from '../skill/scripts/live/event-validation.mjs';
+import { VISUAL_ACTIONS } from '../skill/scripts/live/vocabulary.mjs';
 
 const VALID_ID = 'a1b2c3d4';
 
@@ -98,15 +102,123 @@ describe('validateEvent — replace generate (regression)', () => {
   });
 });
 
-describe('validateEvent — worker progress', () => {
-  it('accepts bounded agent phases and rejects malformed telemetry', () => {
+describe('validateEvent — mount acknowledgements', () => {
+  it('accepts a well-formed variant_mounted ack with and without a url', () => {
+    assert.equal(validateEvent({ type: 'variant_mounted', id: VALID_ID, variant: 2 }), null);
     assert.equal(validateEvent({
-      type: 'agent_phase',
+      type: 'variant_mounted',
       id: VALID_ID,
-      phase: 'first_variant_generating',
-      durationMs: 123,
+      variant: 1,
+      url: 'http://localhost:5173/.impeccable/live/preview/v1.svelte',
     }), null);
+  });
+
+  it('rejects malformed variant_mounted acks', () => {
+    assert.match(validateEvent({ type: 'variant_mounted', id: 'nope', variant: 1 }), /malformed id/);
+    assert.match(validateEvent({ type: 'variant_mounted', id: VALID_ID, variant: 0 }), /variant/);
+    assert.match(validateEvent({ type: 'variant_mounted', id: VALID_ID, variant: 1.5 }), /variant/);
+    assert.match(validateEvent({ type: 'variant_mounted', id: VALID_ID }), /variant/);
+    assert.match(validateEvent({ type: 'variant_mounted', id: VALID_ID, variant: 1, url: 42 }), /url must be string/);
+    assert.match(
+      validateEvent({ type: 'variant_mounted', id: VALID_ID, variant: 1, url: 'u'.repeat(2001) }),
+      /url too long/,
+    );
+  });
+
+  it('accepts a well-formed variant_mount_failed report', () => {
+    assert.equal(validateEvent({
+      type: 'variant_mount_failed',
+      id: VALID_ID,
+      variant: 3,
+      url: '/preview/v3.svelte',
+      error: 'Failed to fetch dynamically imported module',
+    }), null);
+  });
+
+  it('requires url and error on variant_mount_failed and caps their length', () => {
+    const base = { type: 'variant_mount_failed', id: VALID_ID, variant: 1, url: '/v1.svelte', error: 'boom' };
+    assert.match(validateEvent({ ...base, url: undefined }), /url required/);
+    assert.match(validateEvent({ ...base, url: '   ' }), /url required/);
+    assert.match(validateEvent({ ...base, error: undefined }), /error required/);
+    assert.match(validateEvent({ ...base, error: '  ' }), /error required/);
+    assert.match(validateEvent({ ...base, url: 'u'.repeat(2001) }), /url too long/);
+    assert.match(validateEvent({ ...base, error: 'e'.repeat(1001) }), /error too long/);
+    assert.match(validateEvent({ ...base, id: 'ZZZZ' }), /malformed id/);
+    assert.match(validateEvent({ ...base, variant: '2' }), /variant/);
+  });
+});
+
+describe('validateEvent — worker progress', () => {
+  it('accepts every phase the server emits and rejects malformed telemetry', () => {
+    for (const phase of AGENT_PHASES) {
+      assert.equal(
+        validateEvent({ type: 'agent_phase', id: VALID_ID, phase, durationMs: 123 }),
+        null,
+        'event=live_event_validation.agent_phase actor=server operation=validate risk=server_phase_rejected phase=' + phase,
+      );
+    }
     assert.match(validateEvent({ type: 'agent_phase', id: VALID_ID, phase: 'Not valid' }), /phase/);
-    assert.match(validateEvent({ type: 'agent_phase', id: VALID_ID, phase: 'valid', durationMs: -1 }), /durationMs/);
+    assert.match(validateEvent({ type: 'agent_phase', id: VALID_ID, phase: 'all_variants_ready', durationMs: -1 }), /durationMs/);
+  });
+
+  it('rejects a phase no component models instead of ranking it as unknown', () => {
+    // These were carried in the browser's PHASE_RANK table and its status
+    // strings long after the server stopped emitting them. A phase nothing
+    // sends is a phase nothing can render.
+    for (const retired of [
+      'first_variant_generating',
+      'first_variant_validating',
+      'remaining_variants_generating',
+      'remaining_variants_validating',
+      'variant_parameters_generating',
+      'variant_parameters_validating',
+      'parameters_ready',
+    ]) {
+      assert.match(
+        validateEvent({ type: 'agent_phase', id: VALID_ID, phase: retired }),
+        /unknown phase/,
+        'event=live_event_validation.retired_phase actor=server operation=validate risk=dead_enum_value_revived phase=' + retired,
+      );
+    }
+    assert.match(validateEvent({ type: 'agent_phase', id: VALID_ID, phase: '' }), /missing phase/);
+  });
+});
+
+describe('protocol vocabulary', () => {
+  const SOURCE = readFileSync(
+    fileURLToPath(new URL('../skill/scripts/live/event-validation.mjs', import.meta.url)),
+    'utf-8',
+  );
+
+  it('validates exactly the event types the vocabulary advertises', () => {
+    for (const type of CLIENT_EVENT_TYPES) {
+      assert.equal(
+        /^Unknown event type/.test(String(validateEvent({ type }))),
+        false,
+        'event=live_vocabulary.client_event_types actor=browser operation=validate risk=advertised_type_unroutable type=' + type,
+      );
+    }
+    assert.match(validateEvent({ type: 'not_a_real_event' }), /^Unknown event type/);
+  });
+
+  it('keeps the enums in the vocabulary module rather than inlined here', () => {
+    assert.doesNotMatch(
+      SOURCE,
+      /\[\^a-z\]\{1,63\}|\{1,63\}/,
+      'agent_phase must be checked against the enum, not a shape pattern',
+    );
+    assert.match(SOURCE, /from '\.\/vocabulary\.mjs'/);
+  });
+
+  it('accepts every palette action as a generate action', () => {
+    for (const action of VISUAL_ACTIONS) {
+      assert.equal(validateEvent({
+        type: 'generate',
+        id: VALID_ID,
+        count: 1,
+        action,
+        element: { outerHTML: '<button>Go</button>' },
+      }), null);
+    }
   });
 });

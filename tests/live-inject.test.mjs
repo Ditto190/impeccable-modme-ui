@@ -6,7 +6,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, realpathSync, rmSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -455,5 +455,154 @@ const title = 'Test';
     assert.equal(result.adapter, 'nuxt');
     assert.equal(result.results[0].error, 'nuxt_plugin_conflict');
     assert.equal(readFileSync(pluginPath, 'utf-8'), userPlugin);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Injection journal — the CLI half. The unit-level heal semantics live in
+// tests/live-frameworks.test.mjs; these pin the two paths that actually run it.
+// ---------------------------------------------------------------------------
+
+const ORPHAN_PLUGIN = '/* impeccable-live-nuxt-plugin */\nexport default defineNuxtPlugin(() => {});\n';
+
+function stageOrphanedSession(root) {
+  mkdirSync(join(root, 'app', 'plugins'), { recursive: true });
+  writeFileSync(join(root, 'app', 'plugins', 'impeccable-live.client.ts'), ORPHAN_PLUGIN);
+  mkdirSync(join(root, '.impeccable', 'live'), { recursive: true });
+  writeFileSync(join(root, '.impeccable', 'live', 'inject-journal.json'), JSON.stringify({
+    version: 1,
+    appRoot: root,
+    framework: 'nuxt',
+    port: 8400,
+    pid: 999999,
+    recordedAt: new Date().toISOString(),
+    artifacts: [{
+      kind: 'created',
+      path: 'app/plugins/impeccable-live.client.ts',
+      marker: 'impeccable-live-nuxt-plugin',
+      pruneTo: 'app',
+    }],
+  }));
+}
+
+describe('live-inject — crash-safe injection journal', () => {
+  it('refuses to heal artifacts outside the project tree (review M1)', async () => {
+    const { healInjectJournal } = await import('../skill/scripts/live/frameworks/journal.mjs');
+    const outside = join(tmp, '..', `impeccable-victim-${Date.now()}`);
+    writeFileSync(outside, 'precious');
+    try {
+      mkdirSync(join(tmp, '.impeccable', 'live'), { recursive: true });
+      writeFileSync(join(tmp, '.impeccable', 'live', 'inject-journal.json'), JSON.stringify({
+        version: 1,
+        artifacts: [
+          { kind: 'created', path: relative(tmp, outside) },
+          { kind: 'created', path: 'unmarked.txt' },
+        ],
+      }));
+      writeFileSync(join(tmp, 'unmarked.txt'), 'no marker present');
+      const { healed } = healInjectJournal(tmp, { keep: [] });
+      // The escape attempt is refused and the file survives.
+      assert.equal(readFileSync(outside, 'utf-8'), 'precious');
+      // A created artifact without a marker is unverifiable: untouched.
+      assert.equal(readFileSync(join(tmp, 'unmarked.txt'), 'utf-8'), 'no marker present');
+      const actions = (healed || []).map((h) => h.action);
+      assert.equal(actions.includes('removed'), false, JSON.stringify(healed));
+    } finally {
+      rmSync(outside, { force: true });
+    }
+  });
+
+  let tmp;
+  beforeEach(() => { tmp = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-journal-cli-'))); });
+  afterEach(() => { rmSync(tmp, { recursive: true, force: true }); });
+
+  function writeLiveConfig(root) {
+    mkdirSync(join(root, '.impeccable', 'live'), { recursive: true });
+    writeFileSync(join(root, '.impeccable', 'live', 'config.json'), JSON.stringify({
+      files: ['index.html'],
+      insertBefore: '</body>',
+      commentSyntax: 'html',
+    }));
+  }
+
+  it('records what an inject wrote and clears it again on remove', () => {
+    writeFileSync(join(tmp, 'index.html'), '<html>\n  <body>\n  </body>\n</html>\n');
+    writeLiveConfig(tmp);
+
+    runInjectDefault(tmp, ['--port', '8400']);
+    const journal = JSON.parse(readFileSync(join(tmp, '.impeccable', 'live', 'inject-journal.json'), 'utf-8'));
+    assert.equal(journal.port, 8400);
+    assert.deepEqual(journal.artifacts.map((a) => a.path), ['index.html']);
+
+    runInjectDefault(tmp, ['--remove']);
+    assert.equal(existsSync(join(tmp, '.impeccable', 'live', 'inject-journal.json')), false);
+  });
+
+  it('heals artifacts a SIGKILLed session left behind, on the next inject', () => {
+    // The project no longer detects as Nuxt (the config file is gone), so the
+    // adapter's own remove can never reach its plugin. The journal can.
+    writeFileSync(join(tmp, 'index.html'), '<html>\n  <body>\n  </body>\n</html>\n');
+    writeLiveConfig(tmp);
+    stageOrphanedSession(tmp);
+
+    const result = runInjectDefault(tmp, ['--port', '8400']);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.healed, [{ path: 'app/plugins/impeccable-live.client.ts', action: 'removed' }]);
+    assert.equal(existsSync(join(tmp, 'app', 'plugins', 'impeccable-live.client.ts')), false);
+    assert.equal(existsSync(join(tmp, 'app', 'plugins')), false, 'the emptied plugins/ dir is pruned');
+    assert.match(readFileSync(join(tmp, 'index.html'), 'utf-8'), /localhost:8400\/live\.js/);
+  });
+
+  it('does not report healing when there is nothing orphaned', () => {
+    writeFileSync(join(tmp, 'index.html'), '<html>\n  <body>\n  </body>\n</html>\n');
+    writeLiveConfig(tmp);
+
+    const result = runInjectDefault(tmp, ['--port', '8400']);
+
+    assert.equal(result.healed, undefined, 'the healed key stays off the happy path');
+  });
+
+  it('heals the appRoot journal when stop runs from the wrong directory', () => {
+    execFileSync('git', ['init', '-q'], { cwd: tmp });
+    writeFileSync(join(tmp, 'index.html'), '<html>\n  <body>\n  </body>\n</html>\n');
+    writeLiveConfig(tmp);
+    stageOrphanedSession(tmp);
+    // enterLiveRoot follows this manifest back to the app root.
+    writeFileSync(join(tmp, '.impeccable', 'live', 'roots.json'), JSON.stringify({
+      version: 1,
+      appRoot: tmp,
+      repoRoot: tmp,
+      contextRoot: null,
+      sessionRoot: join(tmp, '.impeccable', 'live'),
+      resolvedFrom: 'cwd',
+    }));
+    const nested = join(tmp, 'packages', 'deep');
+    mkdirSync(nested, { recursive: true });
+
+    const result = runInjectDefault(nested, ['--remove']);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.healed, [{ path: 'app/plugins/impeccable-live.client.ts', action: 'removed' }]);
+    assert.equal(
+      existsSync(join(tmp, 'app', 'plugins', 'impeccable-live.client.ts')),
+      false,
+      'a stop issued from a nested directory still cleans the app root',
+    );
+    assert.equal(existsSync(join(tmp, '.impeccable', 'live', 'inject-journal.json')), false);
+  });
+
+  it('leaves the journal alone on --check', () => {
+    writeFileSync(join(tmp, 'index.html'), '<html>\n  <body>\n  </body>\n</html>\n');
+    writeLiveConfig(tmp);
+    stageOrphanedSession(tmp);
+
+    const result = runInjectDefault(tmp, ['--check']);
+
+    assert.equal(result.ok, true);
+    assert.ok(
+      existsSync(join(tmp, 'app', 'plugins', 'impeccable-live.client.ts')),
+      '--check is read-only; healing belongs to the inject run',
+    );
   });
 });

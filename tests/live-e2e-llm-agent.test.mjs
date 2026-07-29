@@ -20,14 +20,23 @@ import {
 } from './live-e2e/agents/llm-agent.mjs';
 
 describe('live-e2e LLM agent provider config', () => {
-  it('defaults to Anthropic and Claude Haiku when no keys are present', () => {
+  it('defaults to OpenAI gpt-5.6-terra at medium reasoning effort', () => {
     const config = resolveLlmAgentConfig({}, {});
+
+    assert.equal(config.provider, 'openai');
+    assert.equal(config.model, 'gpt-5.6-terra');
+    assert.equal(config.reasoningEffort, 'medium');
+    assert.equal(config.requiredEnv, 'OPENAI_API_KEY');
+    assert.equal(config.apiKey, undefined);
+    assert.equal(config.baseURL, undefined);
+  });
+
+  it('still resolves Anthropic when explicitly selected', () => {
+    const config = resolveLlmAgentConfig({}, { IMPECCABLE_E2E_LLM_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'k' });
 
     assert.equal(config.provider, 'anthropic');
     assert.equal(config.model, 'claude-haiku-4-5');
     assert.equal(config.requiredEnv, 'ANTHROPIC_API_KEY');
-    assert.equal(config.apiKey, undefined);
-    assert.equal(config.baseURL, undefined);
   });
 
   it('prefers Anthropic when both provider keys are present', () => {

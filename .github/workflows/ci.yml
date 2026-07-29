@@ -6,9 +6,16 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # Nightly full live-e2e matrix. The smoke groups already gate every PR; the
+  # full sweep is too slow for that, so it runs once a day against main.
+  schedule:
+    - cron: '0 7 * * *'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Scheduled runs get their own group: the 07:00 UTC nightly and a push to
+  # main share github.ref, and cancel-in-progress would let them kill each
+  # other mid-run.
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -157,14 +164,16 @@ jobs:
     name: live-e2e smoke (${{ matrix.group }})
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.live_e2e == 'true' && github.event_name != 'workflow_dispatch'
+    if: needs.changes.outputs.live_e2e == 'true' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
     timeout-minutes: 15
     strategy:
       fail-fast: true
       matrix:
         include:
           - group: platform
-            fixtures: astro-vite7,nextjs-app-router,vite8-sveltekit
+            fixtures: astro-vite7,monorepo-nested-vite,nextjs-app-router,vite8-sveltekit
+          - group: svelte
+            fixtures: vite8-sveltekit-stateful
           - group: react
             fixtures: vite8-react-css-modules,vite8-react-insert,vite8-react-plain
     steps:
@@ -225,14 +234,16 @@ jobs:
     name: live-e2e full (${{ matrix.group }})
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.live_e2e == 'true' && github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.live_e2e == 'true' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     timeout-minutes: 25
     strategy:
       fail-fast: true
       matrix:
         include:
           - group: platform
-            fixtures: astro-vite7,nextjs-app-router,vite8-sveltekit
+            fixtures: astro-vite7,monorepo-nested-vite,nextjs-app-router
+          - group: svelte
+            fixtures: vite8-sveltekit,vite8-sveltekit-stateful
           - group: react-a
             fixtures: vite8-https,vite8-react-base-path,vite8-react-csp-meta,vite8-react-css-modules,vite8-react-emotion
           - group: react-b

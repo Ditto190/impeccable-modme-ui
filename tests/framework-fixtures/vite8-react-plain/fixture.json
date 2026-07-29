@@ -1,23 +1,45 @@
 {
   "name": "Vite 8 + React + plain CSS",
   "config": {
-    "files": ["index.html"],
+    "files": [
+      "index.html"
+    ],
     "insertBefore": "</body>",
     "commentSyntax": "html"
   },
-  "sourceFiles": ["index.html", "src/App.jsx", "src/main.jsx", "src/styles.css", "vite.config.js"],
+  "sourceFiles": [
+    "index.html",
+    "src/App.jsx",
+    "src/main.jsx",
+    "src/styles.css",
+    "vite.config.js"
+  ],
   "generatedFiles": [],
   "wrapCases": [
     {
       "name": "wraps hero title in source JSX",
-      "args": { "classes": "hero-title", "tag": "h1" },
+      "args": {
+        "classes": "hero-title",
+        "tag": "h1"
+      },
       "expectedFile": "src/App.jsx"
     }
   ],
   "runtime": {
     "styling": "plain-css",
-    "install": ["npm", "install", "--no-audit", "--no-fund", "--loglevel=error"],
-    "devCommand": ["npx", "vite", "--host", "127.0.0.1"],
+    "install": [
+      "npm",
+      "install",
+      "--no-audit",
+      "--no-fund",
+      "--loglevel=error"
+    ],
+    "devCommand": [
+      "npx",
+      "vite",
+      "--host",
+      "127.0.0.1"
+    ],
     "readyPattern": "Local:\\s+https?://[^:]+:(\\d+)",
     "readyTimeoutMs": 120000,
     "probe": {
@@ -33,7 +55,13 @@
     "manualEditScenarios": [
       {
         "name": "React headless manual Apply hard batch",
-        "element": { "selector": "main.page", "position": { "x": 4, "y": 4 } },
+        "element": {
+          "selector": "main.page",
+          "position": {
+            "x": 4,
+            "y": 4
+          }
+        },
         "applyTimeoutMs": 300000,
         "refreshAfterApply": true,
         "expectApplyLoading": true,
@@ -148,6 +176,10 @@
         ],
         "expectedStashCount": 13
       }
-    ]
+    ],
+    "orphanedWrapperScenario": {
+      "sourceFile": "src/App.jsx"
+    },
+    "foreignSessionScenario": true
   }
 }
