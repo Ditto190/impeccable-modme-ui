@@ -199,6 +199,22 @@ describe('detectText — Tailwind side-tab', () => {
     const f = detectText('<div class="border-t-4 border-b-4">', 'test.html');
     expect(f.filter(r => r.antipattern === 'border-accent-on-rounded')).toHaveLength(0);
   });
+
+  test('ignores border accent paired with rounded-none', () => {
+    const f = detectText(
+      '<TabsTrigger className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary" />',
+      'test.tsx',
+    );
+    expect(f.filter(r => r.antipattern === 'border-accent-on-rounded')).toHaveLength(0);
+  });
+
+  test('still detects a real rounded token alongside rounded-none', () => {
+    const f = detectText(
+      '<div className="rounded-none md:rounded-lg border-b-2 border-primary" />',
+      'test.tsx',
+    );
+    expect(f.some(r => r.antipattern === 'border-accent-on-rounded')).toBe(true);
+  });
 });
 
 describe('detectText — CSS borders', () => {
