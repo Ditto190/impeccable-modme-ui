@@ -226,10 +226,42 @@ describe('svelte component scaffold + accept pipeline', () => {
   });
 
   it('extractMatchingSourceCss picks only rules that style the selection', () => {
-    const css = extractMatchingSourceCss(ROUTE_SOURCE, '<ol class="pit-board"><li class="stage">x</li></ol>');
+    const { css } = extractMatchingSourceCss(ROUTE_SOURCE, '<ol class="pit-board"><li class="stage">x</li></ol>');
     assert.match(css, /\.pit-board/);
     assert.match(css, /\.stage/);
     assert.doesNotMatch(css, /\.footer/);
+  });
+
+  it('class matching is token-bounded, never substring', () => {
+    // The field hazard: a falsely seeded selector becomes an accept-time
+    // DELETION of a hand-written rule the pick never used.
+    const route = `<style>
+  .btn { color: red; }
+  .btn-primary { color: blue; }
+  .stage { padding: 4px; }
+  .stages { display: grid; }
+</style>`;
+    const { css, supersedable } = extractMatchingSourceCss(route, '<button class="btn"><span class="stage">x</span></button>');
+    assert.match(css, /\.btn \{/);
+    assert.match(css, /\.stage \{/);
+    assert.doesNotMatch(css, /btn-primary/, '.btn must not seed .btn-primary');
+    assert.doesNotMatch(css, /\.stages/, '.stage must not seed .stages');
+    assert.deepEqual([...supersedable].sort(), ['.btn', '.stage']);
+  });
+
+  it('tag rules seed the preview but are never supersedable', () => {
+    const route = `<style>
+  h1 { font-size: 3rem; }
+  h1.hero { letter-spacing: -0.02em; }
+  p { line-height: 1.6; }
+  .sidebar { width: 20rem; }
+</style>`;
+    const { css, supersedable } = extractMatchingSourceCss(route, '<h1 class="hero">Title</h1>');
+    assert.match(css, /h1 \{ font-size/, 'bare tag rules that style the pick are seeded');
+    assert.match(css, /h1\.hero/, 'class rules still seed');
+    assert.doesNotMatch(css, /^p \{/m, 'unrelated tags are not seeded');
+    assert.doesNotMatch(css, /\.sidebar/);
+    assert.deepEqual([...supersedable], ['h1.hero'], 'only class-matched selectors may be removed on accept');
   });
 });
 
@@ -418,6 +450,91 @@ describe('review regressions: publish-time compile gate', () => {
       assert.equal(fixed.ok, true, JSON.stringify(fixed.failures));
     } finally {
       rmSync(tmp3, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('review regressions: shared-class supersession guard', () => {
+  const SHARED_SOURCE = `<script>
+  let items = [{ name: 'a' }, { name: 'b' }];
+</script>
+
+<section class="page">
+  <div class="card intro">Intro copy stays here.</div>
+  <ul class="list">
+    {#each items as item}
+      <li class="card">{item.name}</li>
+    {/each}
+  </ul>
+</section>
+
+<style>
+  .page { padding: 24px; }
+  .card { border: 1px solid #999; border-radius: 8px; }
+  .list { display: grid; gap: 8px; }
+</style>
+`;
+
+  it('keeps a superseded selector whose class is still used outside the replaced region', () => {
+    const tmp4 = realpathSync(mkdtempSync(join(tmpdir(), 'impeccable-shared-class-')));
+    try {
+      mkdirSync(join(tmp4, 'node_modules'), { recursive: true });
+      try {
+        symlinkSync(join(REPO_NODE_MODULES, 'svelte'), join(tmp4, 'node_modules', 'svelte'), 'dir');
+      } catch {
+        cpSync(join(REPO_NODE_MODULES, 'svelte'), join(tmp4, 'node_modules', 'svelte'), { recursive: true });
+      }
+      write(tmp4, 'package.json', JSON.stringify({ name: 'app' }));
+      write(tmp4, 'src/lib/Shared.svelte', SHARED_SOURCE);
+
+      // Pick the <ul class="list"> block. Its items use .card, and so does
+      // the intro div OUTSIDE the pick.
+      const lines = SHARED_SOURCE.split('\n');
+      const startLine = lines.findIndex((l) => l.includes('class="list"')) + 1;
+      const endLine = lines.findIndex((l) => l.trim() === '</ul>') + 1;
+      const originalLines = lines.slice(startLine - 1, endLine);
+
+      const session = scaffoldSvelteComponentSession({
+        id: 'shared01',
+        count: 1,
+        sourceFile: 'src/lib/Shared.svelte',
+        sourceStartLine: startLine,
+        sourceEndLine: endLine,
+        originalLines,
+        cwd: tmp4,
+      });
+      assert.equal(session.fallback, undefined, session.reason);
+      assert.equal(session.manifest.seededSelectors.includes('.card'), true, 'the pick uses .card, so it seeds');
+
+      // The variant re-declares .list but NOT .card.
+      write(tmp4, join(session.componentDir, 'v1.svelte'), `<script>
+  let { items = [] } = $props();
+</script>
+
+<ul class="list">
+  {#each items as item}
+    <li class="card">{item.name}</li>
+  {/each}
+</ul>
+
+<style>
+  .list { display: flex; flex-direction: column; gap: 12px; }
+</style>
+`);
+      const manifest = findSvelteComponentManifest('shared01', tmp4);
+      const result = inlineSvelteComponentAccept(manifest, 1, null, tmp4);
+      assert.equal(result.handled, true, result.error);
+      const out = readFileSync(join(tmp4, 'src/lib/Shared.svelte'), 'utf-8');
+
+      // .card is shared with the intro div outside the replaced region:
+      // removing it would strip styling from markup this accept never
+      // touched, so it must survive despite not being re-declared.
+      assert.match(out, /\.card \{ border: 1px solid #999; border-radius: 8px; \}/);
+      assert.equal(result.css.superseded.includes('.card'), false);
+      // The re-declared .list took the variant's shape.
+      assert.match(out, /\.list \{ display: flex/);
+    } finally {
+      rmSync(tmp4, { recursive: true, force: true });
     }
   });
 });

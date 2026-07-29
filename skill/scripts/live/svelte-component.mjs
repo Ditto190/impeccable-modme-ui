@@ -207,16 +207,18 @@ export function scaffoldSvelteComponentSession({
   fs.mkdirSync(dir, { recursive: true });
 
   const contract = analysis.contract;
-  const seededCss = extractMatchingSourceCss(
+  const seeded = extractMatchingSourceCss(
     safeReadSource(path.resolve(cwd, sourceFile)),
     originalMarkup,
   );
+  const seededCss = seeded.css;
   // The preview compiles in isolation, so NONE of these source rules applied
   // to what the user approved. Accept enforces that preview truth: any of
   // them the variant does not re-declare is superseded and removed, instead
   // of re-attaching to the accepted markup through kept class names (the
-  // ".decisions grid grabs the new board" failure).
-  const seededSelectors = [...collectAllSelectors(seededCss)];
+  // ".decisions grid grabs the new board" failure). Only the CLASS-matched
+  // selectors are candidates; tag rules style shared route elements.
+  const seededSelectors = [...seeded.supersedable];
 
   const manifest = {
     id,
@@ -266,15 +268,26 @@ function safeReadSource(filePath) {
   try { return fs.readFileSync(filePath, 'utf-8'); } catch { return ''; }
 }
 
+function escapeSelectorToken(token) {
+  return String(token).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Seed variant stubs with the source component's rules that already style the
  * selected markup, so variants start from the real cascade (a detached
  * preview inherits none of the route's compile-scoped CSS) instead of
  * reimplementing it blind.
+ *
+ * Returns { css, supersedable }. `css` is every matching rule (class OR tag
+ * matched). `supersedable` holds only the CLASS-matched selectors: those are
+ * the accept-time removal candidates. Tag selectors (h1, a, p) style shared
+ * elements across the whole route, so they seed the preview but are never
+ * candidates for removal.
  */
 export function extractMatchingSourceCss(routeSource, originalMarkup) {
+  const empty = { css: '', supersedable: new Set() };
   const styleMatch = String(routeSource || '').match(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/i);
-  if (!styleMatch) return '';
+  if (!styleMatch) return empty;
   const classNames = new Set();
   const classRe = /class\s*=\s*(["'])(.*?)\1/g;
   let m;
@@ -284,17 +297,35 @@ export function extractMatchingSourceCss(routeSource, originalMarkup) {
   const tagRe = /<([a-z][a-z0-9-]*)/gi;
   const tags = new Set();
   while ((m = tagRe.exec(originalMarkup))) tags.add(m[1].toLowerCase());
-  if (classNames.size === 0 && tags.size === 0) return '';
+  if (classNames.size === 0 && tags.size === 0) return empty;
 
-  const selectorMatches = (prelude) => splitSelectorList(prelude).some((selector) => {
-    for (const cls of classNames) if (selector.includes(`.${cls}`)) return true;
-    return false;
-  });
+  // Token-boundary matching, never substring: `.btn` must not match
+  // `.btn-primary`, and `.stage` must not match `.stages`. A substring hit
+  // seeds a rule that never styled the pick, and a falsely seeded selector
+  // becomes an accept-time DELETION of a hand-written rule.
+  const classRes = [...classNames].map((cls) => new RegExp('\\.' + escapeSelectorToken(cls) + '(?![A-Za-z0-9_-])'));
+  const tagRes = [...tags].map((tag) => new RegExp('(^|[\\s>+~,(])' + escapeSelectorToken(tag) + '(?![A-Za-z0-9_-])', 'i'));
+  const classMatches = (selector) => classRes.some((re) => re.test(selector));
+  const tagMatches = (selector) => tagRes.some((re) => re.test(selector));
+
+  const supersedable = new Set();
+  const ruleMatches = (prelude) => {
+    let matched = false;
+    for (const selector of splitSelectorList(prelude)) {
+      if (classMatches(selector)) {
+        matched = true;
+        supersedable.add(normalizeSelector(selector));
+      } else if (tagMatches(selector)) {
+        matched = true;
+      }
+    }
+    return matched;
+  };
 
   const pick = (nodes) => {
     const kept = [];
     for (const node of nodes) {
-      if (node.type === 'rule' && selectorMatches(node.prelude)) kept.push(node);
+      if (node.type === 'rule' && ruleMatches(node.prelude)) kept.push(node);
       else if (node.type === 'at' && node.children) {
         const children = pick(node.children);
         if (children.length) kept.push({ ...node, children });
@@ -302,7 +333,7 @@ export function extractMatchingSourceCss(routeSource, originalMarkup) {
     }
     return kept;
   };
-  return serializeNodes(pick(parseStylesheet(styleMatch[1])));
+  return { css: serializeNodes(pick(parseStylesheet(styleMatch[1]))), supersedable };
 }
 
 function buildVariantStubV2(variantNum, markupWithProps, contract, seededCss) {
@@ -713,10 +744,37 @@ export function inlineSvelteComponentAccept(manifest, variantNum, paramValues = 
   // them. Any seeded selector the variant did not re-declare is superseded;
   // left in place it re-attaches through kept class names (the accepted root
   // keeps its original classes) and re-layouts markup it no longer owns.
+  //
+  // Removal is bounded by ownership: a selector whose classes are still used
+  // by route markup OUTSIDE the replaced region does not belong to the pick
+  // alone, and removing it would strip styling from markup this accept never
+  // touched. Keeping it risks a visible re-attachment quirk on the accepted
+  // region; deleting it breaks the rest of the route. Keep it.
+  const outsideMarkup = [...sourceLines.slice(0, start), ...sourceLines.slice(end + 1)]
+    .join('\n')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, '');
+  const outsideClasses = new Set();
+  {
+    const attrRe = /class\s*=\s*(["'])(.*?)\1/g;
+    let cm;
+    while ((cm = attrRe.exec(outsideMarkup))) {
+      for (const cls of cm[2].split(/\s+/)) if (cls && !cls.includes('{')) outsideClasses.add(cls);
+    }
+    const directiveRe = /class:([A-Za-z0-9_-]+)/g;
+    while ((cm = directiveRe.exec(outsideMarkup))) outsideClasses.add(cm[1]);
+  }
+  const usedOutsideReplacedRegion = (selector) => {
+    const classTokenRe = /\.([A-Za-z0-9_-]+)/g;
+    let tm;
+    while ((tm = classTokenRe.exec(selector))) {
+      if (outsideClasses.has(tm[1])) return true;
+    }
+    return false;
+  };
   const incomingSelectors = collectAllSelectors(bakedCss);
   const superseded = (manifest.seededSelectors || [])
     .map((selector) => normalizeSelector(selector))
-    .filter((selector) => selector && !incomingSelectors.has(selector));
+    .filter((selector) => selector && !incomingSelectors.has(selector) && !usedOutsideReplacedRegion(selector));
   if (superseded.length > 0) {
     const scrubbed = removeSelectorsFromSvelteSource(finalText, new Set(superseded));
     finalText = scrubbed.text;
