@@ -737,13 +737,21 @@ describe('skills install/update: local universal bundle e2e', () => {
         installRoot: home,
         installPath: join(home, '.agents', 'skills'),
       },
+      {
+        provider: '.pi',
+        scope: 'user',
+        foundPath: join(home, '.pi'),
+        installRoot: home,
+        installPath: join(home, '.pi', 'agent', 'skills'),
+      },
     ];
 
     const lines = formatInstallDetectionLines(tmp, detections, home);
     expect(lines).toEqual([
       'Detected harnesses:',
-      '  Claude Code  ~/.claude',
-      '  Codex CLI    ~/.codex',
+      '  Claude Code      ~/.claude',
+      '  Codex CLI        ~/.codex',
+      '  Pi Coding Agent  ~/.pi',
     ]);
 
     rmSync(tmp, { recursive: true, force: true });
