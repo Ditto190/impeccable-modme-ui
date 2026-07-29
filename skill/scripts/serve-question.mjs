@@ -451,7 +451,10 @@ function page() {
      its axis with snap points and the arrows page it card by card. */
   .grid { --deck-inset: max(clamp(1rem, 5vw, 4rem), calc((100vw - 90rem) / 2)); display: flex; gap: 1.6rem; width: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; padding: 6px var(--deck-inset); scroll-padding-inline: var(--deck-inset); align-items: stretch; }
   .grid::-webkit-scrollbar { display: none; }
-  .grid > .card { flex: 0 0 clamp(20rem, 27vw, 27rem); scroll-snap-align: center; }
+  /* Wide enough that the sketch carries the card: at 27vw the imagery read
+     as a thumbnail above a column of copy, and the copy won the attention
+     contest the sketch is supposed to win. */
+  .grid > .card { flex: 0 0 clamp(24rem, 34vw, 34rem); scroll-snap-align: center; }
   .nav { position: absolute; z-index: 6; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: oklch(7% 0.006 95 / 0.78); border: 1px solid var(--ks-rule); color: var(--ks-kinpaku); cursor: pointer; backdrop-filter: blur(6px); transition: border-color .2s, color .2s, opacity .2s; }
   .nav:hover { border-color: var(--ks-kinpaku-deep); color: var(--ks-kinpaku-pale); }
   .nav[disabled] { opacity: .25; cursor: default; }
@@ -501,8 +504,10 @@ function page() {
      region entirely instead of reserving a blank 16:9 void. */
   .face.text-only .kicker { position: static; align-self: flex-start; margin: 14px 0 0 14px; }
   .face.text-only .body { padding-top: 12px; }
-  .media { position: relative; width: 100%; aspect-ratio: 16/9; flex: none; }
+  /* 16/10 matches the sketch generation frame, so nothing gets cropped. */
+  .media { position: relative; width: 100%; aspect-ratio: 16/10; flex: none; }
   .media img { width: 100%; height: 100%; object-fit: cover; display: block; background: linear-gradient(100deg, var(--ks-graphite) 40%, var(--ks-graphite-2) 50%, var(--ks-graphite) 60%); }
+  .media > img:not([hidden]) { cursor: zoom-in; }
   .face.back { background: var(--ks-lacquer-raised); }
   .back-bar { margin-top: auto; background: var(--ks-lacquer-raised); }
   .hero-blank { width: 100%; height: 100%; background: linear-gradient(100deg, var(--ks-graphite) 40%, var(--ks-graphite-2) 50%, var(--ks-graphite) 60%); }
@@ -764,6 +769,16 @@ function page() {
     const card = b.closest('.card');
     const face = card.classList.contains('flipped') ? '.face.back' : '.face.front';
     const img = card.querySelector(face + ' .media img:not([hidden])');
+    if (!img || !img.getAttribute('src')) return;
+    lightboxImg.src = img.getAttribute('src');
+    lightbox.hidden = false;
+    requestAnimationFrame(() => lightbox.classList.add('open'));
+  }));
+  // The whole image is the zoom target, not just the expand chip; the chip
+  // stays as the visible affordance. Chip and PIP handlers stop propagation,
+  // so this fires only for clicks on the art itself.
+  document.querySelectorAll('.media').forEach(m => m.addEventListener('click', () => {
+    const img = m.querySelector(':scope > img:not([hidden])');
     if (!img || !img.getAttribute('src')) return;
     lightboxImg.src = img.getAttribute('src');
     lightbox.hidden = false;
