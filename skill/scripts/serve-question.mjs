@@ -151,7 +151,7 @@ if (hasFlag('schema')) {
     canonCard: { label: 'The category standard', thesis: 'What this category ships, executed impeccably.', viewport: 'The arrangement a visitor expects, at full craft.', sketch: '.impeccable/sketches/canon.webp' },
     steer: true,
   }, null, 2));
-  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/sketch accept URLs or local paths; sketch slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the sketch, never as the promise of the build. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation. Keep thesis and each fact to one short sentence: the card front shows thesis, identity, and a two-line risk, while first viewport and the case read on the card back behind the Details chip, so long facts cost the reader a flip, not the page its scanability.');
+  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/sketch accept URLs or local paths; sketch slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the sketch, never as the promise of the build. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation. Keep thesis and each fact to one short sentence: the card front shows thesis, identity, and a two-line risk, while first viewport and the case read on the card back behind the Details chip, so long facts cost the reader a flip, not the page its scanability. Sketch aspect follows the surface: portrait at device viewport for native or mobile-first surfaces, landscape otherwise; the page adapts its cards to either.');
   process.exit(0);
 }
 
@@ -504,8 +504,11 @@ function page() {
      region entirely instead of reserving a blank 16:9 void. */
   .face.text-only .kicker { position: static; align-self: flex-start; margin: 14px 0 0 14px; }
   .face.text-only .body { padding-top: 12px; }
-  /* 16/10 matches the sketch generation frame, so nothing gets cropped. */
+  /* 16/10 matches the landscape sketch frame; portrait art overrides the
+     slot with its own exact ratio at load (see the load listener), and the
+     deck narrows so portrait cards line up side by side. */
   .media { position: relative; width: 100%; aspect-ratio: 16/10; flex: none; }
+  .grid.portrait-media > .card { flex-basis: clamp(14rem, 19vw, 19rem); }
   .media img { width: 100%; height: 100%; object-fit: cover; display: block; background: linear-gradient(100deg, var(--ks-graphite) 40%, var(--ks-graphite-2) 50%, var(--ks-graphite) 60%); }
   .media > img:not([hidden]) { cursor: zoom-in; }
   .face.back { background: var(--ks-lacquer-raised); }
@@ -774,6 +777,20 @@ function page() {
     lightbox.hidden = false;
     requestAnimationFrame(() => lightbox.classList.add('open'));
   }));
+  // Portrait art (native / mobile-first surfaces): the slot takes the
+  // image's own ratio so nothing crops, and the whole deck narrows so
+  // portrait cards sit side by side. Load events don't bubble; capture.
+  document.addEventListener('load', (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !img.matches('.media > img')) return;
+    if (img.naturalHeight > img.naturalWidth * 1.05) {
+      const m = img.closest('.media');
+      m.classList.add('portrait');
+      m.style.aspectRatio = img.naturalWidth + ' / ' + img.naturalHeight;
+      document.querySelector('.grid')?.classList.add('portrait-media');
+    }
+  }, true);
+
   // The whole image is the zoom target, not just the expand chip; the chip
   // stays as the visible affordance. Chip and PIP handlers stop propagation,
   // so this fires only for clicks on the art itself.
