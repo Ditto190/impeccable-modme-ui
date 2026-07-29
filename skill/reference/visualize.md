@@ -22,7 +22,7 @@ Show the three together: in the harness when it can display images, otherwise on
 
 Do not begin code until the user approves a direction or explicitly delegates the choice. If they delegate, choose using the task brief, PRODUCT.md, and DESIGN.md, and state the evidence. Approval refines the task concept; it does not modify DESIGN.md.
 
-After approval, summarize the composition and the parts of the comp that must not be literalized. Return to new-work.md, record the direction contract from the approved surface concept, then build.
+After approval, record the choice where tools can find it: the approved comp's path goes in the surface brief, and the approved comp's `.json` prompt sidecar gains `"approved": true` (every comp generated through `generate-image.mjs` has one; create it if a native tool didn't). The sidecar travels with the mocks folder, so the approval survives sessions and machines that never see the brief. Then summarize the composition and the parts of the comp that must not be literalized, return to new-work.md, record the direction contract from the approved surface concept, and build.
 
 ## Inventory implementation fidelity
 
