@@ -146,6 +146,29 @@ describe('serve-question', () => {
     assert.equal(code, 1);
   });
 
+  it('trusts a fresh heartbeat over a failed kill probe, and still detects true death', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'serve-question-'));
+    const qdir = path.join(dir, '.impeccable', 'questions');
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(qdir, { recursive: true });
+    // Fresh heartbeat + a pid that cannot be signaled (throws like a sandbox
+    // EPERM or a recycled pid): the wait must keep WAITING (exit 3), never
+    // declare the server gone (exit 2). Pid 1 throws EPERM for a normal user.
+    writeFileSync(path.join(qdir, 'beat1.state.json'), JSON.stringify({ pid: 1, port: 1, url: 'http://127.0.0.1:1/', lastBeat: Date.now() }));
+    const waiting = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [SCRIPT, '--wait', '--key', 'beat1', '--poll', '2'], { cwd: dir, stdio: 'ignore' });
+      child.on('exit', resolve);
+    });
+    assert.equal(waiting, 3, 'fresh heartbeat must read as alive regardless of the kill probe');
+    // Stale heartbeat + a pid that is genuinely gone (ESRCH): server dead, exit 2.
+    writeFileSync(path.join(qdir, 'dead1.state.json'), JSON.stringify({ pid: 999999999 >>> 8, port: 1, url: 'http://127.0.0.1:1/' }));
+    const dead = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [SCRIPT, '--wait', '--key', 'dead1', '--poll', '2'], { cwd: dir, stdio: 'ignore' });
+      child.on('exit', resolve);
+    });
+    assert.equal(dead, 2, 'a truly missing process must still read as gone');
+  });
+
   it('renders anatomy, streams late sketches, and returns the chosen sketch', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'serve-question-'));
     const sketchPath = path.join(dir, 'sketches', 'assigned.webp');
