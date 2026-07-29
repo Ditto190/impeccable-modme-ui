@@ -11,7 +11,7 @@ import {
   validateConceptEntry,
 } from '../skill/scripts/lib/concept-catalog.mjs';
 import { readCompositionCatalog } from '../skill/scripts/lib/composition-catalog.mjs';
-import { renderChallenger, selectApprovedChallengers, selectApprovedStaging, selectApprovedStagings } from '../skill/scripts/concept-seed.mjs';
+import { renderChallenger, selectApprovedChallengers, selectApprovedComposition, selectApprovedCompositions } from '../skill/scripts/concept-seed.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(ROOT, 'skill', 'scripts', 'concept-seed.mjs');
@@ -98,34 +98,34 @@ describe('concept seed scopes', () => {
     assert.doesNotMatch(degraded.stdout, /CHALLENGERS:/);
   });
 
-  it('keeps staging challengers inside the requested surface mode', () => {
+  it('keeps composition challengers inside the requested surface mode', () => {
     const pool = [
       { id: 'persuade-stage', surface: 'persuade', status: 'approved' },
       { id: 'experience-stage', surface: 'experience', status: 'approved' },
     ];
-    const experience = selectApprovedStaging({
+    const experience = selectApprovedComposition({
       scope: 'direction',
       key: 'mode-match',
       mode: 'experience',
       sourceCompositions: pool,
     });
-    const read = selectApprovedStaging({
+    const read = selectApprovedComposition({
       scope: 'direction',
       key: 'mode-missing',
       mode: 'read',
       sourceCompositions: pool,
     });
     assert.equal(experience?.id, 'experience-stage');
-    assert.equal(read, null, 'a missing mode must not borrow an unrelated staging');
+    assert.equal(read, null, 'a missing mode must not borrow an unrelated composition');
 
     const rendered = run('direction', ['--mode', 'experience']);
     assert.equal(rendered.status, 0);
     assert.match(rendered.stdout, /mode: experience/);
     assert.match(rendered.stdout, /--scope direction --mode experience --from stable-test/);
-    assert.match(rendered.stdout, /FIRST-SURFACE STAGING/);
+    assert.match(rendered.stdout, /FIRST-SURFACE COMPOSITION/);
   });
 
-  it('draws several staging inputs from distinct families when the approved pool allows it', () => {
+  it('draws several composition inputs from distinct families when the approved pool allows it', () => {
     const pool = [
       { id: 'a', familyId: 'first', surface: 'persuade', status: 'approved' },
       { id: 'b', familyId: 'scroll', surface: 'persuade', status: 'approved' },
@@ -133,7 +133,7 @@ describe('concept seed scopes', () => {
       { id: 'd', familyId: 'first', surface: 'persuade', status: 'approved' },
       { id: 'e', familyId: 'other', surface: 'operate', status: 'approved' },
     ];
-    const picks = selectApprovedStagings({ scope: 'direction', key: 'several', mode: 'persuade', sourceCompositions: pool });
+    const picks = selectApprovedCompositions({ scope: 'direction', key: 'several', mode: 'persuade', sourceCompositions: pool });
     assert.equal(picks.length, 3);
     assert.equal(new Set(picks.map(pick => pick.familyId)).size, 3);
     assert.equal(picks.every(pick => pick.surface === 'persuade'), true);
@@ -364,7 +364,7 @@ describe('concept seed scopes', () => {
     assert.equal(picks.some(pick => pick.id === 'lone-niche'), true);
   });
 
-  it('weights staging draws by rating without letting the ticket dedupe erase the weight', () => {
+  it('weights composition draws by rating without letting the ticket dedupe erase the weight', () => {
     const pool = [
       { id: 'flagship-stage', surface: 'persuade', status: 'approved', review: { status: 'approved', rating: 3 } },
       { id: 'plain-stage', surface: 'persuade', status: 'approved', review: { status: 'approved' } },
@@ -372,43 +372,43 @@ describe('concept seed scopes', () => {
     ];
     const counts = { 'flagship-stage': 0, 'plain-stage': 0, 'marginal-stage': 0 };
     for (let index = 0; index < 300; index += 1) {
-      const picks = selectApprovedStagings({ scope: 'direction', key: `stage-weight-${index}`, mode: 'persuade', sourceCompositions: pool, count: 1 });
+      const picks = selectApprovedCompositions({ scope: 'direction', key: `stage-weight-${index}`, mode: 'persuade', sourceCompositions: pool, count: 1 });
       counts[picks[0].id] += 1;
     }
-    assert.equal(counts['marginal-stage'], 0, 'a 1-star staging keeps its approval but leaves the draw');
+    assert.equal(counts['marginal-stage'], 0, 'a 1-star composition keeps its approval but leaves the draw');
     // Two tickets should put the flagship first roughly twice as often as the
     // unrated peer; a generous margin keeps the assertion deterministic-safe.
     assert.equal(counts['flagship-stage'] > counts['plain-stage'] * 1.3, true,
       `flagship ${counts['flagship-stage']} vs plain ${counts['plain-stage']}`);
 
-    // A pool of nothing but 1-star keeps still yields stagings.
+    // A pool of nothing but 1-star keeps still yields compositions.
     const onlyMarginal = [
       { id: 'lone-marginal-stage', surface: 'persuade', status: 'approved', review: { status: 'approved', rating: 1 } },
     ];
-    const fallback = selectApprovedStagings({ scope: 'direction', key: 'stage-lone', mode: 'persuade', sourceCompositions: onlyMarginal });
+    const fallback = selectApprovedCompositions({ scope: 'direction', key: 'stage-lone', mode: 'persuade', sourceCompositions: onlyMarginal });
     assert.equal(fallback.some(pick => pick.id === 'lone-marginal-stage'), true);
   });
 
-  it('gates stagings by breadth and falls back when every staging is niche', () => {
+  it('gates compositions by breadth and falls back when every composition is niche', () => {
     const pool = [
       { id: 'broad-stage', surface: 'persuade', status: 'approved' },
       { id: 'niche-stage', surface: 'persuade', status: 'approved', review: { breadth: 'niche' } },
     ];
     for (let index = 0; index < 60; index += 1) {
-      const picks = selectApprovedStagings({ scope: 'direction', key: `stage-breadth-${index}`, mode: 'persuade', sourceCompositions: pool });
-      assert.equal(picks.some(pick => pick.id === 'niche-stage'), false, `niche staging dealt at key stage-breadth-${index}`);
+      const picks = selectApprovedCompositions({ scope: 'direction', key: `stage-breadth-${index}`, mode: 'persuade', sourceCompositions: pool });
+      assert.equal(picks.some(pick => pick.id === 'niche-stage'), false, `niche composition dealt at key stage-breadth-${index}`);
     }
     const allNiche = [
       { id: 'only-niche-stage', surface: 'persuade', status: 'approved', review: { breadth: 'niche' } },
     ];
-    const fallback = selectApprovedStagings({ scope: 'direction', key: 'all-niche', mode: 'persuade', sourceCompositions: allNiche });
+    const fallback = selectApprovedCompositions({ scope: 'direction', key: 'all-niche', mode: 'persuade', sourceCompositions: allNiche });
     assert.equal(fallback.some(pick => pick.id === 'only-niche-stage'), true, 'an all-niche pool must fall back instead of dealing nothing');
   });
 
-  it('mode-filters the fixture staging pool per surface register', () => {
-    const operate = selectApprovedStaging({ scope: 'surface', key: 'fix-mode', mode: 'operate', sourceCompositions: fixtureCompositions });
+  it('mode-filters the fixture composition pool per surface register', () => {
+    const operate = selectApprovedComposition({ scope: 'surface', key: 'fix-mode', mode: 'operate', sourceCompositions: fixtureCompositions });
     assert.equal(operate.surface, 'operate');
-    const experience = selectApprovedStaging({ scope: 'surface', key: 'fix-mode', mode: 'experience', sourceCompositions: fixtureCompositions });
+    const experience = selectApprovedComposition({ scope: 'surface', key: 'fix-mode', mode: 'experience', sourceCompositions: fixtureCompositions });
     assert.equal(experience.surface, 'experience');
   });
 
