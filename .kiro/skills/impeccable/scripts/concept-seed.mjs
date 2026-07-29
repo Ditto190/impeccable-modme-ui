@@ -29,7 +29,7 @@
  *     win over thin categories, which is the intended shape.
  *   - RE-ROLL (--reroll <n>): round n of the same base key. The script
  *     recomputes what rounds 0..n-1 drew, excludes all of it, and rolls a
- *     fresh assigned index, challengers, and staging. One base key therefore
+ *     fresh assigned index, challengers, and compositions. One base key therefore
  *     reproduces the entire chain of rounds.
  *   - RATINGS: the reviewer's approval ratings weight the challenger draw
  *     (3-star doubles the odds, 1-star sits out); the approved pool itself
@@ -43,8 +43,8 @@
  *   node scripts/concept-seed.mjs --chosen <challenger-id> --from <key> --scope direction
  *
  * --mode names the requested surface's mode (persuade, operate, read,
- * experience) so the appended staging matches its register of work; omitted,
- * the staging rolls from the full approved pool.
+ * experience) so the appended compositions match its register of work; omitted,
+ * they roll from the full approved pool.
  *
  * Challenger data resolves in order: a local catalog directory (the private
  * service repo, evals, and tests set IMPECCABLE_CATALOG_DIR), then the roll
@@ -72,7 +72,7 @@ import { readCompositionCatalog } from './lib/composition-catalog.mjs';
 import {
   runSyncSelection,
   selectApprovedChallengers as selectApprovedChallengersCore,
-  selectApprovedStagings as selectApprovedStagingsCore,
+  selectApprovedCompositions as selectApprovedCompositionsCore,
 } from './lib/roll-selection.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -191,12 +191,12 @@ ${system}
      QUALITY BAR: board ${board} · hero ${hero}`;
 }
 
-export function renderStaging(composition, index = null) {
+export function renderComposition(composition, index = null) {
   const grammar = composition.grammar.map(rule => `       - ${rule}`).join('\n');
   return `  ${index == null ? '' : `${index + 1}. `}${composition.form}
      SOURCE ID: ${composition.id}
      SPARK: ${composition.spark}
-     STAGING GRAMMAR:
+     COMPOSITION GRAMMAR:
 ${grammar}
      WEB LEVERAGE: ${composition.webLeverage}`;
 }
@@ -210,14 +210,14 @@ function driveSelection(generator) {
   return runSyncSelection(generator, input => crypto.createHash('sha256').update(input).digest('hex'));
 }
 
-export function selectApprovedStagings({ scope, key, reroll = 0, mode = null, sourceCompositions = null, count = 3 }) {
+export function selectApprovedCompositions({ scope, key, reroll = 0, mode = null, sourceCompositions = null, count = 3 }) {
   const compositions = sourceCompositions ?? requireLocalConcepts().compositions;
-  return driveSelection(selectApprovedStagingsCore({ scope, key, reroll, mode, compositions, count }));
+  return driveSelection(selectApprovedCompositionsCore({ scope, key, reroll, mode, compositions, count }));
 }
 
 // Compatibility for callers that need a single smoke-test sample.
-export function selectApprovedStaging(options) {
-  return selectApprovedStagings({ ...options, count: 1 })[0] ?? null;
+export function selectApprovedComposition(options) {
+  return selectApprovedCompositions({ ...options, count: 1 })[0] ?? null;
 }
 
 export function selectApprovedChallengers({ scope, key, reroll = 0, sourceConcepts = null }) {
@@ -280,7 +280,7 @@ export function renderConceptSeed({
         approvedCount: approved.length,
         catalogCount,
         challengers: picks,
-        stagings: selectApprovedStagings({ scope, key, reroll, mode, sourceCompositions: local.compositions }),
+        compositions: selectApprovedCompositions({ scope, key, reroll, mode, sourceCompositions: local.compositions }),
       };
     } else {
       // Keep local renders synchronous for prepared eval sessions and tests;
@@ -298,7 +298,11 @@ export function renderConceptSeed({
           approvedCount: roll.approvedCount,
           catalogCount: roll.catalogCount,
           challengers: roll.challengers,
-          stagings: Array.isArray(roll.stagings) ? roll.stagings : roll.staging ? [roll.staging] : [],
+          compositions: Array.isArray(roll.compositions)
+            ? roll.compositions
+            : Array.isArray(roll.stagings)
+              ? roll.stagings
+              : roll.staging ? [roll.staging] : [],
         } : null,
       }));
     }
@@ -381,15 +385,21 @@ ${buildIndex} of your own grounded list; seed key ${key}.
 `;
   }
 
-  const stagings = Array.isArray(data.stagings)
-    ? data.stagings
-    : data.staging ? [data.staging] : [];
-  const stagingBlock = stagings.length > 0
-    ? `\n${scope === 'direction' ? 'FIRST-SURFACE STAGING INPUTS (identity-free; test them with shortlisted worlds and keep world plus staging one decision):' : 'STAGING CHALLENGERS (identity-free; dress them in the committed visual identity before judging):'}
-${stagings.map((staging, index) => renderStaging(staging, index)).join('\n')}
-Stagings organize attention, sequence, and manipulation; they never bring a
-palette, typeface, or material. Use them as serious alternatives to the model's
-habitual composition, but keep only structures that strengthen this product.\n`
+  // Field order is the migration: `compositions` is current, `stagings` is what
+  // the API emitted while these were called stagings, and `staging` is the
+  // single-pick shape from before it dealt three. Older installs keep working.
+  const compositions = Array.isArray(data.compositions)
+    ? data.compositions
+    : Array.isArray(data.stagings)
+      ? data.stagings
+      : data.staging ? [data.staging] : [];
+  const compositionBlock = compositions.length > 0
+    ? `\n${scope === 'direction' ? 'FIRST-SURFACE COMPOSITION INPUTS (identity-free; test them with shortlisted worlds and keep world plus composition one decision):' : 'COMPOSITION CHALLENGERS (identity-free; dress them in the committed visual identity before judging):'}
+${compositions.map((composition, index) => renderComposition(composition, index)).join('\n')}
+Each one asks the same question of this build: what is the cleverest way to
+present, organize, or make interactive the problem in front of you? They carry
+structure only, never a palette, typeface, or material. Treat them as serious
+rivals to your habitual layout, and keep only what makes this product clearer.\n`
     : '';
   const rerollBlock = reroll > 0
     ? `RE-ROLL ROUND ${reroll}: every candidate presented in earlier rounds, grounded
@@ -410,7 +420,7 @@ ${rerollBlock}ASSIGNED INDEX: ${buildIndex}
   the user or the brief. Never expose assignment metadata in user-facing labels.
 CHALLENGERS:
 ${data.challengers.map(renderChallenger).join('\n')}
-${stagingBlock}${challengerInstruction}
+${compositionBlock}${challengerInstruction}
 When you can view images, open the QUALITY BAR board and hero for any
 challenger you weigh seriously and for the world you build. They exist as a
 craft bar, the finish level and commitment the build is expected to reach,

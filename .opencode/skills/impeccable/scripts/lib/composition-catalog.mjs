@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { CONCEPT_STATUSES, normalizeConceptForm } from './concept-catalog.mjs';
 
-// Catalog B: stagings rather than styles. A composition organizes attention,
+// Catalog B: compositions rather than styles. A composition organizes attention,
 // sequence, or manipulation on a surface and must survive being dressed in
 // any committed visual identity; it deliberately carries no palette or type
 // half. Surface-scope seeds draw from here (plus catalog A duals); direction
@@ -15,8 +15,8 @@ export const COMPOSITION_GRAMMAR_PREFIXES = [
   'Adaptation:',
 ];
 
-// Surfaces align with the skill's modes: a persuade staging and an operate
-// staging are different species, and read/experience surfaces get their own.
+// Surfaces align with the skill's modes: a persuade composition and an operate
+// composition are different species, and read/experience surfaces get their own.
 export const COMPOSITION_SURFACES = new Set(['persuade', 'operate', 'read', 'experience']);
 
 export function compositionContentHash(composition) {

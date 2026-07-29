@@ -97,7 +97,7 @@ function compositionTickets(pool) {
 export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating = null, concepts }) {
   const approved = concepts.filter(concept => concept.status === 'approved');
   // Direction chooses a durable identity, so it draws worlds; surface designs
-  // one page inside a committed identity, so it draws stagings. Duals serve
+  // one page inside a committed identity, so it draws compositions. Duals serve
   // both. A tier with no matching-strength approvals falls back to its full
   // approved pool rather than starving the roll.
   const wanted = scope === 'direction'
@@ -176,12 +176,12 @@ export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating =
 }
 
 /**
- * Three identity-free staging inputs from an explicit approved pool.
+ * Three identity-free composition inputs from an explicit approved pool.
  * Drive with runSyncSelection or runAsyncSelection.
  *
  * One input was too weak a counterweight to a model's habitual page skeleton:
  * it became a single optional flourish beside six identity challengers rather
- * than a real search over composition. Distinct staging families are preferred
+ * than a real search over composition. Distinct composition families are preferred
  * so a roll tests materially different hierarchy, sequence, and interaction
  * laws. Cross-mode fallback would make the input misleading, so an absent mode
  * returns nothing rather than borrowing. Re-rolls exclude every earlier set
@@ -196,11 +196,11 @@ export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating =
  * @param {number} [options.count]
  * @returns {Generator<string[], Array, string[]>}
  */
-export function* selectApprovedStagings({ scope, key, reroll = 0, mode = null, compositions, count = 3 }) {
-  // Stagings honour the same breadth gate as worlds: one too specific to serve
+export function* selectApprovedCompositions({ scope, key, reroll = 0, mode = null, compositions, count = 3 }) {
+  // Compositions honour the same breadth gate as worlds: one too specific to serve
   // an arbitrary build stays approved for direct briefs and leaves the
   // challenger pool. Falls back to the full approved set rather than returning
-  // nothing if every approved staging is niche.
+  // nothing if every approved composition is niche.
   let approved = compositions.filter(composition => composition.status === 'approved');
   const broad = approved.filter(composition => composition.review?.breadth !== 'niche');
   if (broad.length > 0) approved = broad;
@@ -218,15 +218,17 @@ export function* selectApprovedStagings({ scope, key, reroll = 0, mode = null, c
     const base = available.length >= Math.min(count, approved.length) ? available : approved;
     // Rating weights the draw as it does for worlds. It matters more here
     // because the per-surface pools are small, so an unweighted shuffle repeats
-    // a weak staging far more often. Each ticket carries its index so the rank
+    // a weak composition far more often. Each ticket carries its index so the rank
     // sees a distinct key per ticket: ranking bare duplicates would hash
     // identically and the pick loop's id-dedupe would silently discard the
     // second copy, making the weighting a no-op.
     let tickets = compositionTickets(base);
-    // A pool of nothing but 1-star keeps still has to yield stagings.
+    // A pool of nothing but 1-star keeps still has to yield compositions.
     if (tickets.length === 0) tickets = base.map(composition => ({ composition, ticket: 0 }));
     const ranked = (yield* rank(
       tickets,
+      // The salt keeps the word "staging" deliberately. It is hash input, so
+      // renaming it would re-deal every roll anyone has ever reproduced by key.
       round === 0 ? `${scope}:${key}:staging` : `${scope}:${key}:staging:reroll-${round}`,
       entry => `${entry.composition.id}#${entry.ticket}`
     )).map(entry => entry.composition);

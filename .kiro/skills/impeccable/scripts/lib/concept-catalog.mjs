@@ -1,11 +1,12 @@
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { WELL_TIERS } from './roll-selection.mjs';
 
 export const CONCEPT_STATUSES = new Set(['approved', 'rejected']);
 
 // What a concept is actually strong at. Worlds carry a durable visual
 // identity (their palette/type half is the magnet); compositions carry a
-// staging or interaction idea (their topology half is the magnet) that can be
+// composition or interaction idea (their topology half is the magnet) that can be
 // dressed in any committed identity; duals fuse both inseparably. Direction
 // seeds draw world|dual, surface seeds draw composition|dual.
 export const CONCEPT_STRENGTHS = new Set(['world', 'composition', 'dual']);
@@ -15,7 +16,13 @@ export const CONCEPT_STRENGTHS = new Set(['world', 'composition', 'dual']);
 // atmosphere worlds need the largest translation step. Every seed roll draws
 // one challenger from each tier so at least one directly-usable graphic
 // system is always on the table.
-export const WELL_TIERS = ['graphic', 'interaction', 'atmosphere'];
+// Defined in roll-selection.mjs, the dependency-free leaf both the seeder and
+// the roll API import. It cannot depend on this file: this one reads the
+// filesystem, and a Pages Function must not pull node:fs into its bundle.
+// Imported and re-exported rather than re-exported alone: a bare
+// `export { X } from` does not bind X in this module's own scope, and
+// validateConceptCatalog needs it.
+export { WELL_TIERS };
 
 const WEB_LEVERAGE_RE = /(?:\b3d\b|\badaptive\b|\banimat(?:e|ed|ion)\b|\bapi\b|\baria\b|\baudio\b|\bautomated?\b|\bbarcode\b|\bbroadcastchannel\b|\bbrowser\b|\bcamera\b|canvas\b|\bcaption\b|\bcollaborat(?:e|ive|ion)\b|\bcompar(?:e|ison)\b|\bcomput(?:e|ed|ation)\b|\bcomputer[- ]vision\b|\bconstraint[- ]solving\b|\bcryptographic?\b|\bcss\b|\bdeep[- ]link(?:ing)?\b|\bdirect manipulation\b|\bdom\b|\bdrag\b|\bfilter\b|\bfocus\b|\bgenerative\b|\bgeolocat(?:e|ed|ion)\b|\bgesture\b|\bgpu\b|\bgraph\b|\bhistory\b|\bindexeddb\b|\binteractive\b|\bintersectionobserver\b|\bkeyboard\b|\blive\b|\blocal\b|\bmicrophone\b|\bmotion\b|\bmultiplayer\b|\bnative\b|\bnotification\b|\boffline\b|\bpersonaliz(?:e|ed|ation)\b|\bplayable\b|\bpointer\b|\bprocedural\b|\bprovenance\b|\breal[- ]?time\b|\bresizeobserver\b|\bresponsive\b|\breveal\b|\bscrub\b|\bsearch\b|\bsearchparams\b|\bsensor\b|\bserver[- ]sent\b|\bservice worker\b|\bshader\b|\bsimulat(?:e|ed|ion|or)\b|\bspatial\b|\bstate\b|\bstream(?:ing)?\b|\bsvg\b|\bsynchroniz(?:e|ed|ation)\b|\btimeline\b|\btouch\b|\burl|\bvideo\b|\bweb(?:gl|socket|vtt)?\b|\bworker\b|\bzoom\b)/i;
 export const SYSTEM_PREFIXES = [
@@ -320,10 +327,3 @@ export function approvedPoolRevision(concepts) {
   return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 12);
 }
 
-export function deterministicRank(items, input, idFor = item => item.id) {
-  return [...items].sort((a, b) => {
-    const scoreA = crypto.createHash('sha256').update(`${input}:${idFor(a)}`).digest('hex');
-    const scoreB = crypto.createHash('sha256').update(`${input}:${idFor(b)}`).digest('hex');
-    return scoreB.localeCompare(scoreA) || idFor(a).localeCompare(idFor(b));
-  });
-}
