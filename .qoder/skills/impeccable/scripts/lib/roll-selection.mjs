@@ -1,0 +1,250 @@
+// The one implementation of world-roll selection.
+//
+// Two copies of this logic used to exist: this repo's concept-seed.mjs and the
+// service repo's functions/api/_worldroll-core.js, whose header claimed they
+// matched "exactly". They did not. The API had no breadth gate on either pool,
+// no rating weighting for compositions, and dealt one composition where the
+// seeder dealt three. Because the catalog never ships with the skill, every real
+// user rolls through that API, so those gates reached nobody.
+//
+// Why generators. The two callers cannot agree on a hash: Node has a
+// synchronous one, Workers only have async crypto.subtle, and concept-seed's
+// local render path is deliberately synchronous so prepared eval sessions and
+// tests can call it without awaiting. Rather than fork the logic or force the
+// whole seeder async, the selection is written once as a generator that yields
+// batches of strings to hash and resumes with their digests. runSyncSelection
+// and runAsyncSelection below are the only runtime-specific code, about eight
+// lines each. Both digests are the same bytes, so a roll is identical either way.
+//
+// Nothing here reads a file, an environment variable, or the network: callers
+// pass pools in.
+
+export const WELL_TIERS = ['graphic', 'interaction', 'atmosphere'];
+
+/**
+ * Drives a selection generator with a synchronous hash.
+ * @param {Generator} generator yields string[] to hash, resumes with hex string[]
+ * @param {(input: string) => string} hash
+ */
+export function runSyncSelection(generator, hash) {
+  let step = generator.next();
+  while (!step.done) step = generator.next(step.value.map(hash));
+  return step.value;
+}
+
+/**
+ * Drives a selection generator with an asynchronous hash.
+ * @param {Generator} generator
+ * @param {(input: string) => Promise<string>} hash
+ */
+export async function runAsyncSelection(generator, hash) {
+  let step = generator.next();
+  while (!step.done) step = generator.next(await Promise.all(step.value.map(hash)));
+  return step.value;
+}
+
+// Ranks items by the digest of `${input}:${id}`, descending, with the id as a
+// stable tiebreak. Yields every needed digest in one batch so the async driver
+// can resolve them concurrently.
+function* rank(items, input, idFor = item => item.id) {
+  const ids = items.map(idFor);
+  const digests = yield ids.map(id => `${input}:${id}`);
+  return items
+    .map((item, index) => ({ item, id: ids[index], score: digests[index] }))
+    .sort((a, b) => b.score.localeCompare(a.score) || a.id.localeCompare(b.id))
+    .map(entry => entry.item);
+}
+
+// Two independent exclusions, and either one is enough to hold a world back.
+// Rating grades quality: a 3-star earns a second ticket, a 1-star marginal keep
+// leaves the pool. Breadth says whether a world can serve an arbitrary build at
+// all, so a niche world leaves however good it is, keeping its approval for
+// direct briefs. Breadth was split out of rating because the only way to hold a
+// narrow world back used to be calling it marginal, which made "excellent but
+// narrow" unrecordable and corrupted ratings as a calibration signal.
+function challengerTickets(pool) {
+  return pool.flatMap(concept => {
+    const rating = concept.review?.rating;
+    if (rating === 1 || concept.review?.breadth === 'niche') return [];
+    return rating === 3
+      ? [{ concept, ticket: 0 }, { concept, ticket: 1 }]
+      : [{ concept, ticket: 0 }];
+  });
+}
+
+function compositionTickets(pool) {
+  return pool.flatMap(composition => {
+    const rating = composition.review?.rating;
+    if (rating === 1) return [];
+    return rating === 3
+      ? [{ composition, ticket: 0 }, { composition, ticket: 1 }]
+      : [{ composition, ticket: 0 }];
+  });
+}
+
+/**
+ * Six challengers, two per translation tier, from an explicit approved pool.
+ * Drive with runSyncSelection or runAsyncSelection.
+ *
+ * @param {object} options
+ * @param {'direction'|'surface'} options.scope
+ * @param {string} options.key              same key reproduces the roll
+ * @param {number} [options.reroll]         round of the re-roll chain
+ * @param {number|null} [options.minRating] optional floor, skipped per tier it would empty
+ * @param {Array} options.concepts          merged concepts with status, review, wellTier, familyId
+ * @returns {Generator<string[], {approved: Array, picks: Array}, string[]>}
+ */
+export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating = null, concepts }) {
+  const approved = concepts.filter(concept => concept.status === 'approved');
+  // Direction chooses a durable identity, so it draws worlds; surface designs
+  // one page inside a committed identity, so it draws stagings. Duals serve
+  // both. A tier with no matching-strength approvals falls back to its full
+  // approved pool rather than starving the roll.
+  const wanted = scope === 'direction'
+    ? new Set(['world', 'dual'])
+    : new Set(['composition', 'dual']);
+
+  const approvedByTier = new Map();
+  for (const concept of approved) {
+    const tier = approvedByTier.get(concept.wellTier) || [];
+    tier.push(concept);
+    approvedByTier.set(concept.wellTier, tier);
+  }
+  if (WELL_TIERS.some(tier => !(approvedByTier.get(tier) || []).length)) {
+    throw new Error('concept-seed: every challenger tier needs at least one approved concept');
+  }
+
+  // Optional minimum-rating gate, applied per tier and skipped for any tier it
+  // would empty, so a thin tier degrades to its full approved pool.
+  if (minRating) {
+    for (const [tier, pool] of approvedByTier) {
+      const rated = pool.filter(concept => (concept.review?.rating || 0) >= minRating);
+      if (rated.length > 0) approvedByTier.set(tier, rated);
+    }
+  }
+  for (const [tier, pool] of approvedByTier) {
+    const matching = pool.filter(concept => wanted.has(concept.strength));
+    if (matching.length > 0) approvedByTier.set(tier, matching);
+  }
+
+  // Two challengers per tier, so every roll carries near-zero-translation
+  // graphic systems beside instrument languages and atmosphere worlds, with the
+  // second pick preferring a different family. Tier order is rolled too, to
+  // avoid positional bias.
+  function* pickRound(round, excluded) {
+    const salt = round === 0 ? '' : `:reroll-${round}`;
+    const tierOrder = (yield* rank(
+      WELL_TIERS.map(id => ({ id })),
+      `${scope}:${key}:tiers${salt}`
+    )).map(item => item.id);
+    const picks = [];
+    for (const [index, tier] of tierOrder.entries()) {
+      let pool = approvedByTier.get(tier).filter(concept => !excluded.has(concept.id));
+      // A tier exhausted by prior rounds falls back to reuse over starvation.
+      if (pool.length === 0) pool = approvedByTier.get(tier);
+      let tickets = challengerTickets(pool);
+      if (tickets.length === 0) tickets = pool.map(concept => ({ concept, ticket: 0 }));
+      const ranked = yield* rank(
+        tickets,
+        `${scope}:${key}:challenger-${index}${salt}`,
+        entry => `${entry.concept.id}#${entry.ticket}`
+      );
+      const order = [];
+      const seen = new Set();
+      for (const entry of ranked) {
+        if (seen.has(entry.concept.id)) continue;
+        seen.add(entry.concept.id);
+        order.push(entry.concept);
+      }
+      const first = order[0];
+      const second = order.find(concept => concept.familyId !== first.familyId)
+        || order.find(concept => concept.id !== first.id);
+      picks.push(...(second ? [first, second] : [first]));
+    }
+    return picks;
+  }
+
+  // Round n of a re-roll chain excludes everything rounds 0..n-1 drew, so the
+  // same base key reproduces the whole chain.
+  const excluded = new Set();
+  let picks = yield* pickRound(0, excluded);
+  for (let round = 1; round <= reroll; round += 1) {
+    for (const pick of picks) excluded.add(pick.id);
+    picks = yield* pickRound(round, excluded);
+  }
+  return { approved, picks };
+}
+
+/**
+ * Three identity-free staging inputs from an explicit approved pool.
+ * Drive with runSyncSelection or runAsyncSelection.
+ *
+ * One input was too weak a counterweight to a model's habitual page skeleton:
+ * it became a single optional flourish beside six identity challengers rather
+ * than a real search over composition. Distinct staging families are preferred
+ * so a roll tests materially different hierarchy, sequence, and interaction
+ * laws. Cross-mode fallback would make the input misleading, so an absent mode
+ * returns nothing rather than borrowing. Re-rolls exclude every earlier set
+ * until the pool runs out.
+ *
+ * @param {object} options
+ * @param {'direction'|'surface'} options.scope
+ * @param {string} options.key
+ * @param {number} [options.reroll]
+ * @param {string|null} [options.mode]  surface register to stay inside
+ * @param {Array} options.compositions  merged compositions with status, review, surface, familyId
+ * @param {number} [options.count]
+ * @returns {Generator<string[], Array, string[]>}
+ */
+export function* selectApprovedStagings({ scope, key, reroll = 0, mode = null, compositions, count = 3 }) {
+  // Stagings honour the same breadth gate as worlds: one too specific to serve
+  // an arbitrary build stays approved for direct briefs and leaves the
+  // challenger pool. Falls back to the full approved set rather than returning
+  // nothing if every approved staging is niche.
+  let approved = compositions.filter(composition => composition.status === 'approved');
+  const broad = approved.filter(composition => composition.review?.breadth !== 'niche');
+  if (broad.length > 0) approved = broad;
+  if (approved.length === 0) return [];
+  if (mode) {
+    const matching = approved.filter(composition => composition.surface === mode);
+    if (matching.length === 0) return [];
+    approved = matching;
+  }
+
+  const prior = new Set();
+  let picks = [];
+  for (let round = 0; round <= reroll; round += 1) {
+    const available = approved.filter(composition => !prior.has(composition.id));
+    const base = available.length >= Math.min(count, approved.length) ? available : approved;
+    // Rating weights the draw as it does for worlds. It matters more here
+    // because the per-surface pools are small, so an unweighted shuffle repeats
+    // a weak staging far more often. Each ticket carries its index so the rank
+    // sees a distinct key per ticket: ranking bare duplicates would hash
+    // identically and the pick loop's id-dedupe would silently discard the
+    // second copy, making the weighting a no-op.
+    let tickets = compositionTickets(base);
+    // A pool of nothing but 1-star keeps still has to yield stagings.
+    if (tickets.length === 0) tickets = base.map(composition => ({ composition, ticket: 0 }));
+    const ranked = (yield* rank(
+      tickets,
+      round === 0 ? `${scope}:${key}:staging` : `${scope}:${key}:staging:reroll-${round}`,
+      entry => `${entry.composition.id}#${entry.ticket}`
+    )).map(entry => entry.composition);
+
+    const families = new Set();
+    picks = [];
+    for (const composition of ranked) {
+      const family = composition.familyId ?? composition.id;
+      if (families.has(family)) continue;
+      picks.push(composition);
+      families.add(family);
+      if (picks.length >= count) break;
+    }
+    for (const composition of ranked) {
+      if (picks.length >= count) break;
+      if (!picks.some(pick => pick.id === composition.id)) picks.push(composition);
+    }
+    if (round < reroll) picks.forEach(composition => prior.add(composition.id));
+  }
+  return picks;
+}

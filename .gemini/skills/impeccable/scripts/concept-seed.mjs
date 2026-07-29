@@ -64,12 +64,16 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   approvedPoolRevision,
-  deterministicRank,
   readConceptCatalog,
   validateConceptCatalog,
   WELL_TIERS,
 } from './lib/concept-catalog.mjs';
 import { readCompositionCatalog } from './lib/composition-catalog.mjs';
+import {
+  runSyncSelection,
+  selectApprovedChallengers as selectApprovedChallengersCore,
+  selectApprovedStagings as selectApprovedStagingsCore,
+} from './lib/roll-selection.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -197,72 +201,18 @@ ${grammar}
      WEB LEVERAGE: ${composition.webLeverage}`;
 }
 
-// Three approved, identity-free staging inputs are rolled deterministically.
-// One input was too weak a counterweight to a model's habitual page skeleton:
-// it became a single optional flourish beside six identity challengers rather
-// than a real search over composition. Prefer distinct staging families so a
-// roll tests materially different hierarchy, sequence, and interaction laws.
-// Cross-mode fallback would make the input misleading, so an absent mode still
-// returns no staging. Re-rolls exclude every earlier set until the pool runs out.
-export function selectApprovedStagings({ scope, key, reroll = 0, mode = null, sourceCompositions = null, count = 3 }) {
-  const pool = sourceCompositions ?? requireLocalConcepts().compositions;
-  // Stagings honour the same breadth gate as worlds: a staging too specific to
-  // serve an arbitrary build stays approved for direct briefs and leaves the
-  // challenger pool. Falls back to the full approved set rather than returning
-  // nothing if every approved staging is marked niche.
-  let approved = pool.filter(composition => composition.status === 'approved');
-  const broad = approved.filter(composition => composition.review?.breadth !== 'niche');
-  if (broad.length > 0) approved = broad;
-  if (approved.length === 0) return [];
-  if (mode) {
-    const matching = approved.filter(composition => composition.surface === mode);
-    if (matching.length === 0) return [];
-    approved = matching;
-  }
-  // Rating weights the draw exactly as it does for world challengers: a 3-star
-  // staging earns a second ticket, a 1-star marginal keep leaves the pool. This
-  // matters more here than for worlds because the per-surface pools are small,
-  // so an unweighted shuffle repeats a weak staging far more often.
-  // Each ticket carries its index so deterministicRank sees a distinct key per
-  // ticket; ranking bare duplicates would hash identically and the pick loop's
-  // id-dedupe would silently discard the second copy, making weighting a no-op.
-  const ticketsFor = pool => pool.flatMap(composition => {
-    const rating = composition.review?.rating;
-    if (rating === 1) return [];
-    return rating === 3
-      ? [{ composition, ticket: 0 }, { composition, ticket: 1 }]
-      : [{ composition, ticket: 0 }];
-  });
+// Selection itself lives in lib/roll-selection.mjs so this script and the roll
+// API run one algorithm rather than two that drifted. These wrappers add only
+// what is local to the skill: resolving the catalog when no pool is passed, and
+// driving the generator with Node's synchronous hash, which keeps a local render
+// synchronous for prepared eval sessions and tests.
+function driveSelection(generator) {
+  return runSyncSelection(generator, input => crypto.createHash('sha256').update(input).digest('hex'));
+}
 
-  const prior = new Set();
-  let picks = [];
-  for (let round = 0; round <= reroll; round += 1) {
-    const available = approved.filter(composition => !prior.has(composition.id));
-    const base = available.length >= Math.min(count, approved.length) ? available : approved;
-    let tickets = ticketsFor(base);
-    // A pool of nothing but 1-star keeps still has to yield stagings.
-    if (tickets.length === 0) tickets = base.map(composition => ({ composition, ticket: 0 }));
-    const ranked = deterministicRank(
-      tickets,
-      round === 0 ? `${scope}:${key}:staging` : `${scope}:${key}:staging:reroll-${round}`,
-      entry => `${entry.composition.id}#${entry.ticket}`
-    ).map(entry => entry.composition);
-    const families = new Set();
-    picks = [];
-    for (const composition of ranked) {
-      const family = composition.familyId ?? composition.id;
-      if (families.has(family)) continue;
-      picks.push(composition);
-      families.add(family);
-      if (picks.length >= count) break;
-    }
-    for (const composition of ranked) {
-      if (picks.length >= count) break;
-      if (!picks.some(pick => pick.id === composition.id)) picks.push(composition);
-    }
-    if (round < reroll) picks.forEach(composition => prior.add(composition.id));
-  }
-  return picks;
+export function selectApprovedStagings({ scope, key, reroll = 0, mode = null, sourceCompositions = null, count = 3 }) {
+  const compositions = sourceCompositions ?? requireLocalConcepts().compositions;
+  return driveSelection(selectApprovedStagingsCore({ scope, key, reroll, mode, compositions, count }));
 }
 
 // Compatibility for callers that need a single smoke-test sample.
@@ -272,86 +222,7 @@ export function selectApprovedStaging(options) {
 
 export function selectApprovedChallengers({ scope, key, reroll = 0, sourceConcepts = null }) {
   const source = sourceConcepts ?? requireLocalConcepts().concepts;
-  const approved = source.filter(concept => concept.status === 'approved');
-  // Direction chooses a durable identity, so it draws worlds; surface designs
-  // one page inside a committed identity, so it draws stagings. Duals serve
-  // both. A tier with no matching-strength approvals falls back to its full
-  // approved pool rather than starving the roll.
-  const wanted = scope === 'direction'
-    ? new Set(['world', 'dual'])
-    : new Set(['composition', 'dual']);
-  const approvedByTier = new Map();
-  for (const concept of approved) {
-    const tier = approvedByTier.get(concept.wellTier) || [];
-    tier.push(concept);
-    approvedByTier.set(concept.wellTier, tier);
-  }
-  if (WELL_TIERS.some(tier => !(approvedByTier.get(tier) || []).length)) {
-    throw new Error('concept-seed: every challenger tier needs at least one approved concept');
-  }
-  for (const [tier, pool] of approvedByTier) {
-    const matching = pool.filter(concept => wanted.has(concept.strength));
-    if (matching.length > 0) approvedByTier.set(tier, matching);
-  }
-  // Two challengers per tier, so every roll carries near-zero-translation
-  // graphic systems beside instrument languages and atmosphere worlds, with
-  // the second pick preferring a different family for diversity. Tier order
-  // in the rendered list is rolled too, to avoid positional bias.
-  // Two separate axes, and both can exclude. Rating grades quality: a 3-star
-  // earns a second ticket, a 1-star marginal keep leaves the pool. Breadth says
-  // whether a world can serve an arbitrary build at all, so a niche world
-  // leaves the pool however good it is. Breadth was split out of rating because
-  // the only way to hold a narrow world back used to be calling it marginal,
-  // which made "excellent but narrow" unrecordable and corrupted the ratings as
-  // a calibration signal for the next authoring round.
-  const ticketsFor = pool => pool.flatMap(concept => {
-    const rating = concept.review?.rating;
-    // Two independent exclusions: a marginal world is too weak to challenge,
-    // a niche world too narrow. Either one keeps its approval for direct
-    // briefs and leaves the pool.
-    if (rating === 1 || concept.review?.breadth === 'niche') return [];
-    return rating === 3
-      ? [{ concept, ticket: 0 }, { concept, ticket: 1 }]
-      : [{ concept, ticket: 0 }];
-  });
-  const pickRound = (round, excluded) => {
-    const salt = round === 0 ? '' : `:reroll-${round}`;
-    const tierOrder = deterministicRank(
-      WELL_TIERS.map(id => ({ id })),
-      `${scope}:${key}:tiers${salt}`
-    ).map(item => item.id);
-    return tierOrder.flatMap((tier, index) => {
-      let pool = approvedByTier.get(tier).filter(concept => !excluded.has(concept.id));
-      // A tier exhausted by prior rounds falls back to reuse over starvation.
-      if (pool.length === 0) pool = approvedByTier.get(tier);
-      let tickets = ticketsFor(pool);
-      if (tickets.length === 0) tickets = pool.map(concept => ({ concept, ticket: 0 }));
-      const ranked = deterministicRank(
-        tickets,
-        `${scope}:${key}:challenger-${index}${salt}`,
-        entry => `${entry.concept.id}#${entry.ticket}`
-      );
-      const order = [];
-      const seen = new Set();
-      for (const entry of ranked) {
-        if (seen.has(entry.concept.id)) continue;
-        seen.add(entry.concept.id);
-        order.push(entry.concept);
-      }
-      const first = order[0];
-      const second = order.find(concept => concept.familyId !== first.familyId)
-        || order.find(concept => concept.id !== first.id);
-      return second ? [first, second] : [first];
-    });
-  };
-  // Round n of a re-roll chain excludes everything rounds 0..n-1 drew, so the
-  // same base key reproduces the whole chain.
-  const excluded = new Set();
-  let picks = pickRound(0, excluded);
-  for (let round = 1; round <= reroll; round += 1) {
-    for (const pick of picks) excluded.add(pick.id);
-    picks = pickRound(round, excluded);
-  }
+  const { approved, picks } = driveSelection(selectApprovedChallengersCore({ scope, key, reroll, concepts: source }));
   return {
     approved,
     picks,
