@@ -12,7 +12,8 @@ import { profileFindings, profileStep } from '../../profile/profiler.mjs';
 // Regex fallback (non-HTML files: CSS, JSX, TSX, etc.)
 // ---------------------------------------------------------------------------
 
-const hasRounded = (line) => /\brounded(?:-\w+)?\b/.test(line);
+const hasRounded = (line) =>
+  /\brounded(?:-\w+)?\b/.test(line.replace(/\brounded-none\b/g, ''));
 const hasBorderRadius = (line) => /border-radius/i.test(line);
 const isSafeElement = (line) => /<(?:blockquote|nav[\s>]|pre[\s>]|code[\s>]|a\s|input[\s>]|span[\s>])/i.test(line);
 
