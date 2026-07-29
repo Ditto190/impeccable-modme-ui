@@ -24,6 +24,13 @@ export const CONCEPT_STRENGTHS = new Set(['world', 'composition', 'dual']);
 // validateConceptCatalog needs it.
 export { WELL_TIERS };
 
+// Reviewer axes that gate the challenger draw without touching approval.
+export const CONCEPT_BREADTHS = new Set(['general', 'niche']);
+// The registers of work a roll can be asked for. Kept here beside the review
+// validation that uses it; roll-selection.mjs filters on it and the seeder
+// validates the --mode flag against the same four.
+export const SEED_MODES = new Set(['persuade', 'operate', 'read', 'experience']);
+
 const WEB_LEVERAGE_RE = /(?:\b3d\b|\badaptive\b|\banimat(?:e|ed|ion)\b|\bapi\b|\baria\b|\baudio\b|\bautomated?\b|\bbarcode\b|\bbroadcastchannel\b|\bbrowser\b|\bcamera\b|canvas\b|\bcaption\b|\bcollaborat(?:e|ive|ion)\b|\bcompar(?:e|ison)\b|\bcomput(?:e|ed|ation)\b|\bcomputer[- ]vision\b|\bconstraint[- ]solving\b|\bcryptographic?\b|\bcss\b|\bdeep[- ]link(?:ing)?\b|\bdirect manipulation\b|\bdom\b|\bdrag\b|\bfilter\b|\bfocus\b|\bgenerative\b|\bgeolocat(?:e|ed|ion)\b|\bgesture\b|\bgpu\b|\bgraph\b|\bhistory\b|\bindexeddb\b|\binteractive\b|\bintersectionobserver\b|\bkeyboard\b|\blive\b|\blocal\b|\bmicrophone\b|\bmotion\b|\bmultiplayer\b|\bnative\b|\bnotification\b|\boffline\b|\bpersonaliz(?:e|ed|ation)\b|\bplayable\b|\bpointer\b|\bprocedural\b|\bprovenance\b|\breal[- ]?time\b|\bresizeobserver\b|\bresponsive\b|\breveal\b|\bscrub\b|\bsearch\b|\bsearchparams\b|\bsensor\b|\bserver[- ]sent\b|\bservice worker\b|\bshader\b|\bsimulat(?:e|ed|ion|or)\b|\bspatial\b|\bstate\b|\bstream(?:ing)?\b|\bsvg\b|\bsynchroniz(?:e|ed|ation)\b|\btimeline\b|\btouch\b|\burl|\bvideo\b|\bweb(?:gl|socket|vtt)?\b|\bworker\b|\bzoom\b)/i;
 export const SYSTEM_PREFIXES = [
   'Palette/material:',
@@ -287,6 +294,27 @@ export function validateConceptCatalog(catalog, reviewData, {
         errors.push(`review ${id} rating must be 1, 2, or 3`);
       } else if (review.status !== 'approved') {
         errors.push(`review ${id} rating only applies to approved concepts`);
+      }
+    }
+    // Breadth: a world too narrow to serve an arbitrary build keeps its approval
+    // and leaves the challenger pool. Selection has honoured this for a while but
+    // nothing validated it, so a typo would silently read as "general".
+    if (review?.breadth !== undefined && !CONCEPT_BREADTHS.has(review.breadth)) {
+      errors.push(`review ${id} breadth must be one of ${[...CONCEPT_BREADTHS].join(', ')}`);
+    }
+    // Mode eligibility: which registers of work this world can carry. Absent
+    // means all of them, which is why it needs no backfill. Listing every mode
+    // is the same as omitting it, and an empty list would deal nothing, so both
+    // are rejected in favour of leaving the field out.
+    if (review?.allowedModes !== undefined) {
+      if (!Array.isArray(review.allowedModes) || review.allowedModes.length === 0) {
+        errors.push(`review ${id} allowedModes must be a non-empty array, or omitted to allow every mode`);
+      } else if (review.allowedModes.some(mode => !SEED_MODES.has(mode))) {
+        errors.push(`review ${id} allowedModes may only contain ${[...SEED_MODES].join(', ')}`);
+      } else if (new Set(review.allowedModes).size !== review.allowedModes.length) {
+        errors.push(`review ${id} allowedModes must not repeat a mode`);
+      } else if (review.allowedModes.length === SEED_MODES.size) {
+        errors.push(`review ${id} allowedModes lists every mode; omit the field instead`);
       }
     }
   }

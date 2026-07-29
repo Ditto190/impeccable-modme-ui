@@ -19,6 +19,29 @@ export const COMPOSITION_GRAMMAR_PREFIXES = [
 // composition are different species, and read/experience surfaces get their own.
 export const COMPOSITION_SURFACES = new Set(['persuade', 'operate', 'read', 'experience']);
 
+// Areas of concern, one level below surface. Surface alone is too coarse to deal
+// against: "operate" spans onboarding, settings, dashboards and editors, so a
+// build designing an onboarding flow could legitimately draw a settings
+// composition and the input would read as noise. Areas name the problem the
+// composition is about, not how it is built, which is what familyId already does.
+//
+// `area` is optional. An entry without one is eligible for any request in its
+// surface, so nothing has to be backfilled before this ships, and a request for
+// an area with a thin pool tops up from the rest of the surface rather than
+// dealing fewer.
+export const COMPOSITION_AREAS = {
+  persuade: ['landing-hero', 'feature-argument', 'pricing-and-plans', 'proof-and-testimony', 'campaign-and-launch'],
+  operate: ['onboarding-and-setup', 'dashboard-and-overview', 'records-and-tables', 'editor-and-canvas', 'settings-and-account', 'empty-and-failure'],
+  read: ['long-form-article', 'reference-and-docs', 'index-and-archive', 'search-and-results'],
+  experience: ['gallery-and-collection', 'player-and-timeline', 'space-and-map', 'play-and-toy'],
+};
+
+export const ALL_COMPOSITION_AREAS = new Set(Object.values(COMPOSITION_AREAS).flat());
+
+export function areasForSurface(surface) {
+  return COMPOSITION_AREAS[surface] ?? [];
+}
+
 export function compositionContentHash(composition) {
   const payload = [
     composition?.form ?? '',
@@ -56,6 +79,16 @@ export function validateCompositionEntry(composition, { existingForms = new Map(
   }
   if (!COMPOSITION_SURFACES.has(composition?.surface)) {
     errors.push(`composition ${id} needs a surface of ${[...COMPOSITION_SURFACES].join(', ')}`);
+  }
+  // Optional, but an area from the wrong surface is a mistake rather than a
+  // looser tag: it would make the entry unreachable by every real request.
+  if (composition?.area !== undefined && composition.area !== null) {
+    const allowed = areasForSurface(composition.surface);
+    if (!allowed.includes(composition.area)) {
+      errors.push(
+        `composition ${id} area "${composition.area}" is not one of the ${composition.surface} areas (${allowed.join(', ')})`
+      );
+    }
   }
   if (!Array.isArray(composition?.tags)
     || composition.tags.length !== 3

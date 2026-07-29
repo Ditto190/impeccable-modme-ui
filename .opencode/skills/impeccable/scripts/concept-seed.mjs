@@ -38,9 +38,16 @@
  * Usage:
  *   node scripts/concept-seed.mjs --scope direction --mode persuade
  *   node scripts/concept-seed.mjs --scope surface --mode operate --from <key>
+ *   node scripts/concept-seed.mjs --scope surface --mode operate --area onboarding-and-setup
  *   node scripts/concept-seed.mjs --scope direction --candidate-count 6
  *   node scripts/concept-seed.mjs --scope direction --mode persuade --from <key> --reroll 1
  *   node scripts/concept-seed.mjs --chosen <challenger-id> --from <key> --scope direction
+ *
+ * --area names the area of concern inside that mode (an onboarding flow and a
+ * settings page are both operate, and want different compositions). It needs
+ * --mode, prefers compositions in that area, and tops up from the rest of the
+ * surface rather than dealing fewer. --mode also gates which worlds are
+ * eligible, for worlds whose reviewer marked them as carrying only some modes.
  *
  * --mode names the requested surface's mode (persuade, operate, read,
  * experience) so the appended compositions match its register of work; omitted,
@@ -68,7 +75,7 @@ import {
   validateConceptCatalog,
   WELL_TIERS,
 } from './lib/concept-catalog.mjs';
-import { readCompositionCatalog } from './lib/composition-catalog.mjs';
+import { areasForSurface, readCompositionCatalog } from './lib/composition-catalog.mjs';
 import {
   runSyncSelection,
   selectApprovedChallengers as selectApprovedChallengersCore,
@@ -127,9 +134,10 @@ function requireLocalConcepts() {
   return local;
 }
 
-async function fetchRoll({ scope, key, mode, reroll }) {
+async function fetchRoll({ scope, key, mode, area, reroll }) {
   const params = new URLSearchParams({ scope, key, reroll: String(reroll) });
   if (mode) params.set('mode', mode);
+  if (area) params.set('area', area);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), apiBudgetMs());
   try {
@@ -210,9 +218,9 @@ function driveSelection(generator) {
   return runSyncSelection(generator, input => crypto.createHash('sha256').update(input).digest('hex'));
 }
 
-export function selectApprovedCompositions({ scope, key, reroll = 0, mode = null, sourceCompositions = null, count = 3 }) {
+export function selectApprovedCompositions({ scope, key, reroll = 0, mode = null, area = null, sourceCompositions = null, count = 3 }) {
   const compositions = sourceCompositions ?? requireLocalConcepts().compositions;
-  return driveSelection(selectApprovedCompositionsCore({ scope, key, reroll, mode, compositions, count }));
+  return driveSelection(selectApprovedCompositionsCore({ scope, key, reroll, mode, area, compositions, count }));
 }
 
 // Compatibility for callers that need a single smoke-test sample.
@@ -220,9 +228,9 @@ export function selectApprovedComposition(options) {
   return selectApprovedCompositions({ ...options, count: 1 })[0] ?? null;
 }
 
-export function selectApprovedChallengers({ scope, key, reroll = 0, sourceConcepts = null }) {
+export function selectApprovedChallengers({ scope, key, reroll = 0, mode = null, sourceConcepts = null }) {
   const source = sourceConcepts ?? requireLocalConcepts().concepts;
-  const { approved, picks } = driveSelection(selectApprovedChallengersCore({ scope, key, reroll, concepts: source }));
+  const { approved, picks } = driveSelection(selectApprovedChallengersCore({ scope, key, reroll, mode, concepts: source }));
   return {
     approved,
     picks,
@@ -238,6 +246,7 @@ export function renderConceptSeed({
   key = process.env.IMPECCABLE_CONCEPT_SEED || crypto.randomBytes(4).toString('hex'),
   reroll = 0,
   mode = null,
+  area = null,
   candidateCount = 7,
   catalogDir = CATALOG_DIR,
   _resolvedData = undefined,
@@ -250,6 +259,15 @@ export function renderConceptSeed({
   }
   if (mode !== null && !SEED_MODES.has(mode)) {
     throw new Error('concept-seed: --mode must be persuade, operate, read, or experience');
+  }
+  if (area !== null) {
+    if (mode === null) {
+      throw new Error('concept-seed: --area needs --mode, because areas are scoped to a surface');
+    }
+    const allowed = areasForSurface(mode);
+    if (!allowed.includes(area)) {
+      throw new Error(`concept-seed: --area must be one of the ${mode} areas (${allowed.join(', ')})`);
+    }
   }
   if (!Number.isInteger(candidateCount) || candidateCount < 5 || candidateCount > 7) {
     throw new Error('concept-seed: --candidate-count must be an integer from 5 to 7');
@@ -272,6 +290,7 @@ export function renderConceptSeed({
         scope,
         key,
         reroll,
+        mode,
         sourceConcepts: local.concepts,
       });
       data = {
@@ -280,16 +299,17 @@ export function renderConceptSeed({
         approvedCount: approved.length,
         catalogCount,
         challengers: picks,
-        compositions: selectApprovedCompositions({ scope, key, reroll, mode, sourceCompositions: local.compositions }),
+        compositions: selectApprovedCompositions({ scope, key, reroll, mode, area, sourceCompositions: local.compositions }),
       };
     } else {
       // Keep local renders synchronous for prepared eval sessions and tests;
       // installed skills without a bundled catalog resolve through the API.
-      return fetchRoll({ scope, key, mode, reroll }).then(roll => renderConceptSeed({
+      return fetchRoll({ scope, key, mode, area, reroll }).then(roll => renderConceptSeed({
         scope,
         key,
         reroll,
         mode,
+        area,
         candidateCount,
         catalogDir,
         _resolvedData: roll ? {
@@ -439,6 +459,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const scopeIdx = args.indexOf('--scope');
   const rerollIdx = args.indexOf('--reroll');
   const modeIdx = args.indexOf('--mode');
+  const areaIdx = args.indexOf('--area');
   const candidateCountIdx = args.indexOf('--candidate-count');
   const chosenIdx = args.indexOf('--chosen');
   try {
@@ -472,6 +493,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
           : (process.env.IMPECCABLE_CONCEPT_SEED || crypto.randomBytes(4).toString('hex')),
         reroll: rerollIdx !== -1 ? Number(args[rerollIdx + 1]) : 0,
         mode: modeIdx !== -1 ? args[modeIdx + 1] : null,
+        area: areaIdx !== -1 ? args[areaIdx + 1] : null,
         candidateCount: candidateCountIdx !== -1 ? Number(args[candidateCountIdx + 1]) : 7,
       }));
     }

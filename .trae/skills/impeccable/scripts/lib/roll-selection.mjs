@@ -94,7 +94,15 @@ function compositionTickets(pool) {
  * @param {Array} options.concepts          merged concepts with status, review, wellTier, familyId
  * @returns {Generator<string[], {approved: Array, picks: Array}, string[]>}
  */
-export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating = null, concepts }) {
+// A world with no allowedModes is eligible everywhere, which is what keeps this
+// additive: nothing has to be backfilled for the filter to be safe.
+function modeAllows(concept, mode) {
+  const allowed = concept.review?.allowedModes;
+  if (!Array.isArray(allowed) || allowed.length === 0) return true;
+  return allowed.includes(mode);
+}
+
+export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating = null, mode = null, concepts }) {
   const approved = concepts.filter(concept => concept.status === 'approved');
   // Direction chooses a durable identity, so it draws worlds; surface designs
   // one page inside a committed identity, so it draws compositions. Duals serve
@@ -120,6 +128,18 @@ export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating =
     for (const [tier, pool] of approvedByTier) {
       const rated = pool.filter(concept => (concept.review?.rating || 0) >= minRating);
       if (rated.length > 0) approvedByTier.set(tier, rated);
+    }
+  }
+  // Mode eligibility, per tier and skipped where it would empty a tier. Worlds
+  // used to be drawn with no mode awareness at all, so a build asking for an app
+  // UI could get six worlds that only make sense on a landing page. A world is an
+  // identity and identities transfer further than compositions do, so this is a
+  // ceiling the reviewer sets rather than a category assignment: eligible
+  // everywhere until someone says otherwise.
+  if (mode) {
+    for (const [tier, pool] of approvedByTier) {
+      const eligible = pool.filter(concept => modeAllows(concept, mode));
+      if (eligible.length > 0) approvedByTier.set(tier, eligible);
     }
   }
   for (const [tier, pool] of approvedByTier) {
@@ -192,11 +212,12 @@ export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating =
  * @param {string} options.key
  * @param {number} [options.reroll]
  * @param {string|null} [options.mode]  surface register to stay inside
+ * @param {string|null} [options.area]  area of concern to prefer within that surface
  * @param {Array} options.compositions  merged compositions with status, review, surface, familyId
  * @param {number} [options.count]
  * @returns {Generator<string[], Array, string[]>}
  */
-export function* selectApprovedCompositions({ scope, key, reroll = 0, mode = null, compositions, count = 3 }) {
+export function* selectApprovedCompositions({ scope, key, reroll = 0, mode = null, area = null, compositions, count = 3 }) {
   // Compositions honour the same breadth gate as worlds: one too specific to serve
   // an arbitrary build stays approved for direct briefs and leaves the
   // challenger pool. Falls back to the full approved set rather than returning
@@ -233,16 +254,26 @@ export function* selectApprovedCompositions({ scope, key, reroll = 0, mode = nul
       entry => `${entry.composition.id}#${entry.ticket}`
     )).map(entry => entry.composition);
 
+    // Area is a preference, not a filter. Requesting an onboarding flow should
+    // deal onboarding compositions first and top up from the rest of the surface
+    // rather than deal fewer than three, because the per-area pools are small and
+    // an unset area is eligible everywhere. A stable partition of an already
+    // deterministic ranking is still deterministic.
+    const ordered = area
+      ? [...ranked.filter(composition => composition.area === area),
+         ...ranked.filter(composition => composition.area !== area)]
+      : ranked;
+
     const families = new Set();
     picks = [];
-    for (const composition of ranked) {
+    for (const composition of ordered) {
       const family = composition.familyId ?? composition.id;
       if (families.has(family)) continue;
       picks.push(composition);
       families.add(family);
       if (picks.length >= count) break;
     }
-    for (const composition of ranked) {
+    for (const composition of ordered) {
       if (picks.length >= count) break;
       if (!picks.some(pick => pick.id === composition.id)) picks.push(composition);
     }
