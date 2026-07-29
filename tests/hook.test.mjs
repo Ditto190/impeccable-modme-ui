@@ -470,6 +470,7 @@ describe('filterFindings()', () => {
     const findings = [
       finding('overused-font', 1, { snippet: 'Primary font: Inter (86% of text)' }),
       finding('overused-font', 2, { snippet: 'Primary font: Roboto' }),
+      finding('overused-font', 5, { snippet: 'Google Fonts: space grotesk' }),
       finding('bounce-easing', 3, { snippet: 'animation: bounce-ball' }),
       finding('bounce-easing', 4, { snippet: 'animation: wobble-card' }),
       finding('side-tab', 3),
@@ -478,6 +479,7 @@ describe('filterFindings()', () => {
       ignoreRules: [],
       ignoreValues: [
         { rule: 'overused-font', value: 'inter' },
+        { rule: 'overused-font', value: 'space grotesk' },
         { rule: 'bounce-easing', value: 'bounce-ball' },
       ],
       minSeverity: 'warning',
@@ -573,6 +575,10 @@ describe('filterFindings()', () => {
     assert.equal(
       extractFindingIgnoreValue(finding('overused-font', 1, { snippet: 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400' })),
       'plus jakarta sans',
+    );
+    assert.equal(
+      extractFindingIgnoreValue(finding('overused-font', 1, { snippet: 'Google Fonts: space grotesk' })),
+      'space grotesk',
     );
     assert.equal(extractFindingIgnoreValue(finding('side-tab', 1)), '');
   });

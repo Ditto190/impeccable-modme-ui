@@ -182,6 +182,7 @@ describe('cli/lib/impeccable-config', () => {
       { antipattern: 'design-system-color', file: join(root, 'src', 'demo.css'), line: 3, ignoreValue: '#8b5cf6' },
       { antipattern: 'design-system-color', file: join(root, 'src', 'real.css'), line: 4, ignoreValue: '#8b5cf6' },
       { antipattern: 'design-system-font', file: join(root, 'src', 'demo.css'), line: 5, ignoreValue: 'Avenir Next' },
+      { antipattern: 'overused-font', file: join(root, 'src', 'fonts.css'), line: 6, snippet: 'Google Fonts: space grotesk' },
     ];
     const filtered = filterDetectionFindings(findings, {
       ignoreRules: [],
@@ -189,6 +190,7 @@ describe('cli/lib/impeccable-config', () => {
         { rule: 'overused-font', value: 'avenir next' },
         { rule: 'design-system-color', value: '*', files: ['src/demo.css'] },
         { rule: 'design-system-font', value: '*' },
+        { rule: 'overused-font', value: 'space grotesk' },
       ],
     });
 
@@ -236,6 +238,7 @@ describe('cli/lib/impeccable-config', () => {
   test('extractFindingIgnoreValue handles fonts, Google font URLs, and motion snippets', () => {
     expect(extractFindingIgnoreValue({ antipattern: 'overused-font', snippet: 'Primary font: Avenir Next (80% of text)' })).toBe('avenir next');
     expect(extractFindingIgnoreValue({ antipattern: 'overused-font', snippet: 'https://fonts.googleapis.com/css2?family=Alumni+Sans:wght@700' })).toBe('alumni sans');
+    expect(extractFindingIgnoreValue({ antipattern: 'overused-font', snippet: 'Google Fonts: space grotesk' })).toBe('space grotesk');
     expect(extractFindingIgnoreValue({ antipattern: 'bounce-easing', snippet: 'animation: bounce-ball 1s infinite' })).toBe('bounce-ball');
   });
 
