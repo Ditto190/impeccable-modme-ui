@@ -56,7 +56,7 @@ const PROVIDER_DISPLAY = {
   '.grok': { name: 'Grok Build', input: 'grok' },
   '.kiro': { name: 'Kiro', input: 'kiro' },
   '.opencode': { name: 'OpenCode', input: 'opencode' },
-  '.pi': { name: 'Project Indigo', input: 'pi' },
+  '.pi': { name: 'Pi Coding Agent', input: 'pi' },
   '.qoder': { name: 'Qoder', input: 'qoder' },
   '.rovodev': { name: 'Rovo Dev', input: 'rovo-dev' },
   '.trae': { name: 'Trae', input: 'trae' },
