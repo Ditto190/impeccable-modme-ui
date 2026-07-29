@@ -844,10 +844,13 @@ export function restoreSvelteMarkup(markup, contract, parse) {
           break;
         case 'EachBlock': {
           visitExpr(node.expression, nextScopes);
-          if (node.key) visitExpr(node.key, nextScopes);
           const bound = new Set();
           if (node.context) collectPatternNames(node.context, bound);
           if (node.index) bound.add(node.index);
+          // The key evaluates per item, so the loop context and index are in
+          // scope there. Visiting it with outer scopes only let a contract
+          // prop that shares a loop binding's name rewrite the key.
+          if (node.key) visitExpr(node.key, [...nextScopes, bound]);
           walk(node.body, [...nextScopes, bound]);
           if (node.fallback) walk(node.fallback, nextScopes);
           break;

@@ -487,8 +487,22 @@ export function enterLiveRoot(cwd = process.cwd()) {
   const resolved = resolveLiveRoots(cwd, targetPath ? { targetPath } : {});
   if (!resolved.manifest) return null;
   const appRoot = resolved.manifest.appRoot;
-  if (path.resolve(cwd) !== path.resolve(appRoot) && isDir(appRoot)) {
-    try { process.chdir(appRoot); } catch { /* keep current cwd */ }
+  if (path.resolve(cwd) !== path.resolve(appRoot)) {
+    // Failing to land on the resolved appRoot must be fatal: a helper that
+    // silently keeps its ambient cwd derives server, session, and source
+    // paths from a different project and mutates the wrong state. A manifest
+    // pointing at a deleted directory is stale ambient truth, not a reason
+    // to guess.
+    if (!isDir(appRoot)) {
+      console.error(`[impeccable live] resolved app root does not exist: ${appRoot} (stale roots manifest? re-run the live boot, or pass --target <path>)`);
+      process.exit(1);
+    }
+    try {
+      process.chdir(appRoot);
+    } catch (err) {
+      console.error(`[impeccable live] could not enter app root ${appRoot}: ${err.message}`);
+      process.exit(1);
+    }
   }
   return resolved.manifest;
 }

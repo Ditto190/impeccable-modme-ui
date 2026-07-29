@@ -294,3 +294,25 @@ describe('review regressions: attribute slots and hydration honesty', () => {
     assert.match(res.reason, /mixing loop and outer identifiers/);
   });
 });
+
+describe('review regressions: each-key restore scoping', () => {
+  it('leaves a key that reads the loop binding alone when a prop shares its name', () => {
+    // The corruption shape: prop `name` maps back to `user.name`, and the
+    // loop context is ALSO called `name`. The key evaluates per item, so its
+    // `name` is the loop binding, never the prop; restoring it used to write
+    // `(user.name.id)` into the route.
+    const contract = [{ prop: 'name', expr: 'user.name', kind: 'text' }];
+    const markup = `<p>{name}</p>
+<ul>
+  {#each people as name (name.id)}
+    <li>{name.first}</li>
+  {/each}
+</ul>`;
+    const restored = restoreSvelteMarkup(markup, contract, parse);
+    assert.equal(restored.ok, true, restored.reason);
+    assert.match(restored.markup, /<p>\{user\.name\}<\/p>/, 'free usage restores to the expression');
+    assert.match(restored.markup, /\(name\.id\)/, 'the key keeps the loop binding');
+    assert.doesNotMatch(restored.markup, /\(user\.name\.id\)/);
+    assert.match(restored.markup, /\{name\.first\}/, 'the body keeps the loop binding');
+  });
+});
