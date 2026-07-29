@@ -465,4 +465,124 @@ describe('init gate', () => {
     assert.equal(result.status, 0);
     assert.doesNotMatch(result.stdout, /NO_PRODUCT_MD/);
   });
+
+  // Mode eligibility on worlds. Before this, selectApprovedChallengers never
+  // received the mode at all, so a build asking for an app UI could draw six
+  // worlds that only make sense on a landing page.
+  it('keeps worlds out of modes their reviewer excluded, and treats absent as all modes', () => {
+    const make = (id, tier, allowedModes) => ({
+      id,
+      familyId: `${id}-family`,
+      wellTier: tier,
+      strength: 'world',
+      status: 'approved',
+      form: `${id} form`,
+      spark: `${id} spark`,
+      system: [],
+      webLeverage: `${id} web`,
+      review: { status: 'approved', ...(allowedModes ? { allowedModes } : {}) },
+    });
+    const pool = [
+      make('persuade-only', 'graphic', ['persuade']),
+      make('anywhere', 'graphic'),
+      make('operate-capable', 'graphic', ['operate', 'read']),
+      make('radar', 'interaction'),
+      make('cavern', 'atmosphere'),
+    ];
+
+    for (let index = 0; index < 25; index += 1) {
+      const operate = selectApprovedChallengers({
+        scope: 'direction', key: `mode-gate-${index}`, mode: 'operate', sourceConcepts: pool,
+      }).picks.map(pick => pick.id);
+      assert.equal(operate.includes('persuade-only'), false, `persuade-only dealt for operate at ${index}`);
+    }
+
+    // Absent allowedModes stays eligible in every mode.
+    const seen = new Set();
+    for (let index = 0; index < 25; index += 1) {
+      for (const mode of ['persuade', 'operate', 'read', 'experience']) {
+        for (const pick of selectApprovedChallengers({
+          scope: 'direction', key: `mode-any-${index}`, mode, sourceConcepts: pool,
+        }).picks) seen.add(pick.id);
+      }
+    }
+    assert.equal(seen.has('anywhere'), true, 'a world with no allowedModes must stay eligible');
+  });
+
+  it('falls back rather than starving a tier whose every world excludes the mode', () => {
+    const make = (id, tier, allowedModes) => ({
+      id,
+      familyId: `${id}-family`,
+      wellTier: tier,
+      strength: 'world',
+      status: 'approved',
+      form: `${id} form`,
+      spark: `${id} spark`,
+      system: [],
+      webLeverage: `${id} web`,
+      review: { status: 'approved', ...(allowedModes ? { allowedModes } : {}) },
+    });
+    // The whole interaction tier is persuade-only. Selection must degrade to it
+    // rather than throw or deal fewer than six.
+    const pool = [
+      make('graphic-any', 'graphic'),
+      make('graphic-two', 'graphic'),
+      make('radar-persuade', 'interaction', ['persuade']),
+      make('cavern-any', 'atmosphere'),
+    ];
+    const picks = selectApprovedChallengers({
+      scope: 'direction', key: 'starve', mode: 'operate', sourceConcepts: pool,
+    }).picks;
+    assert.equal(picks.some(pick => pick.id === 'radar-persuade'), true, 'an emptied tier must fall back to its full pool');
+  });
+
+  // Areas of concern under a surface. Surface alone is too coarse: an onboarding
+  // flow and a settings page are both operate and want different compositions.
+  it('prefers compositions in the requested area and tops up from the surface', () => {
+    const make = (id, area) => ({
+      id,
+      familyId: `${id}-family`,
+      surface: 'operate',
+      status: 'approved',
+      ...(area ? { area } : {}),
+      review: { status: 'approved' },
+    });
+    const pool = [
+      make('onboard-one', 'onboarding-and-setup'),
+      make('onboard-two', 'onboarding-and-setup'),
+      make('settings-one', 'settings-and-account'),
+      make('dash-one', 'dashboard-and-overview'),
+      make('untagged', null),
+    ];
+    const picks = selectApprovedCompositions({
+      scope: 'surface', key: 'area-pref', mode: 'operate', area: 'onboarding-and-setup', sourceCompositions: pool,
+    });
+    assert.equal(picks.length, 3, 'a thin area must top up rather than deal fewer');
+    const ids = picks.map(pick => pick.id);
+    assert.equal(ids.includes('onboard-one') && ids.includes('onboard-two'), true, 'both area matches must be dealt first');
+
+    // Without an area the deal is unchanged, which is what keeps this additive.
+    const plain = selectApprovedCompositions({
+      scope: 'surface', key: 'area-pref', mode: 'operate', sourceCompositions: pool,
+    });
+    assert.equal(plain.length, 3);
+  });
+
+  it('reproduces an area-scoped deal from the same key', () => {
+    const make = (id, area) => ({
+      id, familyId: `${id}-family`, surface: 'read', status: 'approved',
+      ...(area ? { area } : {}), review: { status: 'approved' },
+    });
+    const pool = [
+      make('article-one', 'long-form-article'),
+      make('article-two', 'long-form-article'),
+      make('docs-one', 'reference-and-docs'),
+      make('index-one', 'index-and-archive'),
+    ];
+    const args = { scope: 'surface', key: 'area-stable', mode: 'read', area: 'long-form-article', sourceCompositions: pool };
+    assert.deepEqual(
+      selectApprovedCompositions(args).map(pick => pick.id),
+      selectApprovedCompositions(args).map(pick => pick.id)
+    );
+  });
 });
