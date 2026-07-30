@@ -122,7 +122,10 @@ function hasCoverageValue(value) {
   if (value && typeof value === 'object') {
     return Object.values(value).some(hasCoverageValue);
   }
-  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 && !/^(?:\[\s*\]|\{\s*\})$/.test(trimmed);
+  }
   return false;
 }
 
