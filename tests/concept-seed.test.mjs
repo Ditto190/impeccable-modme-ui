@@ -122,7 +122,12 @@ describe('concept seed scopes', () => {
     assert.equal(rendered.status, 0);
     assert.match(rendered.stdout, /mode: experience/);
     assert.match(rendered.stdout, /--scope direction --mode experience --from stable-test/);
-    assert.match(rendered.stdout, /FIRST-SURFACE COMPOSITION/);
+    // Compositions are pulled from the deal by default until the expanded
+    // catalog ships; the draw machinery stays live behind the env gate.
+    assert.doesNotMatch(rendered.stdout, /COMPOSITION/);
+    const gated = run('direction', ['--mode', 'experience'], { IMPECCABLE_COMPOSITIONS: '1' });
+    assert.equal(gated.status, 0);
+    assert.match(gated.stdout, /FIRST-SURFACE COMPOSITION/);
   });
 
   it('draws several composition inputs from distinct families when the approved pool allows it', () => {
