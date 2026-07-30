@@ -126,7 +126,7 @@ export function checkDesignCoverage({ design, designPath, parseDesignMd }) {
     return [];
   }
   const missing = ['colors', 'typography', 'components']
-    .filter((section) => !model[section]);
+    .filter((section) => !model[section] && !model.frontmatter?.[section]);
   if (!missing.length) return [];
   return [finding({
     id: 'design-md-coverage',

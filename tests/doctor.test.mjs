@@ -172,6 +172,28 @@ describe('checkDesignCoverage', () => {
     assert.deepEqual(checkDesignCoverage({ design, designPath: 'DESIGN.md', parseDesignMd }), []);
   });
 
+  it('counts machine-readable frontmatter as section coverage', () => {
+    const design = [
+      '---',
+      'name: X',
+      'colors:',
+      '  ink: "#111111"',
+      'typography:',
+      '  body:',
+      '    fontFamily: Inter',
+      'components:',
+      '  button:',
+      '    backgroundColor: "{colors.ink}"',
+      '---',
+      '',
+      '# Design System: X',
+      '',
+      'See the canonical source for prose guidance.',
+      '',
+    ].join('\n');
+    assert.deepEqual(checkDesignCoverage({ design, designPath: 'DESIGN.md', parseDesignMd }), []);
+  });
+
   it('reports nothing without a DESIGN.md', () => {
     assert.deepEqual(checkDesignCoverage({ design: null, parseDesignMd }), []);
   });
