@@ -21,27 +21,44 @@
 
 export const WELL_TIERS = ['graphic', 'interaction', 'atmosphere'];
 
-// Areas of concern, one level below surface. Surface alone is too coarse to deal
-// against: "operate" spans onboarding, settings, dashboards and editors, so a
-// build designing an onboarding flow could legitimately draw a settings
-// composition and the input would read as noise. Areas name the problem the
-// composition is about, not how it is built, which is what familyId already does.
+// Grain: how much of the product a composition composes. Named grain rather than
+// scope because scope already means direction-or-surface on every roll, and
+// 'surface' is already a register value, so a scope of 'surface' would collide
+// with both.
 //
-// `area` is optional. An entry without one is eligible for any request in its
-// surface, so nothing has to be backfilled before this ships, and a request for
-// an area with a thin pool tops up from the rest of the surface rather than
-// dealing fewer.
-export const COMPOSITION_AREAS = {
-  persuade: ['landing-hero', 'feature-argument', 'pricing-and-plans', 'proof-and-testimony', 'campaign-and-launch'],
-  operate: ['onboarding-and-setup', 'dashboard-and-overview', 'records-and-tables', 'editor-and-canvas', 'settings-and-account', 'empty-and-failure'],
-  read: ['long-form-article', 'reference-and-docs', 'index-and-archive', 'search-and-results'],
-  experience: ['gallery-and-collection', 'player-and-timeline', 'space-and-map', 'play-and-toy'],
-};
+// This axis is framed by what the skill can be asked for, not by what the
+// catalog happens to hold. A user asks for a docs site, an onboarding flow, a
+// landing page, or a data table, and those are four different amounts of
+// product. Register says what kind of work it is; grain says how much of it.
+// Without grain, a request for a hero section can be dealt a whole-site
+// navigation structure and nothing notices.
+//
+// Measured when this was added: 137 of 173 approved compositions were view
+// grain, product grain was empty, and flow grain held one entry. That is why an
+// onboarding request had nothing to draw.
+export const COMPOSITION_GRAINS = [
+  'product', // a whole site or app: its information architecture
+  'flow',    // a sequence of views with one outcome: onboarding, checkout, setup
+  'view',    // one page or screen
+  'region',  // a section inside a view: a hero, a feature grid, a table
+];
 
-export const ALL_COMPOSITION_AREAS = new Set(Object.values(COMPOSITION_AREAS).flat());
+// Delivery targets a composition can survive. Mirrors the skill's platform axis
+// minus 'adaptive', which is a project-level value meaning both native targets
+// rather than something a single composition is authored for.
+//
+// A composition that leans on hover, a pointer, or a wide viewport does not
+// survive a phone, and nothing in the schema could say so before this.
+export const COMPOSITION_PLATFORMS = ['web', 'ios', 'android'];
 
-export function areasForSurface(surface) {
-  return COMPOSITION_AREAS[surface] ?? [];
+// Both fields are optional and absence means eligible everywhere, so no entry
+// has to be backfilled before this ships and no existing roll changes.
+export function isGrain(value) {
+  return COMPOSITION_GRAINS.includes(value);
+}
+
+export function isPlatform(value) {
+  return COMPOSITION_PLATFORMS.includes(value);
 }
 
 
@@ -219,6 +236,10 @@ export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating =
   return { approved, picks };
 }
 
+function emptyMatch(grain, platform, platformExcluded = 0) {
+  return { grain: grain ?? null, atGrain: grain ? 0 : null, grainAvailable: grain ? 0 : null, platform: platform ?? null, platformExcluded };
+}
+
 /**
  * Three identity-free composition inputs from an explicit approved pool.
  * Drive with runSyncSelection or runAsyncSelection.
@@ -236,12 +257,13 @@ export function* selectApprovedChallengers({ scope, key, reroll = 0, minRating =
  * @param {string} options.key
  * @param {number} [options.reroll]
  * @param {string|null} [options.mode]  surface register to stay inside
- * @param {string|null} [options.area]  area of concern to prefer within that surface
+ * @param {string|null} [options.grain]     how much of the product is in play
+ * @param {string|null} [options.platform]  delivery target the result has to survive
  * @param {Array} options.compositions  merged compositions with status, review, surface, familyId
  * @param {number} [options.count]
- * @returns {Generator<string[], Array, string[]>}
+ * @returns {Generator<string[], {picks: Array, match: object}, string[]>}
  */
-export function* selectApprovedCompositions({ scope, key, reroll = 0, mode = null, area = null, compositions, count = 3 }) {
+export function* selectApprovedCompositions({ scope, key, reroll = 0, mode = null, grain = null, platform = null, compositions, count = 3 }) {
   // Compositions honour the same breadth gate as worlds: one too specific to serve
   // an arbitrary build stays approved for direct briefs and leaves the
   // challenger pool. Falls back to the full approved set rather than returning
@@ -249,11 +271,27 @@ export function* selectApprovedCompositions({ scope, key, reroll = 0, mode = nul
   let approved = compositions.filter(composition => composition.status === 'approved');
   const broad = approved.filter(composition => composition.review?.breadth !== 'niche');
   if (broad.length > 0) approved = broad;
-  if (approved.length === 0) return [];
+  if (approved.length === 0) return { picks: [], match: emptyMatch(grain, platform) };
   if (mode) {
     const matching = approved.filter(composition => composition.surface === mode);
-    if (matching.length === 0) return [];
+    if (matching.length === 0) return { picks: [], match: emptyMatch(grain, platform) };
     approved = matching;
+  }
+  // Platform is a hard filter, unlike grain. A composition that needs hover or a
+  // pointer does not degrade on a phone into something slightly worse; it stops
+  // working, so borrowing it would be a defect rather than a stretch. Absent
+  // platforms means it survives anywhere.
+  let platformExcluded = 0;
+  if (platform) {
+    const survives = approved.filter(composition => {
+      const only = composition.platforms;
+      return !Array.isArray(only) || only.length === 0 || only.includes(platform);
+    });
+    platformExcluded = approved.length - survives.length;
+    // No fallback here either: dealing a hover-only composition to a phone build
+    // is worse than dealing nothing, and an empty deal is a visible gap.
+    approved = survives;
+    if (approved.length === 0) return { picks: [], match: emptyMatch(grain, platform, platformExcluded) };
   }
 
   const prior = new Set();
@@ -278,14 +316,18 @@ export function* selectApprovedCompositions({ scope, key, reroll = 0, mode = nul
       entry => `${entry.composition.id}#${entry.ticket}`
     )).map(entry => entry.composition);
 
-    // Area is a preference, not a filter. Requesting an onboarding flow should
-    // deal onboarding compositions first and top up from the rest of the surface
-    // rather than deal fewer than three, because the per-area pools are small and
-    // an unset area is eligible everywhere. A stable partition of an already
+    // Grain is a preference, not a filter: requesting an onboarding flow deals
+    // flow-grain compositions first and tops up from the rest of the register
+    // rather than dealing fewer than three. A stable partition of an already
     // deterministic ranking is still deterministic.
-    const ordered = area
-      ? [...ranked.filter(composition => composition.area === area),
-         ...ranked.filter(composition => composition.area !== area)]
+    //
+    // The top-up is why match is reported. Dealing three plausible view-grain
+    // compositions against a flow request, with no signal that none matched, is
+    // the same silent-plausibility failure this whole axis exists to fix: the
+    // model would improvise the flow structure while believing it was handed one.
+    const ordered = grain
+      ? [...ranked.filter(composition => composition.grain === grain),
+         ...ranked.filter(composition => composition.grain !== grain)]
       : ranked;
 
     const families = new Set();
@@ -303,5 +345,18 @@ export function* selectApprovedCompositions({ scope, key, reroll = 0, mode = nul
     }
     if (round < reroll) picks.forEach(composition => prior.add(composition.id));
   }
-  return picks;
+
+  const atGrain = grain ? picks.filter(composition => composition.grain === grain).length : null;
+  return {
+    picks,
+    match: {
+      grain: grain ?? null,
+      // How many of the dealt compositions actually sit at the requested grain.
+      // 0 with a grain requested means every pick is a borrowed structure.
+      atGrain,
+      grainAvailable: grain ? approved.filter(composition => composition.grain === grain).length : null,
+      platform: platform ?? null,
+      platformExcluded,
+    },
+  };
 }

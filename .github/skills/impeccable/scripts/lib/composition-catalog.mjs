@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import { CONCEPT_STATUSES, normalizeConceptForm } from './concept-catalog.mjs';
 // Defined in roll-selection.mjs for the same reason WELL_TIERS is: this file
 // reads the filesystem, and the roll API imports the taxonomy to validate its
-// area parameter. Re-exported so existing importers keep working.
-import { areasForSurface, COMPOSITION_AREAS, ALL_COMPOSITION_AREAS } from './roll-selection.mjs';
-export { areasForSurface, COMPOSITION_AREAS, ALL_COMPOSITION_AREAS };
+// grain and platform parameters. Re-exported so importers have one place to look.
+import { COMPOSITION_GRAINS, COMPOSITION_PLATFORMS, isGrain, isPlatform } from './roll-selection.mjs';
+export { COMPOSITION_GRAINS, COMPOSITION_PLATFORMS, isGrain, isPlatform };
 
 // Catalog B: compositions rather than styles. A composition organizes attention,
 // sequence, or manipulation on a surface and must survive being dressed in
@@ -63,14 +63,24 @@ export function validateCompositionEntry(composition, { existingForms = new Map(
   if (!COMPOSITION_SURFACES.has(composition?.surface)) {
     errors.push(`composition ${id} needs a surface of ${[...COMPOSITION_SURFACES].join(', ')}`);
   }
-  // Optional, but an area from the wrong surface is a mistake rather than a
-  // looser tag: it would make the entry unreachable by every real request.
-  if (composition?.area !== undefined && composition.area !== null) {
-    const allowed = areasForSurface(composition.surface);
-    if (!allowed.includes(composition.area)) {
-      errors.push(
-        `composition ${id} area "${composition.area}" is not one of the ${composition.surface} areas (${allowed.join(', ')})`
-      );
+  // Grain: how much of the product this composes. Optional, and absence means
+  // eligible at any grain, so nothing needs backfilling.
+  if (composition?.grain !== undefined && composition.grain !== null && !isGrain(composition.grain)) {
+    errors.push(`composition ${id} grain "${composition.grain}" must be one of ${COMPOSITION_GRAINS.join(', ')}`);
+  }
+  // Platforms this composition survives. Absence means all of them, so listing
+  // every platform is the same as omitting the field and is rejected in favour of
+  // leaving it out; an empty array would exclude the entry from every roll.
+  if (composition?.platforms !== undefined && composition.platforms !== null) {
+    const list = composition.platforms;
+    if (!Array.isArray(list) || list.length === 0) {
+      errors.push(`composition ${id} platforms must be a non-empty array, or omitted to allow every platform`);
+    } else if (list.some(entry => !isPlatform(entry))) {
+      errors.push(`composition ${id} platforms may only contain ${COMPOSITION_PLATFORMS.join(', ')}`);
+    } else if (new Set(list).size !== list.length) {
+      errors.push(`composition ${id} platforms must not repeat a platform`);
+    } else if (list.length === COMPOSITION_PLATFORMS.length) {
+      errors.push(`composition ${id} platforms lists every platform; omit the field instead`);
     }
   }
   if (!Array.isArray(composition?.tags)
