@@ -59,6 +59,7 @@ function generateCounts(rootDir, skills, buildDir) {
   const filesToCheck = [
     'site/pages/index.astro',
     'README.md',
+    'README.npm.md',
     'AGENTS.md',
     '.claude-plugin/plugin.json',
     '.claude-plugin/marketplace.json',
@@ -86,9 +87,13 @@ function generateCounts(rootDir, skills, buildDir) {
     // Check for stale detection counts. Use the changelog-stripped content
     // so historical counts in changelog entries (e.g. "28 rules" from an
     // older release) don't flag against the current detector total.
-    const detectPattern = /\b(\d+)\s+(deterministic\s+)?(checks|patterns|rules|detections)/gi;
+    // "detector" as an infix ("60 deterministic detector rules") and
+    // qualified "issues" both evaded the old pattern, which is how five
+    // stale counts shipped while the validator reported clean.
+    const detectPattern = /\b(\d+)\s+(deterministic\s+)?(detector\s+)?(checks|patterns|rules|detections|issues)\b/gi;
     for (const match of strippedContent.matchAll(detectPattern)) {
       const num = parseInt(match[1]);
+      if (match[4] === 'issues' && !match[2]) continue; // plain "issues" is prose, not a count claim
       if (num !== detectionCount && num > 10) { // ignore small numbers like "3 patterns"
         console.error(`  ❌ ${relPath}: found "${match[0]}" but detection count is ${detectionCount}`);
         errors++;
