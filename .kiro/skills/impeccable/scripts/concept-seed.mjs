@@ -427,11 +427,17 @@ ${buildIndex} of your own grounded list; seed key ${key}.
   // Field order is the migration: `compositions` is current, `stagings` is what
   // the API emitted while these were called stagings, and `staging` is the
   // single-pick shape from before it dealt three. Older installs keep working.
-  const compositions = Array.isArray(data.compositions)
-    ? data.compositions
-    : Array.isArray(data.stagings)
-      ? data.stagings
-      : data.staging ? [data.staging] : [];
+  // Compositions are pulled from the deal until the expanded catalog is
+  // ready for prime time: the current pool crowds the decision more than it
+  // widens it. IMPECCABLE_COMPOSITIONS=1 re-enables rendering for catalog
+  // development; the draw machinery, axes, and grain report stay intact.
+  const compositionsEnabled = process.env.IMPECCABLE_COMPOSITIONS === '1';
+  const compositions = !compositionsEnabled ? []
+    : Array.isArray(data.compositions)
+      ? data.compositions
+      : Array.isArray(data.stagings)
+        ? data.stagings
+        : data.staging ? [data.staging] : [];
   // The grain report. A top-up keeps the deal at three, which is right, but it
   // must not read as three on-target inputs: a flow request answered entirely by
   // view-grain compositions means the model has to derive the flow's own
