@@ -2523,7 +2523,11 @@ function isKickerCandidate(opts) {
     || isSmallCaps;
   if (!isUppercased) return false;
   if (!(kickerFontSize > 0 && kickerFontSize <= 14)) return false;
-  const minTrackedSpacing = Math.max(1, kickerFontSize * 0.08);
+  // Proportional only, no absolute floor: the wild's most common recipe is
+  // 0.08em at a sub-13px size, which computes to under 1px and sailed past
+  // the old Math.max(1, ...) floor (observed live: a page whose kickers were
+  // literally class="kicker" produced zero findings).
+  const minTrackedSpacing = kickerFontSize * 0.06;
   if (!(kickerLetterSpacing >= minTrackedSpacing)) return false;
   return true;
 }

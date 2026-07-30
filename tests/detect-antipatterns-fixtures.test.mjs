@@ -915,6 +915,7 @@ describe('detectHtml — hero-eyebrow-chip', () => {
 describe('detectHtml — kicker-above-heading', () => {
   const SHOULD_FLAG = [
     'A Single Kicker Still Flags',
+    'Standard Tracking Kicker',
     'Kicker Above An H3',
     'Kicker Above An H4',
     'Sub Hero Heading',

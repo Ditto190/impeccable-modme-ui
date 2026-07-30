@@ -43,6 +43,19 @@
     .pass-kicker-caps {
       text-transform: uppercase;
     }
+    /* The wild's most common kicker recipe: 0.08em tracking at a sub-13px
+       size computes to under 1px, which the old absolute floor excluded. */
+    .tight-tracked-kicker {
+      display: block;
+      width: 240px;
+      min-height: 16px;
+      margin: 0 0 8px;
+      font-size: 12px;
+      line-height: 16px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #5b5046;
+    }
     .smallcaps-kicker {
       display: block;
       width: 240px;
@@ -185,6 +198,12 @@
         <span class="kicker">Invitation protocol</span>
         <h2>"A Single Kicker Still Flags"</h2>
         <p>One tracked uppercase label above one heading is enough. No repetition required.</p>
+      </section>
+
+      <section class="case">
+        <span class="tight-tracked-kicker">Output model</span>
+        <h2>"Standard Tracking Kicker"</h2>
+        <p>Uppercase at 12px with 0.08em tracking is the most common authored kicker and must flag.</p>
       </section>
 
       <section class="case">
