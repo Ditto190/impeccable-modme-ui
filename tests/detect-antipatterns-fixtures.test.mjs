@@ -497,10 +497,12 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     assert.match(sideTabs[0].snippet, /border-left: 2px solid oklch/);
   });
 
-  it('typography-should-flag: detects all three issues', async () => {
+  it('typography-should-flag: detects both issues', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'typography-should-flag.html'));
     assert.ok(f.some(r => r.antipattern === 'overused-font'));
-    assert.ok(f.some(r => r.antipattern === 'single-font'));
+    // single-font retired 2026-07-29: one family with weight/size contrast is
+    // a legitimate system, and the rule mostly punished minimal test pages.
+    assert.ok(!f.some(r => r.antipattern === 'single-font'), 'retired rule single-font should not resurface');
     assert.ok(f.some(r => r.antipattern === 'flat-type-hierarchy'));
     assert.equal(
       f.some(r => r.antipattern === 'low-contrast'),

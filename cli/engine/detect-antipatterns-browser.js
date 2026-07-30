@@ -140,16 +140,6 @@ const ANTIPATTERNS = [
     skillGuideline: 'overused fonts like Inter',
   },
   {
-    id: 'single-font',
-    category: 'slop',
-    scopes: ['type'],
-    name: 'Single font without hierarchy',
-    description:
-      'Only one font family is used for the entire page. A single family can work when weight and size contrast carry the hierarchy; otherwise pair a distinctive display font with a refined body font.',
-    skillSection: 'Typography',
-    skillGuideline: 'only one font family for the entire page',
-  },
-  {
     id: 'flat-type-hierarchy',
     category: 'slop',
     scopes: ['type'],
@@ -4712,12 +4702,6 @@ function checkTypography() {
       if (isBrandFontOnOwnDomain(font)) continue;
       findings.push({ type: 'overused-font', detail: `Primary font: ${font} (${Math.round(share * 100)}% of text)` });
     }
-
-    // Single-font check: only one distinct primary font across all text
-    if (fontUsage.size === 1) {
-      const only = [...fontUsage.keys()][0];
-      findings.push({ type: 'single-font', detail: `only font used is ${only}` });
-    }
   }
 
   const sizes = new Set();
@@ -4977,14 +4961,6 @@ function checkPageTypography(doc, win) {
 
   for (const font of overusedFound) {
     findings.push({ id: 'overused-font', snippet: `Primary font: ${font}` });
-  }
-
-  // Single font
-  if (fonts.size === 1) {
-    const els = doc.querySelectorAll('*');
-    if (els.length >= 20) {
-      findings.push({ id: 'single-font', snippet: `only font used is ${[...fonts][0]}` });
-    }
   }
 
   // Flat type hierarchy
