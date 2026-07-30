@@ -11,7 +11,7 @@ import {
   validateConceptEntry,
 } from '../skill/scripts/lib/concept-catalog.mjs';
 import { readCompositionCatalog } from '../skill/scripts/lib/composition-catalog.mjs';
-import { renderChallenger, selectApprovedChallengers, selectApprovedComposition, selectApprovedCompositions } from '../skill/scripts/concept-seed.mjs';
+import { dealCompositions, renderChallenger, selectApprovedChallengers, selectApprovedComposition, selectApprovedCompositions } from '../skill/scripts/concept-seed.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(ROOT, 'skill', 'scripts', 'concept-seed.mjs');
@@ -536,53 +536,69 @@ describe('init gate', () => {
     assert.equal(picks.some(pick => pick.id === 'radar-persuade'), true, 'an emptied tier must fall back to its full pool');
   });
 
-  // Areas of concern under a surface. Surface alone is too coarse: an onboarding
-  // flow and a settings page are both operate and want different compositions.
-  it('prefers compositions in the requested area and tops up from the surface', () => {
-    const make = (id, area) => ({
-      id,
-      familyId: `${id}-family`,
-      surface: 'operate',
-      status: 'approved',
-      ...(area ? { area } : {}),
-      review: { status: 'approved' },
+  // Grain: how much of the product a composition composes. Framed by what the
+  // skill can be asked for (a docs site, an onboarding flow, a landing page, a
+  // data table) rather than by what the catalog happens to hold.
+  it('prefers the requested grain and tops up from the register', () => {
+    const make = (id, grain) => ({
+      id, familyId: `${id}-family`, surface: 'operate', status: 'approved',
+      ...(grain ? { grain } : {}), review: { status: 'approved' },
     });
     const pool = [
-      make('onboard-one', 'onboarding-and-setup'),
-      make('onboard-two', 'onboarding-and-setup'),
-      make('settings-one', 'settings-and-account'),
-      make('dash-one', 'dashboard-and-overview'),
+      make('flow-one', 'flow'),
+      make('flow-two', 'flow'),
+      make('view-one', 'view'),
+      make('view-two', 'view'),
       make('untagged', null),
     ];
-    const picks = selectApprovedCompositions({
-      scope: 'surface', key: 'area-pref', mode: 'operate', area: 'onboarding-and-setup', sourceCompositions: pool,
-    });
-    assert.equal(picks.length, 3, 'a thin area must top up rather than deal fewer');
-    const ids = picks.map(pick => pick.id);
-    assert.equal(ids.includes('onboard-one') && ids.includes('onboard-two'), true, 'both area matches must be dealt first');
-
-    // Without an area the deal is unchanged, which is what keeps this additive.
-    const plain = selectApprovedCompositions({
-      scope: 'surface', key: 'area-pref', mode: 'operate', sourceCompositions: pool,
-    });
-    assert.equal(plain.length, 3);
+    const dealt = dealCompositions({ scope: 'surface', key: 'grain-pref', mode: 'operate', grain: 'flow', sourceCompositions: pool });
+    assert.equal(dealt.picks.length, 3, 'a thin grain tops up rather than dealing fewer');
+    const ids = dealt.picks.map(pick => pick.id);
+    assert.equal(ids.includes('flow-one') && ids.includes('flow-two'), true, 'both grain matches deal first');
+    assert.equal(dealt.match.atGrain, 2);
+    assert.equal(dealt.match.grainAvailable, 2);
   });
 
-  it('reproduces an area-scoped deal from the same key', () => {
-    const make = (id, area) => ({
-      id, familyId: `${id}-family`, surface: 'read', status: 'approved',
-      ...(area ? { area } : {}), review: { status: 'approved' },
+  // The report is the point. Three plausible view-grain compositions dealt
+  // against a flow request, with no signal that none matched, is the same silent
+  // plausibility this axis exists to remove.
+  it('reports a grain miss instead of passing off borrowed structure', () => {
+    const make = id => ({ id, familyId: `${id}-family`, surface: 'operate', status: 'approved', grain: 'view', review: { status: 'approved' } });
+    const pool = [make('a'), make('b'), make('c')];
+    const dealt = dealCompositions({ scope: 'surface', key: 'grain-miss', mode: 'operate', grain: 'flow', sourceCompositions: pool });
+    assert.equal(dealt.picks.length, 3, 'still deals three');
+    assert.equal(dealt.match.atGrain, 0, 'and says none matched');
+    assert.equal(dealt.match.grainAvailable, 0);
+  });
+
+  // Platform is a hard filter, not a preference: a composition that needs hover
+  // does not degrade on a phone, it stops working.
+  it('excludes compositions the platform cannot carry, with no fallback', () => {
+    const make = (id, platforms) => ({
+      id, familyId: `${id}-family`, surface: 'operate', status: 'approved',
+      ...(platforms ? { platforms } : {}), review: { status: 'approved' },
     });
-    const pool = [
-      make('article-one', 'long-form-article'),
-      make('article-two', 'long-form-article'),
-      make('docs-one', 'reference-and-docs'),
-      make('index-one', 'index-and-archive'),
-    ];
-    const args = { scope: 'surface', key: 'area-stable', mode: 'read', area: 'long-form-article', sourceCompositions: pool };
+    const pool = [make('web-only', ['web']), make('anywhere', null), make('native', ['ios', 'android'])];
+    const onIos = dealCompositions({ scope: 'surface', key: 'plat', mode: 'operate', platform: 'ios', sourceCompositions: pool });
+    const ids = onIos.picks.map(pick => pick.id);
+    assert.equal(ids.includes('web-only'), false, 'a web-only composition must not reach an iOS build');
+    assert.equal(onIos.match.platformExcluded, 1);
+
+    const allWebOnly = [make('x', ['web']), make('y', ['web'])];
+    const starved = dealCompositions({ scope: 'surface', key: 'plat2', mode: 'operate', platform: 'android', sourceCompositions: allWebOnly });
+    assert.deepEqual(starved.picks, [], 'an empty deal beats dealing something that cannot work');
+  });
+
+  it('reproduces a grain-scoped deal from the same key', () => {
+    const make = (id, grain) => ({
+      id, familyId: `${id}-family`, surface: 'read', status: 'approved',
+      ...(grain ? { grain } : {}), review: { status: 'approved' },
+    });
+    const pool = [make('p1', 'product'), make('v1', 'view'), make('v2', 'view'), make('r1', 'region')];
+    const args = { scope: 'surface', key: 'grain-stable', mode: 'read', grain: 'product', sourceCompositions: pool };
     assert.deepEqual(
-      selectApprovedCompositions(args).map(pick => pick.id),
-      selectApprovedCompositions(args).map(pick => pick.id)
+      selectApprovedCompositions(args).map(p => p.id),
+      selectApprovedCompositions(args).map(p => p.id)
     );
   });
 });
