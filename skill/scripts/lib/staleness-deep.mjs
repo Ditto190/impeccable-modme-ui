@@ -123,7 +123,7 @@ function hasCoverageValue(value) {
     return Object.values(value).some(hasCoverageValue);
   }
   if (typeof value === 'string') return value.trim().length > 0;
-  return value !== null && value !== undefined;
+  return false;
 }
 
 export function checkDesignCoverage({ design, designPath, parseDesignMd }) {

@@ -216,6 +216,29 @@ describe('checkDesignCoverage', () => {
     assert.doesNotMatch(findings[0].summary, /typography|components/);
   });
 
+  it('does not count boolean or numeric frontmatter scalars as section coverage', () => {
+    for (const colors of ['false', '0']) {
+      const design = [
+        '---',
+        'name: X',
+        `colors: ${colors}`,
+        'typography:',
+        '  body:',
+        '    fontFamily: Inter',
+        'components:',
+        '  button:',
+        '    backgroundColor: "#111111"',
+        '---',
+        '',
+        '# Design System: X',
+        '',
+      ].join('\n');
+      const findings = checkDesignCoverage({ design, designPath: 'DESIGN.md', parseDesignMd });
+      assert.deepEqual(ids(findings), ['design-md-coverage']);
+      assert.match(findings[0].summary, /no colors section/);
+    }
+  });
+
   it('reports nothing without a DESIGN.md', () => {
     assert.deepEqual(checkDesignCoverage({ design: null, parseDesignMd }), []);
   });
