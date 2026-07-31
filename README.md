@@ -270,6 +270,15 @@ cp -r dist/grok/.grok/skills/* ~/.grok/skills/
 
 > Prefer `npx impeccable install --providers=grok` or `grok plugin install pbakaus/impeccable#plugin --trust` so the design hook installs too. Project hooks need `/hooks-trust` (or `--trust`) once per folder.
 
+**Google Antigravity:**
+```bash
+# Project-specific
+cp -r dist/antigravity/.agent your-project/
+
+# Or global (applies to all projects)
+cp -r dist/antigravity/.agent/skills/* ~/.agent/skills/
+```
+
 ## Usage
 
 Once installed, every command runs through the single `/impeccable` skill:

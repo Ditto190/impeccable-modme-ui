@@ -92,6 +92,11 @@ const HOME_SKILLS_DIR_OVERRIDES = {
 // .agents/skills, so ~/.codex maps to the .agents bundle variant.
 const GLOBAL_HARNESS_HINTS = [
   { home: '.agent', provider: '.agent' },
+  // Antigravity nests under ~/.gemini/ too, so any of these also trips the
+  // .gemini hint above (harmless double-detection — both get pre-selected).
+  { home: '.gemini/antigravity', provider: '.agent' },
+  { home: '.gemini/antigravity-cli', provider: '.agent' },
+  { home: '.gemini/antigravity-ide', provider: '.agent' },
   { home: '.claude', provider: '.claude' },
   { home: '.codex', provider: '.agents' },
   { home: '.cursor', provider: '.cursor' },
