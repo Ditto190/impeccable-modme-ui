@@ -400,6 +400,7 @@ Full detector docs: [impeccable.style/docs/detector](https://impeccable.style/do
 - [Rovo Dev](https://www.atlassian.com/software/rovo)
 - [Qoder](https://qoder.com)
 - [Mistral Vibe](https://docs.mistral.ai/vibe/code/overview)
+- [Google Antigravity](https://antigravity.google)
 
 ## Community & Ecosystem
 

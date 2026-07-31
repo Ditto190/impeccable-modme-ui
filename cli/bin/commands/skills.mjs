@@ -23,9 +23,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_BASE = 'https://impeccable.style';
 
 // Provider folder names in project roots
-const PROVIDER_DIRS = ['.claude', '.cursor', '.gemini', '.agents', '.github', '.grok', '.kiro', '.opencode', '.pi', '.qoder', '.trae', '.trae-cn', '.rovodev', '.vibe'];
+const PROVIDER_DIRS = ['.claude', '.cursor', '.gemini', '.agents', '.agent', '.github', '.grok', '.kiro', '.opencode', '.pi', '.qoder', '.trae', '.trae-cn', '.rovodev', '.vibe'];
 const PROVIDER_ALIASES = {
+  agent: '.agent',
   agents: '.agents',
+  antigravity: '.agent',
   claude: '.claude',
   'claude-code': '.claude',
   codex: '.agents',
@@ -48,6 +50,7 @@ const PROVIDER_ALIASES = {
 };
 
 const PROVIDER_DISPLAY = {
+  '.agent': { name: 'Antigravity', input: 'antigravity' },
   '.agents': { name: 'Codex CLI', input: 'codex' },
   '.claude': { name: 'Claude Code', input: 'claude' },
   '.cursor': { name: 'Cursor', input: 'cursor' },
@@ -63,7 +66,7 @@ const PROVIDER_DISPLAY = {
   '.trae-cn': { name: 'Trae CN', input: 'trae-cn' },
   '.vibe': { name: 'Mistral Vibe', input: 'vibe' },
 };
-const PROVIDER_INPUT_ORDER = ['claude', 'codex', 'cursor', 'gemini', 'github', 'grok', 'kiro', 'opencode', 'pi', 'qoder', 'trae', 'trae-cn', 'rovo-dev', 'vibe'];
+const PROVIDER_INPUT_ORDER = ['antigravity', 'claude', 'codex', 'cursor', 'gemini', 'github', 'grok', 'kiro', 'opencode', 'pi', 'qoder', 'trae', 'trae-cn', 'rovo-dev', 'vibe'];
 
 // OpenCode reads global skills from its config directory, not ~/.opencode:
 // $OPENCODE_CONFIG_DIR, else $XDG_CONFIG_HOME/opencode, else
@@ -88,6 +91,7 @@ const HOME_SKILLS_DIR_OVERRIDES = {
 // installed harnesses (~/.claude, ~/.codex, ...). Codex reads skills from
 // .agents/skills, so ~/.codex maps to the .agents bundle variant.
 const GLOBAL_HARNESS_HINTS = [
+  { home: '.agent', provider: '.agent' },
   { home: '.claude', provider: '.claude' },
   { home: '.codex', provider: '.agents' },
   { home: '.cursor', provider: '.cursor' },
@@ -598,7 +602,7 @@ async function copyOrExtractLocalBundle(sourceValue) {
  */
 function normalizeForHash(content) {
   return content
-    .replace(/\.(claude|cursor|agents|github|gemini|codex|grok|kiro|opencode|pi|qoder|trae|trae-cn|rovodev|vibe)\/skills\//g, '.PROVIDER/skills/');
+    .replace(/\.(claude|cursor|agents|agent|github|gemini|codex|grok|kiro|opencode|pi|qoder|trae|trae-cn|rovodev|vibe)\/skills\//g, '.PROVIDER/skills/');
 }
 
 function hashSkillFile(filePath) {

@@ -4,6 +4,7 @@ export const FILE_DOWNLOAD_PROVIDER_CONFIG_DIRS = Object.freeze({
   gemini: '.gemini',
   codex: '.codex',
   agents: '.agents',
+  antigravity: '.agent',
   github: '.github',
   grok: '.grok',
   kiro: '.kiro',

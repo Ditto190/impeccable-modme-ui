@@ -466,6 +466,7 @@ This folder contains skills for all supported tools:
   .gemini/    -> Gemini CLI
   .codex/     -> Codex custom agents (Codex skills use .agents/)
   .agents/    -> Codex CLI
+  .agent/     -> Antigravity
   .github/    -> GitHub Copilot
   .grok/      -> Grok Build
   .kiro/      -> Kiro
