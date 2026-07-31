@@ -81,8 +81,11 @@ function opencodeGlobalConfigDir(home) {
 // Providers whose GLOBAL (home) skills dir is not `<provider>/skills`,
 // as a function of the home dir. Pi discovers global skills from
 // ~/.pi/agent/skills/ (issue #327); OpenCode from its config dir (issue
-// #406). Project scope stays `<provider>/skills` for both.
+// #406). Antigravity's global skills dir is ~/.gemini/config/skills/
+// (shared Gemini config location); project scope stays `.agent/skills`.
+// Project scope stays `<provider>/skills` for all of these.
 const HOME_SKILLS_DIR_OVERRIDES = {
+  '.agent': (home) => join(home, '.gemini', 'config', 'skills'),
   '.pi': (home) => join(home, '.pi', 'agent', 'skills'),
   '.opencode': (home) => join(opencodeGlobalConfigDir(home), 'skills'),
 };
