@@ -276,7 +276,8 @@ cp -r dist/grok/.grok/skills/* ~/.grok/skills/
 cp -r dist/antigravity/.agent your-project/
 
 # Or global (applies to all projects)
-cp -r dist/antigravity/.agent/skills/* ~/.agent/skills/
+mkdir -p ~/.gemini/config/skills
+cp -r dist/antigravity/.agent/skills/* ~/.gemini/config/skills/
 ```
 
 ## Usage
