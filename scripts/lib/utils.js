@@ -363,7 +363,7 @@ export function writeFile(filePath, content) {
 }
 
 // Curated short-list for the homepage Antidote section. This intentionally
-// stays independent of repository content so the copy remains tight and
+// stays independent of SKILL.md extraction so the copy remains tight and
 // editorial.
 const CURATED_CATEGORIES = [
   {
