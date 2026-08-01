@@ -788,6 +788,47 @@ describe('skills install/update: local universal bundle e2e', () => {
     rmSync(tmp, { recursive: true, force: true });
   }, 15000);
 
+  test('installs Antigravity skills into .agent/ with --providers=antigravity', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-test-antigravity-install-'));
+    execSync('git init', { cwd: tmp });
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.agent']);
+
+    const output = run('skills install -y --providers=antigravity --no-hooks', {
+      cwd: tmp,
+      env: { ...process.env, IMPECCABLE_BUNDLE_PATH: bundleRoot },
+    });
+    expect(output).toContain('Done!');
+
+    const skillDir = join(tmp, '.agent', 'skills', 'impeccable');
+    expect(existsSync(join(skillDir, 'SKILL.md'))).toBe(true);
+    expect(readFileSync(join(skillDir, 'SKILL.md'), 'utf8')).toContain('Local deterministic bundle for .agent.');
+    expect(existsSync(join(skillDir, 'scripts', 'context.mjs'))).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+  }, 15000);
+
+  test('updates stale Antigravity skills at .agent/ from the local bundle', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-test-antigravity-update-'));
+    execSync('git init', { cwd: tmp });
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.agent']);
+
+    const skillDir = join(tmp, '.agent', 'skills', 'impeccable');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: impeccable\nstale: true\n---\nOld content.\n');
+
+    const output = run('skills update -y --no-hooks', {
+      cwd: tmp,
+      env: { ...process.env, IMPECCABLE_BUNDLE_PATH: bundleRoot },
+    });
+    expect(output).toContain('Updated');
+
+    const content = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
+    expect(content).not.toContain('stale: true');
+    expect(content).toContain('version: 9.9.9-local');
+
+    rmSync(tmp, { recursive: true, force: true });
+  }, 15000);
+
   test('interactive install explains home detections and can target the project root', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'imp-test-interactive-project-'));
     const home = mkdtempSync(join(tmpdir(), 'imp-home-interactive-project-'));

@@ -270,6 +270,16 @@ cp -r dist/grok/.grok/skills/* ~/.grok/skills/
 
 > Prefer `npx impeccable install --providers=grok` or `grok plugin install pbakaus/impeccable#plugin --trust` so the design hook installs too. Project hooks need `/hooks-trust` (or `--trust`) once per folder.
 
+**Google Antigravity:**
+```bash
+# Project-specific
+cp -r dist/antigravity/.agent your-project/
+
+# Or global (applies to all projects)
+mkdir -p ~/.gemini/config/skills
+cp -r dist/antigravity/.agent/skills/* ~/.gemini/config/skills/
+```
+
 ## Usage
 
 Once installed, every command runs through the single `/impeccable` skill:
@@ -400,6 +410,7 @@ Full detector docs: [impeccable.style/docs/detector](https://impeccable.style/do
 - [Rovo Dev](https://www.atlassian.com/software/rovo)
 - [Qoder](https://qoder.com)
 - [Mistral Vibe](https://docs.mistral.ai/vibe/code/overview)
+- [Google Antigravity](https://antigravity.google)
 
 ## Community & Ecosystem
 

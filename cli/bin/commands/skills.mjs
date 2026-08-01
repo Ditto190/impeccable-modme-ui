@@ -23,9 +23,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_BASE = 'https://impeccable.style';
 
 // Provider folder names in project roots
-const PROVIDER_DIRS = ['.claude', '.cursor', '.gemini', '.agents', '.github', '.grok', '.kiro', '.opencode', '.pi', '.qoder', '.trae', '.trae-cn', '.rovodev', '.vibe'];
+const PROVIDER_DIRS = ['.claude', '.cursor', '.gemini', '.agents', '.agent', '.github', '.grok', '.kiro', '.opencode', '.pi', '.qoder', '.trae', '.trae-cn', '.rovodev', '.vibe'];
 const PROVIDER_ALIASES = {
+  agent: '.agent',
   agents: '.agents',
+  antigravity: '.agent',
   claude: '.claude',
   'claude-code': '.claude',
   codex: '.agents',
@@ -48,6 +50,7 @@ const PROVIDER_ALIASES = {
 };
 
 const PROVIDER_DISPLAY = {
+  '.agent': { name: 'Antigravity', input: 'antigravity' },
   '.agents': { name: 'Codex CLI', input: 'codex' },
   '.claude': { name: 'Claude Code', input: 'claude' },
   '.cursor': { name: 'Cursor', input: 'cursor' },
@@ -63,7 +66,7 @@ const PROVIDER_DISPLAY = {
   '.trae-cn': { name: 'Trae CN', input: 'trae-cn' },
   '.vibe': { name: 'Mistral Vibe', input: 'vibe' },
 };
-const PROVIDER_INPUT_ORDER = ['claude', 'codex', 'cursor', 'gemini', 'github', 'grok', 'kiro', 'opencode', 'pi', 'qoder', 'trae', 'trae-cn', 'rovo-dev', 'vibe'];
+const PROVIDER_INPUT_ORDER = ['antigravity', 'claude', 'codex', 'cursor', 'gemini', 'github', 'grok', 'kiro', 'opencode', 'pi', 'qoder', 'trae', 'trae-cn', 'rovo-dev', 'vibe'];
 
 // OpenCode reads global skills from its config directory, not ~/.opencode:
 // $OPENCODE_CONFIG_DIR, else $XDG_CONFIG_HOME/opencode, else
@@ -78,8 +81,11 @@ function opencodeGlobalConfigDir(home) {
 // Providers whose GLOBAL (home) skills dir is not `<provider>/skills`,
 // as a function of the home dir. Pi discovers global skills from
 // ~/.pi/agent/skills/ (issue #327); OpenCode from its config dir (issue
-// #406). Project scope stays `<provider>/skills` for both.
+// #406). Antigravity's global skills dir is ~/.gemini/config/skills/
+// (shared Gemini config location); project scope stays `.agent/skills`.
+// Project scope stays `<provider>/skills` for all of these.
 const HOME_SKILLS_DIR_OVERRIDES = {
+  '.agent': (home) => join(home, '.gemini', 'config', 'skills'),
   '.pi': (home) => join(home, '.pi', 'agent', 'skills'),
   '.opencode': (home) => join(opencodeGlobalConfigDir(home), 'skills'),
 };
@@ -88,6 +94,12 @@ const HOME_SKILLS_DIR_OVERRIDES = {
 // installed harnesses (~/.claude, ~/.codex, ...). Codex reads skills from
 // .agents/skills, so ~/.codex maps to the .agents bundle variant.
 const GLOBAL_HARNESS_HINTS = [
+  { home: '.agent', provider: '.agent' },
+  // Antigravity nests under ~/.gemini/ too, so any of these also trips the
+  // .gemini hint above (harmless double-detection — both get pre-selected).
+  { home: '.gemini/antigravity', provider: '.agent' },
+  { home: '.gemini/antigravity-cli', provider: '.agent' },
+  { home: '.gemini/antigravity-ide', provider: '.agent' },
   { home: '.claude', provider: '.claude' },
   { home: '.codex', provider: '.agents' },
   { home: '.cursor', provider: '.cursor' },
@@ -598,7 +610,7 @@ async function copyOrExtractLocalBundle(sourceValue) {
  */
 function normalizeForHash(content) {
   return content
-    .replace(/\.(claude|cursor|agents|github|gemini|codex|grok|kiro|opencode|pi|qoder|trae|trae-cn|rovodev|vibe)\/skills\//g, '.PROVIDER/skills/');
+    .replace(/\.(claude|cursor|agents|agent|github|gemini|codex|grok|kiro|opencode|pi|qoder|trae|trae-cn|rovodev|vibe)\/skills\//g, '.PROVIDER/skills/');
 }
 
 function hashSkillFile(filePath) {

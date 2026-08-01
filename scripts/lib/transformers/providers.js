@@ -155,4 +155,11 @@ export const PROVIDERS = {
     // settings.json). Claude tool-name matchers alias to Grok tools.
     hooksManifestRel: 'hooks/impeccable.json',
   },
+  antigravity: {
+    provider: 'antigravity',
+    providerTags: ['antigravity'],
+    configDir: '.agent',
+    displayName: 'Antigravity',
+    frontmatterFields: ['license', 'compatibility', 'metadata', 'allowed-tools'],
+  },
 };

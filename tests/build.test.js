@@ -148,6 +148,7 @@ This is a test skill body.`;
     transformers.transformClaudeCode(skills, DIST_DIR, patterns);
     transformers.transformGemini(skills, DIST_DIR, patterns);
     transformers.transformCodex(skills, DIST_DIR, patterns);
+    transformers.transformAntigravity(skills, DIST_DIR, patterns);
 
     // Verify Cursor outputs
     expect(fs.existsSync(path.join(DIST_DIR, 'cursor/.cursor/skills/test-skill/SKILL.md'))).toBe(true);
@@ -160,6 +161,9 @@ This is a test skill body.`;
 
     // Verify Codex outputs
     expect(fs.existsSync(path.join(DIST_DIR, 'codex/.codex/skills/test-skill/SKILL.md'))).toBe(true);
+
+    // Verify Antigravity outputs
+    expect(fs.existsSync(path.join(DIST_DIR, 'antigravity/.agent/skills/test-skill/SKILL.md'))).toBe(true);
   });
 
   test('integration: emits native subagent files for Codex, Claude Code, GitHub Copilot, and Cursor', () => {
@@ -355,6 +359,18 @@ Please audit {{target}} for technical quality. Ask {{model}} for help.`;
     expect(fs.existsSync(path.join(DIST_DIR, 'agents/.agents/skills'))).toBe(true);
     expect(fs.existsSync(path.join(DIST_DIR, 'github/.github/skills'))).toBe(true);
     expect(fs.existsSync(path.join(DIST_DIR, 'kiro/.kiro/skills'))).toBe(true);
+  });
+
+  test('Antigravity transformer emits skills under .agent/', () => {
+    const { skills } = utils.readSourceFiles(TEST_DIR);
+    const patterns = utils.readPatterns(TEST_DIR);
+    const DIST_DIR = path.join(TEST_DIR, 'dist');
+
+    // Should not throw
+    transformers.transformAntigravity(skills, DIST_DIR, patterns);
+
+    // Verify the harness directory is created at the correct path
+    expect(fs.existsSync(path.join(DIST_DIR, 'antigravity/.agent/skills'))).toBe(true);
   });
 });
 
