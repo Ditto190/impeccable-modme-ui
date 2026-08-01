@@ -362,22 +362,9 @@ export function writeFile(filePath, content) {
   fs.writeFileSync(filePath, content, 'utf-8');
 }
 
-/**
- * Extract DO/DON'T patterns from a skill markdown file, grouped by section
- * (h3 `### ` headings). Recognizes both formats:
- *   - Markdown bullet form:  `**DO**: …`  /  `**DON'T**: …`
- *   - Prose form:            `DO …`       /  `DO NOT …`
- *
- * Defaults to the main impeccable SKILL.md but accepts any relative path so
- * rules in `cli/engine/detect-antipatterns.mjs` can anchor to register-specific
- * reference files (e.g. `reference/editorial.md`) via an optional `skillFile`
- * field. Callers that don't pass `relativePath` get the legacy behavior.
- *
- * Returns { patterns: [...], antipatterns: [...] }
- */
-// Curated short-list for the homepage Antidote section. Intentionally
-// hand-written (not auto-extracted) so the copy stays tight and
-// editorial. The long-form catalog lives on /slop — this is the teaser.
+// Curated short-list for the homepage Antidote section. This intentionally
+// stays independent of repository content so the copy remains tight and
+// editorial.
 const CURATED_CATEGORIES = [
   {
     name: 'Typography',
@@ -459,103 +446,10 @@ const CURATED_CATEGORIES = [
 ];
 
 export function readPatterns(_rootDir, _relativePath) {
-  // Hand-curated list — see CURATED_CATEGORIES above. The homepage
-  // Antidote teaser uses this; the full catalog lives on /slop.
   return {
     patterns: CURATED_CATEGORIES.map((c) => ({ name: c.name, items: c.do })),
     antipatterns: CURATED_CATEGORIES.map((c) => ({ name: c.name, items: c.dont })),
   };
-}
-
-// Previous SKILL.md parser retained below but disabled; kept as a
-// reference for how prefix-style extraction used to work.
-function _legacyReadPatterns(rootDir, relativePath = 'skill/SKILL.src.md') {
-  const skillPath = path.join(rootDir, relativePath);
-
-  if (!fs.existsSync(skillPath)) {
-    return { patterns: [], antipatterns: [] };
-  }
-
-  const content = fs.readFileSync(skillPath, 'utf-8');
-  const lines = content.split('\n');
-
-  const patternsMap = {};  // category -> items[]
-  const antipatternsMap = {};  // category -> items[]
-  let currentSection = null;
-
-  const pushPattern = (item) => {
-    if (!currentSection) return;
-    if (!patternsMap[currentSection]) patternsMap[currentSection] = [];
-    patternsMap[currentSection].push(item);
-  };
-  const pushAntipattern = (item) => {
-    if (!currentSection) return;
-    if (!antipatternsMap[currentSection]) antipatternsMap[currentSection] = [];
-    antipatternsMap[currentSection].push(item);
-  };
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Track section headings (### Typography, ### Color & Theme, etc.)
-    if (trimmed.startsWith('### ')) {
-      currentSection = trimmed.slice(4).trim();
-      // Normalize "Color & Theme" to "Color & Contrast" for consistency
-      if (currentSection === 'Color & Theme') {
-        currentSection = 'Color & Contrast';
-      }
-      continue;
-    }
-
-    // Markdown bullet form (legacy): **DO**: ... and **DON'T**: ...
-    if (trimmed.startsWith('**DO**:')) {
-      pushPattern(trimmed.slice(7).trim());
-      continue;
-    }
-    if (trimmed.startsWith("**DON'T**:")) {
-      pushAntipattern(trimmed.slice(10).trim());
-      continue;
-    }
-
-    // XML-block prose form (current). Both space and colon variants:
-    //   "DO NOT use ..."  /  "DO NOT: Use ..."
-    //   "DO use ..."      /  "DO: Use ..."
-    // IMPORTANT: check `DO NOT` BEFORE `DO` so the prefix doesn't get
-    // gobbled by the wrong matcher.
-    if (trimmed.startsWith('DO NOT: ')) {
-      pushAntipattern(trimmed.slice('DO NOT: '.length).trim());
-      continue;
-    }
-    if (trimmed.startsWith('DO NOT ')) {
-      pushAntipattern(trimmed.slice('DO NOT '.length).trim());
-      continue;
-    }
-    if (trimmed.startsWith('DO: ')) {
-      pushPattern(trimmed.slice('DO: '.length).trim());
-      continue;
-    }
-    if (trimmed.startsWith('DO ')) {
-      pushPattern(trimmed.slice('DO '.length).trim());
-      continue;
-    }
-  }
-
-  // Convert maps to arrays in consistent order
-  const sectionOrder = ['Typography', 'Color & Contrast', 'Layout & Space', 'Visual Details', 'Motion', 'Interaction', 'Responsive', 'UX Writing'];
-
-  const patterns = [];
-  const antipatterns = [];
-
-  for (const section of sectionOrder) {
-    if (patternsMap[section] && patternsMap[section].length > 0) {
-      patterns.push({ name: section, items: patternsMap[section] });
-    }
-    if (antipatternsMap[section] && antipatternsMap[section].length > 0) {
-      antipatterns.push({ name: section, items: antipatternsMap[section] });
-    }
-  }
-
-  return { patterns, antipatterns };
 }
 
 /**
