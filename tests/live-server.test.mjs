@@ -393,22 +393,48 @@ describe('live-server integration', () => {
     assert.ok(body.includes('__IMPECCABLE_LIVE_INIT__'), 'authorized /live.js returns the assembled bundle');
   });
 
-  it('CORS: a remote origin gets no Access-Control-Allow-Origin on any route', async () => {
+  it('CORS: a tokenless remote origin gets no Access-Control-Allow-Origin on any route', async () => {
     const evil = 'https://evil.example';
-    for (const path of ['/health', `/live.js?token=${server.token}`, `/status?token=${server.token}`]) {
+    for (const path of ['/health', '/live.js', '/status', '/status?token=not-the-token']) {
       const res = await fetch(`http://localhost:${server.port}${path}`, { headers: { Origin: evil } });
       assert.equal(
         res.headers.get('access-control-allow-origin'),
         null,
-        `remote origin must not be reflected on ${path}`,
+        `tokenless remote origin must not be reflected on ${path}`,
       );
     }
-    // Preflight from a remote origin is likewise unauthorized to read.
+    // Preflight from a tokenless remote origin is likewise unauthorized to read.
     const preflight = await fetch(`http://localhost:${server.port}/poll`, {
       method: 'OPTIONS',
       headers: { Origin: evil, 'Access-Control-Request-Method': 'POST' },
     });
     assert.equal(preflight.headers.get('access-control-allow-origin'), null);
+  });
+
+  it('CORS: a non-loopback origin with the valid token is reflected (ddev-style dev hosts)', async () => {
+    // A dev server on a loopback alias (https://my-site.ddev.site, *.test)
+    // sends a non-loopback Origin, but its overlay requests carry the session
+    // token — that token, not the origin, is the trust signal.
+    const origin = 'https://my-site.ddev.site';
+    const res = await fetch(`http://localhost:${server.port}/status?token=${server.token}`, {
+      headers: { Origin: origin },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('access-control-allow-origin'), origin);
+    assert.ok(/\bOrigin\b/i.test(res.headers.get('vary') || ''), 'Vary: Origin accompanies the reflected origin');
+
+    // Preflight to the same token-bearing URL is authorized too (OPTIONS hits
+    // the same URL, query string included).
+    const preflight = await fetch(`http://localhost:${server.port}/poll?token=${server.token}`, {
+      method: 'OPTIONS',
+      headers: { Origin: origin, 'Access-Control-Request-Method': 'POST' },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
+    assert.ok(
+      /\bOrigin\b/i.test(preflight.headers.get('vary') || ''),
+      'Vary: Origin accompanies the reflected origin on the preflight too',
+    );
   });
 
   it('CORS: a loopback origin is reflected with Vary: Origin', async () => {

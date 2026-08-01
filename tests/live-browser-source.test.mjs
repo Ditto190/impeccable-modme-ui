@@ -42,7 +42,7 @@ describe('live-browser source contracts', () => {
     );
     assert.match(
       SOURCE,
-      /fetch\('http:\/\/localhost:' \+ PORT \+ '\/manual-edit-stash'[\s\S]{0,260}?pageUrl: location\.pathname[\s\S]{0,80}?element: extractContext\(contextElement\)[\s\S]{0,40}?ops,/,
+      /fetch\('http:\/\/localhost:' \+ PORT \+ '\/manual-edit-stash\?token=' \+ encodeURIComponent\(TOKEN\)[\s\S]{0,300}?pageUrl: location\.pathname[\s\S]{0,80}?element: extractContext\(contextElement\)[\s\S]{0,40}?ops,/,
       'Save should stage edits through /manual-edit-stash with element context and ops',
     );
     assert.match(
