@@ -143,3 +143,28 @@ Prose.
     assert.equal(model.frontmatter.rounded['"2xl"'], undefined);
   });
 });
+
+describe('parseDesignMd overview branch', () => {
+  it('joins wrapped Key Characteristics bullets without leaking continuations into philosophy', () => {
+    const md = `# Design System: Example
+
+## Overview
+
+**Creative North Star: "Structured clarity"**
+
+**Key Characteristics:**
+
+- Status remains understandable without relying on color
+  alone.
+- Navigation controls remain visible when the viewport becomes
+  narrow.
+`;
+    const overview = parseDesignMd(md).overview;
+
+    assert.deepEqual(overview.keyCharacteristics, [
+      'Status remains understandable without relying on color alone.',
+      'Navigation controls remain visible when the viewport becomes narrow.',
+    ]);
+    assert.deepEqual(overview.philosophy, []);
+  });
+});
