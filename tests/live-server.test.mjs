@@ -431,6 +431,10 @@ describe('live-server integration', () => {
     });
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
+    assert.ok(
+      /\bOrigin\b/i.test(preflight.headers.get('vary') || ''),
+      'Vary: Origin accompanies the reflected origin on the preflight too',
+    );
   });
 
   it('CORS: a loopback origin is reflected with Vary: Origin', async () => {
