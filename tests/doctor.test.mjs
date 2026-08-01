@@ -172,6 +172,38 @@ describe('checkDesignCoverage', () => {
     assert.deepEqual(checkDesignCoverage({ design, designPath: 'DESIGN.md', parseDesignMd }), []);
   });
 
+  it('allows Components to be absent from a marked seed document', () => {
+    for (const command of ['/impeccable', '$impeccable']) {
+      const design = [
+        `<!-- SEED: established with the user before implementation; re-run ${command} document once there's code to capture the actual tokens and components. -->`,
+        '',
+        '# Design System: X',
+        '',
+        '## Colors', '', '### Primary', '- **Ink** (#111): Text.', '',
+        '## Typography', '', '**Body Font:** Inter', '',
+        '### Hierarchy', '- **Body** (400, 16px, 1.5): Paragraphs.', '',
+      ].join('\n');
+      assert.deepEqual(checkDesignCoverage({ design, designPath: 'DESIGN.md', parseDesignMd }), []);
+    }
+  });
+
+  it('still requires seed documents to cover Colors and Typography', () => {
+    for (const command of ['/impeccable', '$impeccable']) {
+      const design = [
+        `<!-- SEED: established with the user before implementation; re-run ${command} document once there's code to capture the actual tokens and components. -->`,
+        '',
+        '# Design System: X',
+        '',
+        '## Typography', '', '**Body Font:** Inter', '',
+        '### Hierarchy', '- **Body** (400, 16px, 1.5): Paragraphs.', '',
+      ].join('\n');
+      const findings = checkDesignCoverage({ design, designPath: 'DESIGN.md', parseDesignMd });
+      assert.deepEqual(ids(findings), ['design-md-coverage']);
+      assert.match(findings[0].summary, /no colors section/);
+      assert.doesNotMatch(findings[0].summary, /components/);
+    }
+  });
+
   it('counts machine-readable frontmatter as section coverage', () => {
     const design = [
       '---',
