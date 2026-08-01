@@ -195,6 +195,19 @@ describe('isScanTargetInsideProject()', () => {
     assert.equal(isScanTargetInsideProject(file, link), true);
     assert.equal(isScanTargetInsideProject(path.join(link, 'src', 'Card.tsx'), real), true);
   });
+
+  it('classifies not-yet-written files by their nearest existing ancestor', () => {
+    // The before-edit hook gates proposed Writes, so the target often does
+    // not exist. Canonicalization must climb to an existing ancestor rather
+    // than bail, or a new file under a symlinked root would read as outside.
+    const real = path.join(root, 'real');
+    const link = path.join(root, 'link');
+    fs.mkdirSync(real, { recursive: true });
+    fs.symlinkSync(real, link);
+    assert.equal(isScanTargetInsideProject(path.join(link, 'src', 'New.tsx'), real), true);
+    assert.equal(isScanTargetInsideProject(path.join(real, 'deep', 'New.tsx'), link), true);
+    assert.equal(isScanTargetInsideProject(path.join(root, 'elsewhere', 'New.tsx'), real), false);
+  });
 });
 
 describe('readConfig()', () => {

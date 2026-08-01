@@ -1332,19 +1332,33 @@ function isInsideProject(filePath, projectCwd) {
   }
 }
 
+// Resolve a path to its canonical (symlink-free) form. When the path does
+// not exist yet — the before-edit hook gates proposed Writes — canonicalize
+// the nearest existing ancestor and re-append the remainder, so a new file
+// under a symlinked root still compares equal to its canonical project.
 function canonicalPath(p) {
-  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  const resolved = path.resolve(p);
+  let dir = resolved;
+  const tail = [];
+  while (true) {
+    try {
+      return tail.length ? path.join(fs.realpathSync(dir), ...tail) : fs.realpathSync(dir);
+    } catch { /* keep climbing */ }
+    const parent = path.dirname(dir);
+    if (parent === dir) return resolved;
+    tail.unshift(path.basename(dir));
+    dir = parent;
+  }
 }
 
-// Containment gate for both scan passes. A session routinely touches files
-// that belong to no project or to a different one — harness scratchpad dirs
-// under the system temp root, sibling checkouts, one-off throwaway HTML — and
-// findings against those are judged with THIS project's config and DESIGN.md
-// palette, which is never right. Skip them (audit reason: outside-project).
-// Paths are canonicalized first so a symlinked root (macOS /tmp ->
-// /private/tmp) doesn't split the comparison; the realpath fallback for
-// missing paths is only correct because both scan loops check existence
-// before calling this.
+// Containment gate shared by the before-edit hook and both scan passes. A
+// session routinely touches files that belong to no project or to a
+// different one — harness scratchpad dirs under the system temp root,
+// sibling checkouts, one-off throwaway HTML — and findings against those are
+// judged with THIS project's config and DESIGN.md palette, which is never
+// right. Skip them (audit reason: outside-project). Paths are canonicalized
+// first so a symlinked root (macOS /tmp -> /private/tmp) doesn't split the
+// comparison.
 export function isScanTargetInsideProject(filePath, projectCwd) {
   if (!filePath || !projectCwd) return false;
   return isInsideProject(canonicalPath(filePath), canonicalPath(projectCwd));
