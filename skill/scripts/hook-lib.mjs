@@ -1332,6 +1332,24 @@ function isInsideProject(filePath, projectCwd) {
   }
 }
 
+function canonicalPath(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+// Containment gate for both scan passes. A session routinely touches files
+// that belong to no project or to a different one — harness scratchpad dirs
+// under the system temp root, sibling checkouts, one-off throwaway HTML — and
+// findings against those are judged with THIS project's config and DESIGN.md
+// palette, which is never right. Skip them (audit reason: outside-project).
+// Paths are canonicalized first so a symlinked root (macOS /tmp ->
+// /private/tmp) doesn't split the comparison; the realpath fallback for
+// missing paths is only correct because both scan loops check existence
+// before calling this.
+export function isScanTargetInsideProject(filePath, projectCwd) {
+  if (!filePath || !projectCwd) return false;
+  return isInsideProject(canonicalPath(filePath), canonicalPath(projectCwd));
+}
+
 export function parseStaticStyleImports(content, fromFile, projectCwd) {
   if (!content || typeof content !== 'string') return [];
   const dir = path.dirname(fromFile);
@@ -1690,6 +1708,10 @@ export async function runHook({ stdinJson, env = {}, cwd = process.cwd(), now = 
         lastSkip = 'file-missing';
         continue;
       }
+      if (!isScanTargetInsideProject(filePath, projectCwd)) {
+        lastSkip = 'outside-project';
+        continue;
+      }
 
       const maxFileBytes = config.limits?.maxFileBytes ?? DEFAULT_CONFIG.limits.maxFileBytes;
       if (maxFileBytes > 0) {
@@ -2020,6 +2042,10 @@ export async function runStopHook({ stdinJson, env = {}, cwd = process.cwd(), no
       const relForMatch = relativize(filePath, projectCwd);
       if (matchesAnyGlob(relForMatch, config.ignoreFiles) || matchesAnyGlob(filePath, config.ignoreFiles)) continue;
       if (!fs.existsSync(filePath)) continue;
+      // Caches written before this gate existed can still hold out-of-project
+      // paths, so the Stop pass re-checks containment rather than trusting
+      // the per-edit pass to have filtered them.
+      if (!isScanTargetInsideProject(filePath, projectCwd)) continue;
 
       scanned += 1;
       let content = '';
