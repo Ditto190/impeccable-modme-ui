@@ -1336,19 +1336,32 @@ function isInsideProject(filePath, projectCwd) {
 // not exist yet — the before-edit hook gates proposed Writes — canonicalize
 // the nearest existing ancestor and re-append the remainder, so a new file
 // under a symlinked root still compares equal to its canonical project.
+// Memoized: the hook runs as a fresh process per tool event, so the cache
+// amounts to once-per-event work — the scan loops re-check the same project
+// root for every target file. The cap only matters to long-lived importers
+// like the test runner.
+const canonicalPathCache = new Map();
+const CANONICAL_PATH_CACHE_MAX = 1024;
+
 function canonicalPath(p) {
   const resolved = path.resolve(p);
+  if (canonicalPathCache.has(resolved)) return canonicalPathCache.get(resolved);
+  let canonical = resolved;
   let dir = resolved;
   const tail = [];
   while (true) {
     try {
-      return tail.length ? path.join(fs.realpathSync(dir), ...tail) : fs.realpathSync(dir);
+      canonical = tail.length ? path.join(fs.realpathSync(dir), ...tail) : fs.realpathSync(dir);
+      break;
     } catch { /* keep climbing */ }
     const parent = path.dirname(dir);
-    if (parent === dir) return resolved;
+    if (parent === dir) break;
     tail.unshift(path.basename(dir));
     dir = parent;
   }
+  if (canonicalPathCache.size >= CANONICAL_PATH_CACHE_MAX) canonicalPathCache.clear();
+  canonicalPathCache.set(resolved, canonical);
+  return canonical;
 }
 
 // Containment gate shared by the before-edit hook and both scan passes. A
