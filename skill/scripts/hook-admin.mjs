@@ -10,7 +10,7 @@
  *   node hook-admin.mjs off                            # set enabled: false
  *   node hook-admin.mjs ignore-rule <rule-id>          # append to ignoreRules
  *   node hook-admin.mjs ignore-rule overused-font --all-values
- *   node hook-admin.mjs ignore-file <glob> [--local]   # append to ignoreFiles
+ *   node hook-admin.mjs ignore-file <glob> [--shared|--local]   # append to ignoreFiles
  *   node hook-admin.mjs ignore-value <rule> <value>    # append to shared ignoreValues
  *   node hook-admin.mjs ignore-value <rule> <value> --local
  *   node hook-admin.mjs ignore-value <rule> "*" --file <glob>   # rule off in <glob> only
