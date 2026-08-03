@@ -223,7 +223,11 @@ function writeHookConfig(cwd, hookConfig, opts = {}) {
   // (consent, quiet, auditLog) survive an Impeccable hooks edit.
   const next = { ...existing, hook: { ...existingHook, ...hookConfig } };
   if (Object.keys(legacyDetector).length > 0) {
-    next.detector = mergeDetectorConfig(detectorSection(existing), mergeDetectorConfig(legacyDetector));
+    const existingDetector = detectorSection(existing) || {};
+    next.detector = {
+      ...existingDetector,
+      ...mergeDetectorConfig(existingDetector, mergeDetectorConfig(legacyDetector)),
+    };
   }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(next, null, 2) + '\n');

@@ -1026,7 +1026,10 @@ describe('hook-admin.mjs', () => {
     fs.mkdirSync(path.dirname(getConfigPath(cwd)), { recursive: true });
     fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
       hook: { advisoryRules: 'include' },
-      detector: { advisoryRules: 'exclude' },
+      detector: {
+        advisoryRules: 'exclude',
+        extensions: [{ ext: '.blade.php', engine: 'html' }],
+      },
     }));
 
     runAdmin(['on']);
@@ -1034,6 +1037,7 @@ describe('hook-admin.mjs', () => {
     const config = JSON.parse(fs.readFileSync(getConfigPath(cwd), 'utf-8'));
     assert.equal(config.hook.advisoryRules, undefined);
     assert.equal(config.detector.advisoryRules, 'exclude');
+    assert.deepEqual(config.detector.extensions, [{ ext: '.blade.php', engine: 'html' }]);
   });
 
   it('ignore-file refuses unsupported reasons and unknown flags', () => {
