@@ -142,6 +142,65 @@ Prose.
     assert.equal(model.frontmatter.colors['brand-gold'], '#d9a531');
     assert.equal(model.frontmatter.rounded['"2xl"'], undefined);
   });
+
+  it('unescapes quote escapes inside quoted scalars (issue #428)', () => {
+    const md = `---
+typography:
+  body:
+    fontFamily: "\\"IBM Plex Sans\\", system-ui, sans-serif"
+name: 'It''s quiet'
+empty: "
+---
+
+# Design System: Escaped
+
+## 1. Overview
+
+Prose.
+`;
+    const model = parseDesignMd(md);
+    // YAML double-quoted scalars process backslash escapes.
+    assert.equal(model.frontmatter.typography.body.fontFamily, '"IBM Plex Sans", system-ui, sans-serif');
+    // Single-quoted scalars escape the quote by doubling it.
+    assert.equal(model.frontmatter.name, "It's quiet");
+    // A lone quote satisfies startsWith and endsWith at once; keep it literal
+    // instead of slicing it into an empty string.
+    assert.equal(model.frontmatter.empty, '"');
+  });
+
+  it('decodes hex, Unicode, and whitespace escapes in double-quoted scalars', () => {
+    const md = `---
+colors:
+  accent: "\\x23b8422e"
+typography:
+  accent:
+    fontFamily: "S\\u00f6hne, sans-serif"
+  label:
+    fontFamily: "IBM\\ Plex\\ Serif, serif"
+  mono:
+    fontFamily: "Space\\_Grotesk, sans-serif"
+emoji: "\\U0001F44D"
+bad-hex: "\\xZZ nope"
+bad-range: "\\UFFFFFFFF nope"
+---
+
+# Design System: Hex Escapes
+
+## 1. Overview
+
+Prose.
+`;
+    const model = parseDesignMd(md);
+    assert.equal(model.frontmatter.colors.accent, '#b8422e');
+    assert.equal(model.frontmatter.typography.accent.fontFamily, 'Söhne, sans-serif');
+    // \ (escaped space) and \_ (non-breaking space) are valid YAML escapes.
+    assert.equal(model.frontmatter.typography.label.fontFamily, 'IBM Plex Serif, serif');
+    assert.equal(model.frontmatter.typography.mono.fontFamily, 'Space\u00a0Grotesk, sans-serif');
+    assert.equal(model.frontmatter.emoji, '\u{1F44D}');
+    // Malformed or out-of-range sequences stay literal.
+    assert.equal(model.frontmatter['bad-hex'], '\\xZZ nope');
+    assert.equal(model.frontmatter['bad-range'], '\\UFFFFFFFF nope');
+  });
 });
 
 describe('parseDesignMd overview branch', () => {
