@@ -10,7 +10,7 @@
  *   node hook-admin.mjs off                            # set enabled: false
  *   node hook-admin.mjs ignore-rule <rule-id>          # append to ignoreRules
  *   node hook-admin.mjs ignore-rule overused-font --all-values
- *   node hook-admin.mjs ignore-file <glob>             # append to ignoreFiles
+ *   node hook-admin.mjs ignore-file <glob> [--local]   # append to ignoreFiles
  *   node hook-admin.mjs ignore-value <rule> <value>    # append to shared ignoreValues
  *   node hook-admin.mjs ignore-value <rule> <value> --local
  *   node hook-admin.mjs ignore-value <rule> "*" --file <glob>   # rule off in <glob> only
@@ -558,12 +558,44 @@ function addIgnoreRule(cwd, args) {
   return `Added "${rule}" to detector.ignoreRules. Current: ${config.ignoreRules.join(', ')}`;
 }
 
-function addIgnoreFile(cwd, glob) {
+function parseIgnoreFileArgs(args) {
+  const positionals = [];
+  let shared = false;
+  let local = false;
+
+  for (const raw of args) {
+    const arg = String(raw || '');
+    if (arg === '--shared') {
+      shared = true;
+    } else if (arg === '--local') {
+      local = true;
+    } else if (arg === '--reason' || arg.startsWith('--reason=')) {
+      throw new Error('--reason is not supported for ignore-file because detector.ignoreFiles stores globs only; use ignore-value when a documented rule-specific exception fits');
+    } else if (arg.startsWith('--')) {
+      throw new Error(`Unknown ignore-file flag: ${arg}`);
+    } else {
+      positionals.push(arg);
+    }
+  }
+
+  if (shared && local) throw new Error('Pass only one scope flag: --shared or --local');
+  if (positionals.length > 1) throw new Error('Pass exactly one glob to ignore-file');
+
+  return {
+    glob: positionals[0],
+    local,
+  };
+}
+
+function addIgnoreFile(cwd, args) {
+  const parsed = parseIgnoreFileArgs(args);
+  const glob = parsed.glob;
   if (!glob) throw new Error(`Pass a glob, e.g. ${IMPECCABLE_COMMAND} hooks ignore-file "src/legacy/**"`);
-  const config = mergeDetectorConfig(readRawDetectorConfig(cwd));
+  const config = mergeDetectorConfig(readRawDetectorConfig(cwd, { local: parsed.local }));
   if (!config.ignoreFiles.includes(glob)) config.ignoreFiles.push(glob);
-  writeDetectorConfig(cwd, config);
-  return `Added "${glob}" to detector.ignoreFiles. Current: ${config.ignoreFiles.join(', ')}`;
+  const target = writeDetectorConfig(cwd, config, { local: parsed.local });
+  const scope = parsed.local ? 'local detector.ignoreFiles' : 'shared detector.ignoreFiles';
+  return `Added "${glob}" to ${scope} (${path.relative(cwd, target) || target}). Current: ${config.ignoreFiles.join(', ')}`;
 }
 
 // An empty glob used to be dropped by filter(Boolean), so `--file=` reported
@@ -727,7 +759,7 @@ function main() {
       case 'on':     out = setEnabled(cwd, true); break;
       case 'off':    out = setEnabled(cwd, false); break;
       case 'ignore-rule': out = addIgnoreRule(cwd, rest); break;
-      case 'ignore-file': out = addIgnoreFile(cwd, rest[0]); break;
+      case 'ignore-file': out = addIgnoreFile(cwd, rest); break;
       case 'ignore-value': out = addIgnoreValue(cwd, rest); break;
       case 'reset':  out = reset(cwd); break;
     }

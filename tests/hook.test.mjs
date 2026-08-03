@@ -985,6 +985,28 @@ describe('hook-admin.mjs', () => {
     );
   });
 
+  it('ignore-file --local writes only the private detector config', () => {
+    const out = runAdmin(['ignore-file', '/abs/path/personal.html', '--local']);
+
+    assert.equal(fs.existsSync(getConfigPath(cwd)), false);
+    const local = JSON.parse(fs.readFileSync(getLocalConfigPath(cwd), 'utf-8')).detector;
+    assert.deepEqual(local.ignoreFiles, ['/abs/path/personal.html']);
+    assert.match(out, /local detector\.ignoreFiles/);
+  });
+
+  it('ignore-file refuses unsupported reasons and unknown flags', () => {
+    assert.throws(
+      () => runAdmin(['ignore-file', 'src/legacy/**', '--reason', 'machine-local path']),
+      /--reason is not supported for ignore-file/,
+    );
+    assert.throws(
+      () => runAdmin(['ignore-file', 'src/legacy/**', '--shard']),
+      /Unknown ignore-file flag: --shard/,
+    );
+    assert.equal(fs.existsSync(getConfigPath(cwd)), false);
+    assert.equal(fs.existsSync(getLocalConfigPath(cwd)), false);
+  });
+
   it('ignore-file writes shared config that suppresses a later hook run', async () => {
     const file = path.join(cwd, 'src/ConfirmedCard.html');
     fs.mkdirSync(path.dirname(file), { recursive: true });
