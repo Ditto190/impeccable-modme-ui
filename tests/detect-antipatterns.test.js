@@ -2797,6 +2797,20 @@ describe('buildImportGraph', () => {
     expect(themeImports.has(path.join(MF, 'variables.sass'))).toBe(true);
   });
 
+  test('resolves Sass @use and @forward', async () => {
+    await withStaticFixture({
+      'theme.scss': "@use './variables';\n@forward './tokens';\n",
+      'variables.scss': '$primary: rebeccapurple;\n',
+      'tokens.scss': '$spacing: 1rem;\n',
+    }, ({ dir }) => {
+      const theme = path.join(dir, 'theme.scss');
+      const variables = path.join(dir, 'variables.scss');
+      const tokens = path.join(dir, 'tokens.scss');
+      const graph = buildImportGraph([theme, variables, tokens]);
+      expect(graph.get(theme)).toEqual(new Set([variables, tokens]));
+    });
+  });
+
   test('ignores bare/node_modules imports', () => {
     const graph = buildImportGraph([
       path.join(MF, 'App.tsx'),
