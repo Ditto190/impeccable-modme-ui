@@ -985,14 +985,88 @@ describe('hook-admin.mjs', () => {
     );
   });
 
+  it('ignore-file --local writes only the private detector config', () => {
+    const out = runAdmin(['ignore-file', '/abs/path/personal.html', '--local']);
+
+    assert.equal(fs.existsSync(getConfigPath(cwd)), false);
+    const local = JSON.parse(fs.readFileSync(getLocalConfigPath(cwd), 'utf-8')).detector;
+    assert.deepEqual(local.ignoreFiles, ['/abs/path/personal.html']);
+    assert.match(out, /local detector\.ignoreFiles/);
+  });
+
+  it('ignore-file --local preserves the local advisory-rule preference', () => {
+    fs.mkdirSync(path.dirname(getLocalConfigPath(cwd)), { recursive: true });
+    fs.writeFileSync(getLocalConfigPath(cwd), JSON.stringify({
+      detector: { advisoryRules: 'include' },
+    }));
+
+    runAdmin(['ignore-file', '/abs/path/personal.html', '--local']);
+
+    const local = JSON.parse(fs.readFileSync(getLocalConfigPath(cwd), 'utf-8')).detector;
+    assert.equal(local.advisoryRules, 'include');
+    assert.deepEqual(local.ignoreFiles, ['/abs/path/personal.html']);
+  });
+
+  for (const command of ['on', 'off']) {
+    it(`hooks ${command} migrates a legacy hook advisory-rule preference`, () => {
+      fs.mkdirSync(path.dirname(getConfigPath(cwd)), { recursive: true });
+      fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
+        hook: { advisoryRules: 'include' },
+      }));
+
+      runAdmin([command]);
+
+      const config = JSON.parse(fs.readFileSync(getConfigPath(cwd), 'utf-8'));
+      assert.equal(config.hook.advisoryRules, undefined);
+      assert.equal(config.detector.advisoryRules, 'include');
+    });
+  }
+
+  it('hooks on keeps the canonical advisory-rule preference during legacy migration', () => {
+    fs.mkdirSync(path.dirname(getConfigPath(cwd)), { recursive: true });
+    fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
+      hook: { advisoryRules: 'include' },
+      detector: {
+        advisoryRules: 'exclude',
+        extensions: [{ ext: '.blade.php', engine: 'html' }],
+      },
+    }));
+
+    runAdmin(['on']);
+
+    const config = JSON.parse(fs.readFileSync(getConfigPath(cwd), 'utf-8'));
+    assert.equal(config.hook.advisoryRules, undefined);
+    assert.equal(config.detector.advisoryRules, 'exclude');
+    assert.deepEqual(config.detector.extensions, [{ ext: '.blade.php', engine: 'html' }]);
+  });
+
+  it('ignore-file refuses unsupported reasons and unknown flags', () => {
+    assert.throws(
+      () => runAdmin(['ignore-file', 'src/legacy/**', '--reason', 'machine-local path']),
+      /--reason is not supported for ignore-file/,
+    );
+    assert.throws(
+      () => runAdmin(['ignore-file', 'src/legacy/**', '--shard']),
+      /Unknown ignore-file flag: --shard/,
+    );
+    assert.equal(fs.existsSync(getConfigPath(cwd)), false);
+    assert.equal(fs.existsSync(getLocalConfigPath(cwd)), false);
+  });
+
   it('ignore-file writes shared config that suppresses a later hook run', async () => {
     const file = path.join(cwd, 'src/ConfirmedCard.html');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, '<div style="border-left: 4px solid #7c3aed; border-radius: 16px; padding: 16px;">Card</div>');
 
+    fs.mkdirSync(path.dirname(getConfigPath(cwd)), { recursive: true });
+    fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
+      detector: { extensions: [{ ext: '.blade.php', engine: 'html' }] },
+    }));
+
     runAdmin(['ignore-file', 'src/ConfirmedCard.html']);
 
     const shared = JSON.parse(fs.readFileSync(getConfigPath(cwd), 'utf-8')).detector;
+    assert.deepEqual(shared.extensions, [{ ext: '.blade.php', engine: 'html' }]);
     assert.deepEqual(shared.ignoreFiles, ['src/ConfirmedCard.html']);
 
     const r = await runHook({
