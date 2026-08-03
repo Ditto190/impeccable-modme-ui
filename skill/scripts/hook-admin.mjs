@@ -166,7 +166,7 @@ function readRawConfigFile(filePath) {
   }
 }
 
-const DETECTOR_CONFIG_KEYS = new Set(['ignoreRules', 'ignoreFiles', 'ignoreValues', 'designSystem']);
+const DETECTOR_CONFIG_KEYS = new Set(['ignoreRules', 'ignoreFiles', 'ignoreValues', 'designSystem', 'advisoryRules']);
 
 function hookSection(unified) {
   return unified && typeof unified === 'object' && !Array.isArray(unified) && unified.hook && typeof unified.hook === 'object' && !Array.isArray(unified.hook)
@@ -259,11 +259,17 @@ function mergeDetectorConfig(existing, seed = null) {
   if (seed?.designSystem && typeof seed.designSystem === 'object' && !Array.isArray(seed.designSystem)) {
     out.designSystem = { ...seed.designSystem };
   }
+  if (seed?.advisoryRules === 'include' || seed?.advisoryRules === 'exclude') {
+    out.advisoryRules = seed.advisoryRules;
+  }
   if (base.designSystem && typeof base.designSystem === 'object' && !Array.isArray(base.designSystem)) {
     out.designSystem = {
       ...(out.designSystem || {}),
       enabled: base.designSystem.enabled === false ? false : true,
     };
+  }
+  if (base.advisoryRules === 'include' || base.advisoryRules === 'exclude') {
+    out.advisoryRules = base.advisoryRules;
   }
   if (Array.isArray(base.ignoreRules)) {
     out.ignoreRules = Array.from(new Set([...out.ignoreRules, ...base.ignoreRules.map(String)]));

@@ -994,6 +994,19 @@ describe('hook-admin.mjs', () => {
     assert.match(out, /local detector\.ignoreFiles/);
   });
 
+  it('ignore-file --local preserves the local advisory-rule preference', () => {
+    fs.mkdirSync(path.dirname(getLocalConfigPath(cwd)), { recursive: true });
+    fs.writeFileSync(getLocalConfigPath(cwd), JSON.stringify({
+      detector: { advisoryRules: 'include' },
+    }));
+
+    runAdmin(['ignore-file', '/abs/path/personal.html', '--local']);
+
+    const local = JSON.parse(fs.readFileSync(getLocalConfigPath(cwd), 'utf-8')).detector;
+    assert.equal(local.advisoryRules, 'include');
+    assert.deepEqual(local.ignoreFiles, ['/abs/path/personal.html']);
+  });
+
   it('ignore-file refuses unsupported reasons and unknown flags', () => {
     assert.throws(
       () => runAdmin(['ignore-file', 'src/legacy/**', '--reason', 'machine-local path']),
