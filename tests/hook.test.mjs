@@ -1007,6 +1007,35 @@ describe('hook-admin.mjs', () => {
     assert.deepEqual(local.ignoreFiles, ['/abs/path/personal.html']);
   });
 
+  for (const command of ['on', 'off']) {
+    it(`hooks ${command} migrates a legacy hook advisory-rule preference`, () => {
+      fs.mkdirSync(path.dirname(getConfigPath(cwd)), { recursive: true });
+      fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
+        hook: { advisoryRules: 'include' },
+      }));
+
+      runAdmin([command]);
+
+      const config = JSON.parse(fs.readFileSync(getConfigPath(cwd), 'utf-8'));
+      assert.equal(config.hook.advisoryRules, undefined);
+      assert.equal(config.detector.advisoryRules, 'include');
+    });
+  }
+
+  it('hooks on keeps the canonical advisory-rule preference during legacy migration', () => {
+    fs.mkdirSync(path.dirname(getConfigPath(cwd)), { recursive: true });
+    fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
+      hook: { advisoryRules: 'include' },
+      detector: { advisoryRules: 'exclude' },
+    }));
+
+    runAdmin(['on']);
+
+    const config = JSON.parse(fs.readFileSync(getConfigPath(cwd), 'utf-8'));
+    assert.equal(config.hook.advisoryRules, undefined);
+    assert.equal(config.detector.advisoryRules, 'exclude');
+  });
+
   it('ignore-file refuses unsupported reasons and unknown flags', () => {
     assert.throws(
       () => runAdmin(['ignore-file', 'src/legacy/**', '--reason', 'machine-local path']),

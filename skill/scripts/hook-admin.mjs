@@ -200,6 +200,15 @@ function stripDetectorKeys(raw) {
   return out;
 }
 
+function pickDetectorKeys(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (DETECTOR_CONFIG_KEYS.has(key)) out[key] = value;
+  }
+  return out;
+}
+
 // Write hook runtime config under `hook`, leaving detector filters in
 // `detector` and preserving sibling keys such as updateCheck.
 function writeHookConfig(cwd, hookConfig, opts = {}) {
@@ -207,10 +216,15 @@ function writeHookConfig(cwd, hookConfig, opts = {}) {
   if (opts.local) ensureHookGitExcludes(cwd);
   const existingRaw = readRawConfigFile(filePath).raw;
   const existing = existingRaw && typeof existingRaw === 'object' && !Array.isArray(existingRaw) ? existingRaw : {};
-  const existingHook = stripDetectorKeys(hookSection(existing));
+  const existingHookSection = hookSection(existing);
+  const existingHook = stripDetectorKeys(existingHookSection);
+  const legacyDetector = pickDetectorKeys(existingHookSection);
   // Merge over the existing hook object so fields the merge helpers don't manage
   // (consent, quiet, auditLog) survive an Impeccable hooks edit.
   const next = { ...existing, hook: { ...existingHook, ...hookConfig } };
+  if (Object.keys(legacyDetector).length > 0) {
+    next.detector = mergeDetectorConfig(detectorSection(existing), mergeDetectorConfig(legacyDetector));
+  }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(next, null, 2) + '\n');
   return filePath;
