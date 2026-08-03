@@ -240,10 +240,14 @@ function writeDetectorConfig(cwd, detectorConfig, opts = {}) {
   const existingRaw = readRawConfigFile(filePath).raw;
   const existing = existingRaw && typeof existingRaw === 'object' && !Array.isArray(existingRaw) ? existingRaw : {};
   const nextHook = stripDetectorKeys(hookSection(existing));
-  const existingDetector = mergeDetectorConfig(detectorSection(existing));
+  const existingDetectorSection = detectorSection(existing) || {};
+  const existingDetector = mergeDetectorConfig(existingDetectorSection);
   const next = {
     ...existing,
-    detector: mergeDetectorConfig(detectorConfig, existingDetector),
+    detector: {
+      ...existingDetectorSection,
+      ...mergeDetectorConfig(detectorConfig, existingDetector),
+    },
   };
   if (Object.keys(nextHook).length > 0) next.hook = nextHook;
   else delete next.hook;

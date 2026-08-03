@@ -1058,9 +1058,15 @@ describe('hook-admin.mjs', () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, '<div style="border-left: 4px solid #7c3aed; border-radius: 16px; padding: 16px;">Card</div>');
 
+    fs.mkdirSync(path.dirname(getConfigPath(cwd)), { recursive: true });
+    fs.writeFileSync(getConfigPath(cwd), JSON.stringify({
+      detector: { extensions: [{ ext: '.blade.php', engine: 'html' }] },
+    }));
+
     runAdmin(['ignore-file', 'src/ConfirmedCard.html']);
 
     const shared = JSON.parse(fs.readFileSync(getConfigPath(cwd), 'utf-8')).detector;
+    assert.deepEqual(shared.extensions, [{ ext: '.blade.php', engine: 'html' }]);
     assert.deepEqual(shared.ignoreFiles, ['src/ConfirmedCard.html']);
 
     const r = await runHook({
