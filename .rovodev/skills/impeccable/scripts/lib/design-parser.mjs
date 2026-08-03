@@ -2,15 +2,20 @@
 // the live-mode design-system panel can render. Deterministic, dependency-free.
 //
 // Two-layer: YAML frontmatter (machine-readable tokens) + markdown body
-// (prose with six canonical H2 sections). When frontmatter is present, it's
+// (prose with eight canonical H2 sections). When frontmatter is present, it's
 // exposed on `model.frontmatter` alongside the prose-scraped sections;
 // consumers can prefer frontmatter values and fall back to prose.
 
+// Array order is also match precedence: matchCanonicalSection's keyword-contained
+// pass returns the first entry a heading contains, so reordering this changes
+// which section an ambiguous heading resolves to.
 const CANONICAL_SECTIONS = [
   'Overview',
   'Colors',
   'Typography',
+  'Layout',
   'Elevation',
+  'Shapes',
   'Components',
   "Do's and Don'ts",
 ];
@@ -662,11 +667,19 @@ function parseTypeBullet(bullet) {
   };
 }
 
-function extractElevation(section) {
+function extractGuidance(section) {
   if (!section) return null;
   const subs = splitSubsections(section.lines);
+  return {
+    subtitle: section.subtitle,
+    description: collectParagraphs(subs[0].lines).join(' ') || null,
+    rules: extractNamedRules(section.lines),
+  };
+}
 
-  const description = collectParagraphs(subs[0].lines).join(' ') || null;
+function extractElevation(section) {
+  const guidance = extractGuidance(section);
+  if (!guidance) return null;
 
   const shadows = [];
   const seen = new Set();
@@ -691,12 +704,7 @@ function extractElevation(section) {
     for (const inline of extractInlineShadows(b)) dedupe(inline);
   }
 
-  return {
-    subtitle: section.subtitle,
-    description,
-    shadows,
-    rules: extractNamedRules(section.lines),
-  };
+  return { ...guidance, shadows };
 }
 
 function extractInlineShadows(text) {
@@ -828,6 +836,15 @@ function extractDosDonts(section) {
 
 // ---------- Coverage assessment ----------
 
+// Sections whose model is description-plus-rules only (see extractGuidance).
+const guidanceCoverage = (guidance) =>
+  guidance
+    ? {
+        description: Boolean(guidance.description),
+        rules: guidance.rules.length,
+      }
+    : 'missing';
+
 function assessCoverage(model) {
   const report = {};
 
@@ -856,6 +873,8 @@ function assessCoverage(model) {
       }
     : 'missing';
 
+  report.layout = guidanceCoverage(model.layout);
+
   report.elevation = model.elevation
     ? {
         shadows: model.elevation.shadows.length,
@@ -863,6 +882,8 @@ function assessCoverage(model) {
         description: Boolean(model.elevation.description),
       }
     : 'missing';
+
+  report.shapes = guidanceCoverage(model.shapes);
 
   report.components = model.components
     ? {
@@ -893,7 +914,9 @@ export function parseDesignMd(md) {
     overview: extractOverview(sections['Overview']),
     colors: extractColors(sections['Colors']),
     typography: extractTypography(sections['Typography']),
+    layout: extractGuidance(sections['Layout']),
     elevation: extractElevation(sections['Elevation']),
+    shapes: extractGuidance(sections['Shapes']),
     components: extractComponents(sections['Components']),
     dosDonts: extractDosDonts(sections["Do's and Don'ts"]),
   };
