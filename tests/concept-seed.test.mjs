@@ -314,11 +314,19 @@ describe('concept seed scopes', () => {
       const graphicFirst = picks.find(pick => pick.wellTier === 'graphic');
       counts[graphicFirst.id] += 1;
     }
-    assert.equal(counts.marginal, 0);
-    // Two tickets should put the flagship on top roughly twice as often as an
-    // unrated peer; a generous margin keeps the assertion deterministic-safe.
-    assert.equal(counts.flagship > counts['solid-b'] * 1.3, true,
-      `flagship ${counts.flagship} vs solid-b ${counts['solid-b']}`);
+    // A 1-star draws at half weight rather than not at all. Excluding it made a
+    // rating do the job breadth already does, and a marginal keep records
+    // "narrow or unexceptional" rather than "wrong".
+    assert.equal(counts.marginal > 0, true, `marginal ${counts.marginal} should draw`);
+    assert.equal(counts.marginal < counts['solid-b'], true,
+      `marginal ${counts.marginal} should draw below solid-b ${counts['solid-b']}`);
+
+    // A 3-star no longer outdraws a 2-star. The multiplier concentrated the
+    // draw hard on a thin pool: measured on the live catalog, 3-star worlds took
+    // 75% of the interaction draw from 15 of 25 eligible worlds.
+    const spread = Math.abs(counts.flagship - counts['solid-b']) / Math.max(counts.flagship, counts['solid-b']);
+    assert.equal(spread < 0.4, true,
+      `flagship ${counts.flagship} and solid-b ${counts['solid-b']} should draw comparably`);
 
     // A tier holding only 1-star approvals still yields challengers.
     const onlyMarginal = [
@@ -380,11 +388,15 @@ describe('concept seed scopes', () => {
       const picks = selectApprovedCompositions({ scope: 'direction', key: `stage-weight-${index}`, mode: 'persuade', sourceCompositions: pool, count: 1 });
       counts[picks[0].id] += 1;
     }
-    assert.equal(counts['marginal-stage'], 0, 'a 1-star composition keeps its approval but leaves the draw');
-    // Two tickets should put the flagship first roughly twice as often as the
-    // unrated peer; a generous margin keeps the assertion deterministic-safe.
-    assert.equal(counts['flagship-stage'] > counts['plain-stage'] * 1.3, true,
-      `flagship ${counts['flagship-stage']} vs plain ${counts['plain-stage']}`);
+    // Same weighting as challengers: a 1-star draws at half rather than not at
+    // all, and a 3-star no longer outdraws a 2-star.
+    assert.equal(counts['marginal-stage'] > 0, true, 'a 1-star composition still draws, at half weight');
+    assert.equal(counts['marginal-stage'] < counts['plain-stage'], true,
+      `marginal ${counts['marginal-stage']} should draw below plain ${counts['plain-stage']}`);
+    const stageSpread = Math.abs(counts['flagship-stage'] - counts['plain-stage'])
+      / Math.max(counts['flagship-stage'], counts['plain-stage']);
+    assert.equal(stageSpread < 0.4, true,
+      `flagship ${counts['flagship-stage']} and plain ${counts['plain-stage']} should draw comparably`);
 
     // A pool of nothing but 1-star keeps still yields compositions.
     const onlyMarginal = [
