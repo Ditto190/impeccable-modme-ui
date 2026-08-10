@@ -112,6 +112,31 @@ describe('detectUrl — browser-only fixtures', () => {
     }
   });
 
+  it('low-contrast: a gradient body ground with oklch stops is measured, never assumed white', async () => {
+    // The impeccable.style FP class: `background: linear-gradient(oklch(7%…),
+    // oklch(4%…))` on body leaves backgroundColor transparent, and the old
+    // resolveBackground assumed white for any body-level gradient — turning
+    // every light-on-dark text on the page into a ~1.3:1 finding (~120 of
+    // them on one site). In a real browser, reaching that branch means the
+    // ground truly is the gradient, so its stops are the surface to measure.
+    // visualContrast: false scopes this to the DOM resolution path under test;
+    // the screenshot sampler is a separate subsystem with its own coverage.
+    const f = await detectUrl(`${baseUrl}/fixtures/antipatterns/dark-gradient-ground.html`, { visualContrast: false });
+    const contrast = f.filter(r => r.antipattern === 'low-contrast');
+    const snippets = contrast.map(r => r.snippet || '').join('\n');
+    assert.doesNotMatch(snippets, /on #ffffff/, `light-on-dark text was measured against an assumed white body:\n${snippets}`);
+    // Each FLAG case is pinned to its full text-on-background signature (the
+    // hexes are the engine's own deterministic oklch conversions), so an
+    // offsetting miss and false positive cannot cancel out — in particular
+    // the frosted pair: flag-light-on-frosted must be measured against the
+    // COMPOSITED wash (#dcdbd8), never a raw dark stop, while count === 3
+    // proves no pass-column case (like pass-dark-on-frosted) flags instead.
+    assert.match(snippets, /text #2e2e2e on #010101/, `flag-muted-direct missing against the darker stop:\n${snippets}`);
+    assert.match(snippets, /text #333333 on #010101/, `flag-muted-nested missing against the darker stop:\n${snippets}`);
+    assert.match(snippets, /text #d7d7d7 on #dcdbd8/, `flag-light-on-frosted missing against the composited wash:\n${snippets}`);
+    assert.equal(contrast.length, 3, `expected exactly the 3 flag-column cases, got ${contrast.length}:\n${snippets}`);
+  });
+
   it('shadowed form.id: a <form> with <input name="id"> does not crash the scan (issue #407)', async () => {
     // HTMLFormElement named-property shadowing makes form.id / form.className
     // return the child input element, whose .startsWith throws. Every Shopify
