@@ -567,6 +567,25 @@ const leak = { boxShadow: "0 1px 2px rgba(0, 0, 0, 0.28)", color: "rgba(0, 0, 0,
     assert.equal(findings.some((item) => item.antipattern === 'design-system-color'), false);
   });
 
+  it('keeps shadow context across template interpolations', () => {
+    const designSystem = shadowDesignSystem();
+    const findings = checkSourceDesignSystem(`
+const card = { boxShadow: \`0 \${offset}px 2px rgba(0, 0, 0, 0.28)\` };
+  box-shadow: 0 1px \${blur}px rgba(0, 0, 0, 0.28);
+const leak = { boxShadow: \`0 \${offset}px rgba(0, 0, 0, 0.28)\`, color: "rgba(0, 0, 0, 0.28)" };
+`, '/tmp/interpolated.js', { designSystem });
+    const colors = findings.filter((item) => item.antipattern === 'design-system-color');
+
+    // The documented shadow color passes after a \${...} interpolation in
+    // both the JS template literal and the CSS-in-JS line; the color key on
+    // the leak line still fires because it sits past the template's closing
+    // backtick.
+    assert.deepEqual(
+      colors.map((item) => [item.line, item.ignoreValue]),
+      [[4, 'rgba(0, 0, 0, 0.28)']],
+    );
+  });
+
   it('does not allow a later declaration to inherit shadow context from earlier on the line', () => {
     const designSystem = shadowDesignSystem();
     const findings = checkSourceDesignSystem(
