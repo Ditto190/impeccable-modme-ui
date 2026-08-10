@@ -743,11 +743,12 @@ function isShadowPropertyContext(line, match) {
   // Unlike jsColorKeyContext, the JS tail admits commas: a multi-layer shadow
   // string is comma-separated, and a later property on the same line is still
   // blocked because it sits past the string's closing quote. Both tails also
-  // admit complete `${...}` interpolations, so a tokenized dynamic shadow
-  // (template literal or CSS-in-JS) keeps its context; a bare `}`, quote, or
-  // `;` still ends it.
-  return /(?:^|[{\s;"'`(,])(?:box-shadow|text-shadow)\s*:\s*(?:\$\{[^}"'`]*\}|[^;{}"'`])*$/i.test(before)
-    || /(?:^|[,{]\s*)(?:boxShadow|textShadow)\s*[:=]\s*["'`]?(?:\$\{[^}"'`]*\}|[^"'`}])*$/i.test(before);
+  // admit complete `${...}` interpolations (including paired quoted strings
+  // inside them, for function arguments and ternaries), so a tokenized
+  // dynamic shadow (template literal or CSS-in-JS) keeps its context; a bare
+  // `}`, quote, or `;` still ends it.
+  return /(?:^|[{\s;"'`(,])(?:box-shadow|text-shadow)\s*:\s*(?:\$\{(?:"[^"]*"|'[^']*'|[^}"'`])*\}|[^;{}"'`])*$/i.test(before)
+    || /(?:^|[,{]\s*)(?:boxShadow|textShadow)\s*[:=]\s*["'`]?(?:\$\{(?:"[^"]*"|'[^']*'|[^}"'`])*\}|[^"'`}])*$/i.test(before);
 }
 
 function isInsideCssAttributeSelector(line, index) {
