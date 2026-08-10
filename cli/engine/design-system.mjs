@@ -730,6 +730,27 @@ function isProbablyColorLiteral(line, match) {
   return styleContext || cssFunctionContext || jsColorKeyContext;
 }
 
+// One complete `${...}` template interpolation. Its content may carry paired
+// quoted strings (function arguments, ternary branches) and one level of
+// braces (an object-literal argument, itself allowing paired quotes). Deeper
+// nesting would need a parser, so the regex deliberately fails safe there:
+// the context check misses and the finding fires — a false positive a waiver
+// can silence, never a leak.
+const QUOTED_STRING_SRC = `"[^"]*"|'[^']*'`;
+const INTERPOLATION_SRC =
+  `\\$\\{(?:${QUOTED_STRING_SRC}|\\{(?:${QUOTED_STRING_SRC}|[^{}"'\`])*\\}|[^{}"'\`])*\\}`;
+// The two shadow-context tails. Unlike jsColorKeyContext, the JS tail admits
+// commas: a multi-layer shadow string is comma-separated, and a later
+// property on the same line is still blocked because it sits past the
+// string's closing quote. Both tails admit complete interpolations; a bare
+// `}`, quote, or `;` still ends the context.
+const SHADOW_CSS_CONTEXT_RE = new RegExp(
+  `(?:^|[{\\s;"'\`(,])(?:box-shadow|text-shadow)\\s*:\\s*(?:${INTERPOLATION_SRC}|[^;{}"'\`])*$`, 'i',
+);
+const SHADOW_JS_CONTEXT_RE = new RegExp(
+  `(?:^|[,{]\\s*)(?:boxShadow|textShadow)\\s*[:=]\\s*["'\`]?(?:${INTERPOLATION_SRC}|[^"'\`}])*$`, 'i',
+);
+
 // True when the color literal sits inside a box-shadow / text-shadow value —
 // the only contexts where a documented shadow color is legal. Anchored to the
 // end of `before` (no ; } { or quote in between) so a shadow property earlier
@@ -740,15 +761,7 @@ function isShadowPropertyContext(line, match) {
   const index = match.index ?? -1;
   if (index < 0) return false;
   const before = line.slice(0, index);
-  // Unlike jsColorKeyContext, the JS tail admits commas: a multi-layer shadow
-  // string is comma-separated, and a later property on the same line is still
-  // blocked because it sits past the string's closing quote. Both tails also
-  // admit complete `${...}` interpolations (including paired quoted strings
-  // inside them, for function arguments and ternaries), so a tokenized
-  // dynamic shadow (template literal or CSS-in-JS) keeps its context; a bare
-  // `}`, quote, or `;` still ends it.
-  return /(?:^|[{\s;"'`(,])(?:box-shadow|text-shadow)\s*:\s*(?:\$\{(?:"[^"]*"|'[^']*'|[^}"'`])*\}|[^;{}"'`])*$/i.test(before)
-    || /(?:^|[,{]\s*)(?:boxShadow|textShadow)\s*[:=]\s*["'`]?(?:\$\{(?:"[^"]*"|'[^']*'|[^}"'`])*\}|[^"'`}])*$/i.test(before);
+  return SHADOW_CSS_CONTEXT_RE.test(before) || SHADOW_JS_CONTEXT_RE.test(before);
 }
 
 function isInsideCssAttributeSelector(line, index) {

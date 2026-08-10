@@ -575,18 +575,20 @@ const card = { boxShadow: \`0 \${offset}px 2px rgba(0, 0, 0, 0.28)\` };
 const fn = { boxShadow: \`0 \${getShadow('lg')} 2px rgba(0, 0, 0, 0.28)\` };
 const tern = { boxShadow: \`0 1px \${dark ? "4px" : "2px"} rgba(0, 0, 0, 0.28)\` };
   box-shadow: 0 \${theme('blur')} rgba(0, 0, 0, 0.28);
+const nested = { boxShadow: \`0 \${getOffset({ size: 2 })}px 2px rgba(0, 0, 0, 0.28)\` };
+const nestedQ = { boxShadow: \`0 \${getOffset({ size: 'lg' })}px rgba(0, 0, 0, 0.28)\` };
 const leak = { boxShadow: \`0 \${offset}px rgba(0, 0, 0, 0.28)\`, color: "rgba(0, 0, 0, 0.28)" };
 `, '/tmp/interpolated.js', { designSystem });
     const colors = findings.filter((item) => item.antipattern === 'design-system-color');
 
     // The documented shadow color passes after a \${...} interpolation in
     // the JS template literal and the CSS-in-JS line, including
-    // interpolations carrying quoted function arguments or ternary branches;
-    // the color key on the leak line still fires because it sits past the
-    // template's closing backtick.
+    // interpolations carrying quoted function arguments, ternary branches,
+    // and one level of object-literal braces; the color key on the leak line
+    // still fires because it sits past the template's closing backtick.
     assert.deepEqual(
       colors.map((item) => [item.line, item.ignoreValue]),
-      [[7, 'rgba(0, 0, 0, 0.28)']],
+      [[9, 'rgba(0, 0, 0, 0.28)']],
     );
   });
 
