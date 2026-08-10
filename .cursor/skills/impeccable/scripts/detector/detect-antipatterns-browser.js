@@ -2461,6 +2461,33 @@ function readOwnBackgroundColor(el, computedStyle) {
   return bg;
 }
 
+// One element's background-color as the cascade walk sees it: computed style
+// first (with the modern-color fallback), then, in static mode only,
+// custom-prop resolution and the inline-shorthand peek. Shared by
+// resolveBackground and resolveGradientStops so both walks read the same
+// surfaces.
+function readCascadeBackgroundColor(current, style, customPropMap) {
+  let bg = parseRgb(style.backgroundColor) || parseAnyColor(style.backgroundColor);
+  if (!DETECTOR_IS_BROWSER && (!bg || bg.a < 0.1)) {
+    // The static engine can return literal "var(--X)" / "oklch(...)" strings.
+    // Resolve through customPropMap so Tailwind v4 color tokens become RGB.
+    if (customPropMap) {
+      bg = parseColorResolved(style.backgroundColor, customPropMap);
+    }
+    if (!bg || bg.a < 0.1) {
+      // Inline-style fallback for colors the static cascade did not surface
+      // on backgroundColor.
+      const rawStyle = current.getAttribute?.('style') || '';
+      const bgMatch = rawStyle.match(/background(?:-color)?\s*:\s*([^;]+)/i);
+      const inlineBg = bgMatch ? bgMatch[1].trim() : '';
+      if (inlineBg && !/gradient/i.test(inlineBg) && !/url\s*\(/i.test(inlineBg)) {
+        bg = parseColorResolved(inlineBg, customPropMap) || parseAnyColor(inlineBg);
+      }
+    }
+  }
+  return bg;
+}
+
 function resolveBackground(el, win, customPropMap) {
   let current = el;
   // Translucent layers (0.1 < a < 1) found on the way down to an opaque
@@ -2489,24 +2516,7 @@ function resolveBackground(el, win, customPropMap) {
     // body backgrounds.
     // Real browsers serialize wide-gamut computed values as oklab()/oklch()
     // (e.g. any color-mix() result), which plain parseRgb misses.
-    let bg = parseRgb(style.backgroundColor) || parseAnyColor(style.backgroundColor);
-    if (!DETECTOR_IS_BROWSER && (!bg || bg.a < 0.1)) {
-      // jsdom returns literal "var(--X)" / "oklch(...)" strings. Resolve
-      // through customPropMap so Tailwind v4 color tokens become RGB.
-      if (customPropMap) {
-        bg = parseColorResolved(style.backgroundColor, customPropMap);
-      }
-      if (!bg || bg.a < 0.1) {
-        // Inline-style fallback. jsdom doesn't decompose background
-        // shorthand, so colors set via inline style are otherwise invisible.
-        const rawStyle = current.getAttribute?.('style') || '';
-        const bgMatch = rawStyle.match(/background(?:-color)?\s*:\s*([^;]+)/i);
-        const inlineBg = bgMatch ? bgMatch[1].trim() : '';
-        if (inlineBg && !/gradient/i.test(inlineBg) && !/url\s*\(/i.test(inlineBg)) {
-          bg = parseColorResolved(inlineBg, customPropMap) || parseAnyColor(inlineBg);
-        }
-      }
-    }
+    const bg = readCascadeBackgroundColor(current, style, customPropMap);
 
     if (bg && bg.a > 0.1) {
       if (bg.a >= 0.99) return flatten(bg);
@@ -2524,40 +2534,88 @@ function resolveBackground(el, win, customPropMap) {
     //   • on other elements: bail to null and let the caller fall back
     //     to gradient stops (gradient buttons / hero sections are real
     //     bgs worth checking against).
-    if (hasGradientOrUrl) {
-      if (current.tagName === 'BODY' || current.tagName === 'HTML') {
-        return flatten({ r: 255, g: 255, b: 255, a: 1 });
-      }
-      return null;
-    }
+    // A gradient or image with no solid color under it, at any level
+    // including body/html, means the visible ground is that layer itself.
+    // Return null so the caller measures against the actual gradient stops,
+    // or skips when nothing is parseable — skipping beats a wrong ratio.
+    //
+    // Body/html used to assume white here, a guard written for jsdom, which
+    // never decomposed the `background:` shorthand and so could not see the
+    // solid paper color a texture gradient usually sits on. It turned every
+    // light-on-dark page into a wall of low-contrast false positives (a dark
+    // oklch body gradient produced ~120 "on #ffffff" findings on one site).
+    // Both engines can see shorthand solids now — the browser natively, the
+    // static cascade via expandStaticDeclaration + var() resolution — so a
+    // missing solid is real, and the old failure case cannot recur: opaque
+    // stops fully cover any hidden solid (they ARE the ground), alpha stops
+    // composite over the resolved base or the white canvas default, and
+    // unresolvable stops drop rather than guess.
+    if (hasGradientOrUrl) return null;
     current = current.parentElement;
   }
   return flatten({ r: 255, g: 255, b: 255, a: 1 });
 }
 
+// parseGradientColors (shared) reads only the legacy serializations: rgb()
+// and hex stops. Browsers keep modern-space stops in computed backgroundImage
+// exactly as authored — `linear-gradient(oklch(7% 0.006 95), …)` stays oklch —
+// which is what every token-driven page produces. Route those through
+// parseAnyColor so a gradient ground is measurable rather than invisible.
+function parseGradientColorsModern(bgImage) {
+  if (!bgImage || !/gradient/i.test(bgImage)) return [];
+  const colors = parseGradientColors(bgImage);
+  for (const m of bgImage.matchAll(/(?:oklch|oklab|hsla?|hwb)\(\s*[^()]*\)/gi)) {
+    const c = parseAnyColor(m[0]);
+    if (c) colors.push(c);
+  }
+  return colors;
+}
+
 // Walk parents looking for a gradient background and return its color stops.
 // Used as a fallback when resolveBackground() returns null because the
 // effective background is a gradient (no single solid color to compare against).
+// Translucent solid layers found between the element and the gradient (frosted
+// panels, glass washes) are composited over every stop, the same way
+// resolveBackground flattens them over a solid base — raw stops alone would
+// false-flag dark text on a light frosted wash over a dark gradient, and miss
+// the inverse.
 function resolveGradientStops(el, win, customPropMap) {
   let current = el;
+  const overlays = [];
   while (current && current.nodeType === 1) {
     const style = DETECTOR_IS_BROWSER ? getComputedStyle(current) : win.getComputedStyle(current);
     const bgImage = style.backgroundImage || '';
     let stops = null;
     if (bgImage && bgImage !== 'none' && /gradient/i.test(bgImage)) {
-      const parsed = parseGradientColors(bgImage);
+      const parsed = parseGradientColorsModern(bgImage);
       if (parsed.length > 0) stops = parsed;
     }
     if (!stops && !DETECTOR_IS_BROWSER) {
-      // jsdom doesn't decompose `background:` shorthand — peek at the raw inline style
+      // Static mode: peek at the raw inline style for gradients the cascade did not surface
       const rawStyle = current.getAttribute?.('style') || '';
       const bgMatch = rawStyle.match(/background(?:-image)?\s*:\s*([^;]+)/i);
       if (bgMatch && /gradient/i.test(bgMatch[1])) {
-        const parsed = parseGradientColors(bgMatch[1]);
+        const parsed = parseGradientColorsModern(bgMatch[1]);
         if (parsed.length > 0) stops = parsed;
       }
     }
-    if (stops) return compositeGradientStops(stops, current, win, customPropMap);
+    if (stops) {
+      const composited = compositeGradientStops(stops, current, win, customPropMap);
+      if (!composited || overlays.length === 0) return composited;
+      return composited.map(stop => {
+        let acc = stop;
+        for (let i = overlays.length - 1; i >= 0; i--) acc = compositeColorOver(overlays[i], acc);
+        return acc;
+      });
+    }
+    const bg = readCascadeBackgroundColor(current, style, customPropMap);
+    if (bg && bg.a > 0.1) {
+      // An opaque surface above the gradient means the gradient never shows
+      // through here; resolveBackground would have returned it, so reaching
+      // this is defensive — bail rather than measure the wrong layer.
+      if (bg.a >= 0.99) return null;
+      overlays.push(bg);
+    }
     current = current.parentElement;
   }
   return null;
@@ -3589,11 +3647,13 @@ function checkElementGlowDOM(el) {
   // If resolveBackground returns null (gradient), try to infer from the gradient colors
   let parentBg = el.parentElement ? resolveBackground(el.parentElement) : resolveBackground(el);
   if (!parentBg) {
-    // Gradient background — sample its colors to determine if it's dark
+    // Gradient background — sample its colors to determine if it's dark.
+    // Modern-syntax parsing matters here: body-level gradients now reach this
+    // fallback in browser mode, and their stops usually serialize as oklch.
     let cur = el.parentElement;
     while (cur && cur.nodeType === 1) {
       const bgImage = getComputedStyle(cur).backgroundImage || '';
-      const gradColors = parseGradientColors(bgImage);
+      const gradColors = parseGradientColorsModern(bgImage);
       if (gradColors.length > 0) {
         // Average the gradient colors
         const avg = { r: 0, g: 0, b: 0 };
