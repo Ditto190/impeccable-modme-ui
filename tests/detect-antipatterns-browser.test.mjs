@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBrowserDetector, detectUrl, normalizeDesignSystem } from '../cli/engine/detect-antipatterns.mjs';
+import { launchBrowser } from '../cli/engine/engines/browser/detect-url.mjs';
 import { filterDetectionFindings } from '../cli/lib/impeccable-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -110,6 +111,60 @@ describe('detectUrl — browser-only fixtures', () => {
     for (const cls of ['pass-same-bg-child', 'pass-marquee-shell', 'pass-inner-text-surface']) {
       assert.doesNotMatch(snippets, new RegExp(`"${cls}"`), `".${cls}" should not be flagged`);
     }
+  });
+
+  it('image-backed text: the overlay default pass pixel-samples the image itself', async () => {
+    // Drives the OVERLAY entry (impeccableDetectAsync with default options),
+    // not detectUrl's Node-side full fallback — the image-only default mode
+    // lives in the injected bundle. Fourteen gradient decoys precede the
+    // panels: the image-only filter must apply inside the candidate cap, or
+    // they starve the pass and nothing gets sampled. The sampled finding
+    // carries the candidate's text, so the white-on-light specimen must be
+    // the one that flags and the dark-ink control must stay clean.
+    const puppeteer = await import('puppeteer');
+    const browser = await launchBrowser(puppeteer, { headless: true, args: process.env.CI ? ['--no-sandbox', '--disable-setuid-sandbox'] : [] });
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1280, height: 800 });
+      await page.goto(`${baseUrl}/fixtures/antipatterns/image-backed-contrast.html`, { waitUntil: 'load' });
+      await page.addScriptTag({ path: path.join(ROOT, 'cli/engine/detect-antipatterns-browser.js') });
+      const groups = await page.evaluate(() => window.impeccableDetectAsync());
+      const contrast = groups.flatMap(g => (g.findings || []).filter(f => f.type === 'low-contrast').map(f => f.detail || f.snippet || ''));
+      const snippets = contrast.join('\n');
+      assert.match(snippets, /browser contrast/, `expected a sampled (not analytic) finding:\n${snippets}`);
+      assert.match(snippets, /White text on a near-white/, `flag case missing:\n${snippets}`);
+      assert.doesNotMatch(snippets, /Dark ink/, `pass case must not flag:\n${snippets}`);
+      assert.equal(contrast.length, 1, `expected exactly the white-on-light case, got ${contrast.length}:\n${snippets}`);
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  });
+
+  it('scoped-ignore: data-impeccable-ignore waives its subtree in the browser walk', async () => {
+    // Browser twin of the static scoped-ignore test: same fixture, same
+    // expectation — only the control and the other-rule-waived case flag.
+    const f = await detectUrl(`${baseUrl}/fixtures/antipatterns/scoped-ignore.html`, { visualContrast: false });
+    const sideTabs = f.filter(r => r.antipattern === 'side-tab');
+    const snippets = sideTabs.map(r => r.snippet || '').join('\n');
+    // Every case carries a unique border width, so each finding attributes to
+    // exactly one case: control 6, other-rule 8, sibling-waiver 12,
+    // misspelled-rule 5 must flag; the five waived shapes must not.
+    for (const w of ['5px', '6px', '8px', '12px']) {
+      assert.match(snippets, new RegExp(`border-left: ${w.replace('px', '')}px`), `flag case ${w} missing:\n${snippets}`);
+    }
+    for (const w of ['4px', '7px', '9px', '10px', '11px']) {
+      assert.doesNotMatch(snippets, new RegExp(`border-left: ${w.replace('px', '')}px`), `waived case ${w} must not flag:\n${snippets}`);
+    }
+    assert.equal(sideTabs.length, 4, `expected exactly the 4 flag cases, got ${sideTabs.length}:\n${snippets}`);
+    // CSS-scan findings resolve their selectors against the live DOM: the
+    // marquee track sits under a marquee waiver (suppressed), and the grid
+    // rule's selector renders nowhere on this page (dropped).
+    assert.equal(f.filter(r => r.antipattern === 'marquee').length, 0, 'waived marquee must not flag');
+    assert.equal(f.filter(r => r.antipattern === 'codex-grid-background').length, 0, 'dead grid CSS must not flag in the browser');
+    // The overshoot bezier sits inside a keyframe `to` step: the selector
+    // extractor must refuse `to` (matches nothing) so the finding is RETAINED
+    // as page-level rather than wrongly dropped by the zero-match rule.
+    assert.ok(f.some(r => r.antipattern === 'bounce-easing'), 'keyframe-step bezier finding must survive selector extraction');
   });
 
   it('low-contrast: a gradient body ground with oklch stops is measured, never assumed white', async () => {
@@ -400,7 +455,7 @@ describe('detectUrl — browser-only fixtures', () => {
     assert.match(snippets, /flag-box-text/, `opaque box painted over text should flag: ${snippets}`);
     assert.match(snippets, /flag-leak/, `inline element with leaked opaque padding should flag: ${snippets}`);
     assert.match(snippets, /flag-headline/, `headline overhanging an opaque card should flag: ${snippets}`);
-    for (const cls of ['pass-title', 'pass-eyebrow', 'pass-hero', 'cap', 'pass-under', 'pass-fixedbar']) {
+    for (const cls of ['pass-title', 'pass-eyebrow', 'pass-hero', 'cap', 'pass-under', 'pass-fixedbar', 'pass-scrubber']) {
       assert.doesNotMatch(snippets, new RegExp(cls), `".${cls}" must not flag: ${snippets}`);
     }
     assert.equal(hits.length, 3, `expected exactly 3 text-occlusion findings, got ${hits.length}: ${snippets}`);
