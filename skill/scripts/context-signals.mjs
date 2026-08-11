@@ -42,7 +42,7 @@ function latestCritique(cwd) {
     if (!latest) return null;
     const get = (key) => latest.meta[key] ?? null;
     const num = (v) => {
-      if (v == null) return null;
+      if (v == null || (typeof v === 'string' && v.trim() === '')) return null;
       const n = Number(v);
       return Number.isFinite(n) ? n : null;
     };
