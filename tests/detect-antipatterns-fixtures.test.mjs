@@ -224,6 +224,54 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     );
   });
 
+  it('color: currentcolor surface resolves var() text color instead of abstaining', async () => {
+    // background-color: currentcolor paints with the element's own text
+    // color, which in jsdom can itself be a var() token. The surface is
+    // knowable through the custom-prop map, so the faint text on it is a
+    // real low-contrast finding — abstention here would hide it.
+    const f = await detectHtml(path.join(FIXTURES, 'color.html'));
+    assert.ok(
+      f.some(r =>
+        r.antipattern === 'low-contrast' &&
+        /#cfc9bd/i.test(r.snippet || '') &&
+        /#e8e2d6/i.test(r.snippet || '')
+      ),
+      'expected low-contrast finding on the currentcolor var() surface',
+    );
+    // Good contrast on the same surface must not flag.
+    const goodFP = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#3a352c/i.test(r.snippet || '')
+    );
+    assert.equal(goodFP.length, 0, `dark ink on bone must pass, got: ${goodFP.map(r => r.snippet).join('; ')}`);
+    // An undefined token keeps the surface unknowable: abstain, don't guess.
+    const unknownFP = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#efe9dd/i.test(r.snippet || '')
+    );
+    assert.equal(
+      unknownFP.length, 0,
+      `unresolvable currentcolor surface must abstain, got: ${unknownFP.map(r => r.snippet).join('; ')}`,
+    );
+  });
+
+  it('color: a color-mix gradient stop never leaks its nested ingredient as a phantom surface', async () => {
+    // The stop paints as a 16% wash composited near-black over the dark
+    // wrap; the bright oklch(90% ...) nested inside the color-mix is an
+    // ingredient, never painted. Re-extracting nested tokens appended it as
+    // a phantom opaque stop, and the worst-case ratio then flagged the
+    // light text at ~1:1 against a color nobody sees.
+    const f = await detectHtml(path.join(FIXTURES, 'color.html'));
+    const phantom = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#ded9cf/i.test(r.snippet || '')
+    );
+    assert.equal(
+      phantom.length, 0,
+      `light text on the mixed wash must not flag: ${phantom.map(r => r.snippet).join('; ')}`,
+    );
+  });
+
   it('color: white text on background-image url() ancestor is not flagged as low-contrast', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'color.html'));
     // The pass column has white text on a div with background-image: url().
@@ -1022,17 +1070,36 @@ describe('detectHtml — motion', () => {
 
 describe('detectHtml — dark glow', () => {
   // Calibrated static baseline — see motion test note above.
-  // 11 element-level findings (glow-blue, glow-purple, glow-cyan, glow-multi,
+  // 12 element-level findings (glow-blue, glow-purple, glow-cyan, glow-multi,
   // inline pink, glow-oklch, glow-hex, glow-hsl, glow-var, glow-text,
-  // glow-light-oklch) + 1 page-level text-scan finding. Pass column adds none.
+  // glow-light-oklch, glow-photo-halo) + 1 page-level text-scan finding.
+  // Pass column adds none.
   it('glow: flag column triggers dark-glow, pass column adds none', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'glow.html'));
     const glow = f.filter(r => r.antipattern === 'dark-glow');
-    assert.equal(glow.length, 12);
+    assert.equal(glow.length, 13);
     // Every finding is a glow tell, none reference the pass-column shadows
     for (const g of glow) {
       assert.match(g.snippet, /Zero-offset (box|text)-shadow glow|Colored (box|text)-shadow glow/);
     }
+    // Zero-offset halo under an unreadable url() surface still fires: the
+    // halo tell does not depend on the background at all.
+    assert.ok(
+      glow.some(g => /Zero-offset box-shadow glow \(#d946ef\)/i.test(g.snippet)),
+      'expected zero-offset halo finding under unreadable image surface',
+    );
+    // Offset chromatic shadow under the same unreadable surface abstains:
+    // the dark-background tell needs a surface we can actually read.
+    assert.equal(
+      glow.filter(g => /#10b981/i.test(g.snippet)).length, 0,
+      'offset chromatic shadow on unknown surface must not be scored',
+    );
+    // Translucent gradient over a url() image blends with pixels the engine
+    // cannot read; the wash stops must never be scored as the surface.
+    assert.equal(
+      glow.filter(g => /#f43f5e/i.test(g.snippet)).length, 0,
+      'offset chromatic shadow under a translucent wash over an image must abstain',
+    );
   });
 });
 
@@ -1399,5 +1466,67 @@ describe('detectHtml — CSS patterns in prose (css-in-prose fixtures)', () => {
       'expected the Tailwind gradient-text finding'
     );
     assert.ok(f.some(r => r.antipattern === 'ai-color-palette'), 'expected ai-color-palette');
+  });
+});
+
+describe('detectHtml — dark themes written in modern color syntax', () => {
+  // A dark page whose ground and surfaces are written in oklch, color(srgb),
+  // color(display-p3), and lch. Backgrounds the parser cannot read must make
+  // the contrast checks abstain; assuming the browser default of white turns
+  // every light-on-dark line into a false "on #ffffff" finding.
+  const FLAG_PAIRS = [
+    // The ground is a two-stop oklch gradient; the check reports the worst
+    // stop, which for charcoal copy is the lighter one.
+    ['#35332d', '#050403'],  // Flag Muted On Oklch Ground
+    ['#47474d', '#1a1c1f'],  // Flag Dim On Srgb Panel
+    ['#59595c', '#121215'],  // Flag Dim On Display P3 Panel
+    ['#56514e', '#302b27'],  // Flag Dim On Lch Panel
+    ['#bfbdb8', '#faf7f2'],  // Flag Pale On Light Panel
+    ['#c7c4bf', '#faf7f2'],  // Flag Pale On Inherited Light Panel
+    ['#bfbdb8', '#f0ede8'],  // Flag Pale On Currentcolor Panel
+  ];
+
+  it('flags text that genuinely fails against a ground the parser can read', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'dark-theme-modern-color.html'));
+    const snippets = f.filter(r => r.antipattern === 'low-contrast').map(r => r.snippet || '');
+    for (const [text, bg] of FLAG_PAIRS) {
+      assert.ok(
+        snippets.some(s => s.includes(`text ${text}`) && s.includes(`on ${bg}`)),
+        `expected low-contrast for text ${text} on ${bg}, got: ${snippets.join('; ')}`,
+      );
+    }
+  });
+
+  it('never assumes white when the ground is unreadable', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'dark-theme-modern-color.html'));
+    const onWhite = f.filter(r => /on #ffffff/i.test(r.snippet || ''));
+    assert.equal(
+      onWhite.length, 0,
+      `no finding may claim a white ground on this page, got: ${onWhite.map(r => r.snippet).join('; ')}`,
+    );
+  });
+
+  it('light copy on readable dark surfaces stays quiet', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'dark-theme-modern-color.html'));
+    const pale = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#e7e4dd/i.test(r.snippet || '')
+    );
+    assert.equal(
+      pale.length, 0,
+      `ivory copy on dark grounds must not flag, got: ${pale.map(r => r.snippet).join('; ')}`,
+    );
+  });
+
+  it('never measures a gradient hidden beneath an image layer', async () => {
+    // `url(...), linear-gradient(red, blue)` paints the image on top; the
+    // gradient is invisible. Falling back to its stops manufactured
+    // gray-on-color / low-contrast findings against colors nobody sees.
+    const f = await detectHtml(path.join(FIXTURES, 'dark-theme-modern-color.html'));
+    const hidden = f.filter(r => /#ff0000|#0000ff/i.test(r.snippet || ''));
+    assert.equal(
+      hidden.length, 0,
+      `no finding may reference the occluded gradient's stops, got: ${hidden.map(r => r.snippet).join('; ')}`,
+    );
   });
 });

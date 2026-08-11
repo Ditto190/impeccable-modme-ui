@@ -113,6 +113,35 @@ describe('detectUrl — browser-only fixtures', () => {
     }
   });
 
+  it('dark-glow: unreadable url() surface keeps zero-offset halos, abstains on offset chromatic shadows', async () => {
+    // Mirrors the static assertions in detect-antipatterns-fixtures.test.mjs.
+    // The browser adapter (checkElementGlowDOM) once returned [] for the
+    // whole element when the parent surface was unresolved, which also
+    // dropped zero-offset chromatic halos that need no background at all.
+    const f = await detectUrl(`${baseUrl}/fixtures/antipatterns/glow.html`, { visualContrast: false });
+    const glow = f.filter(r => r.antipattern === 'dark-glow');
+    assert.ok(
+      glow.some(g => /Zero-offset box-shadow glow \(#d946ef\)/i.test(g.snippet || '')),
+      'expected zero-offset halo finding under unreadable image surface',
+    );
+    assert.equal(
+      glow.filter(g => /#10b981/i.test(g.snippet || '')).length, 0,
+      'offset chromatic shadow on unknown surface must not be scored',
+    );
+    // Gradient-over-image split: an opaque gradient provably covers the
+    // image, so the dark-background tell may score against its stops; a
+    // translucent wash blends with unknowable pixels (a white photo under a
+    // 20% black wash paints ~#cccccc, not black), so the walk abstains.
+    assert.ok(
+      glow.some(g => /Colored box-shadow glow \(#f97316\) on dark background/i.test(g.snippet || '')),
+      'expected colored-glow finding under a provably opaque gradient over an image',
+    );
+    assert.equal(
+      glow.filter(g => /#f43f5e/i.test(g.snippet || '')).length, 0,
+      'offset chromatic shadow under a translucent wash over an image must abstain',
+    );
+  });
+
   it('image-backed text: the overlay default pass pixel-samples the image itself', async () => {
     // Drives the OVERLAY entry (impeccableDetectAsync with default options),
     // not detectUrl's Node-side full fallback — the image-only default mode
@@ -1027,5 +1056,61 @@ describe('detectUrl — browser-only fixtures', () => {
     } finally {
       await detector.close();
     }
+  });
+
+  // Only a real browser reproduces this one: Chrome keeps oklch(), lch(), and
+  // color(srgb ...) verbatim in getComputedStyle output, so a detector that
+  // cannot parse those reads every surface as unset, walks out of the page,
+  // and assumes the white canvas. On a dark theme that turns every light line
+  // into a false "on #ffffff" finding (two live scans of impeccable.style
+  // produced 95 and ~120 of them).
+  describe('dark themes written in modern color syntax', () => {
+    const FLAG_PAIRS = [
+      // Worst stop of the two-stop oklch ground.
+      ['#35332d', '#050403'],
+      ['#47474d', '#1a1c1f'],
+      ['#59595c', '#121215'],
+      ['#56514e', '#302b27'],
+      ['#bfbdb8', '#faf7f2'],
+      // Chrome resolves inherit / currentcolor before getComputedStyle
+      // output, so these two must flag natively as well.
+      ['#c7c4bf', '#faf7f2'],
+      ['#bfbdb8', '#f0ede8'],
+    ];
+
+    it('reads oklch / color() / lch grounds and never assumes white', async () => {
+      const f = await detectUrl(`${baseUrl}/fixtures/antipatterns/dark-theme-modern-color.html`, {
+        visualContrast: false,
+      });
+      const lowContrast = f.filter(r => r.antipattern === 'low-contrast');
+      const snippets = lowContrast.map(r => r.snippet || '');
+
+      const onWhite = snippets.filter(s => /on #ffffff/i.test(s));
+      assert.equal(
+        onWhite.length, 0,
+        `no finding may claim a white ground on this page, got: ${onWhite.join('; ')}`,
+      );
+
+      const pale = snippets.filter(s => /#e7e4dd/i.test(s));
+      assert.equal(
+        pale.length, 0,
+        `ivory copy on dark grounds must not flag, got: ${pale.join('; ')}`,
+      );
+
+      for (const [text, bg] of FLAG_PAIRS) {
+        assert.ok(
+          snippets.some(s => s.includes(`text ${text}`) && s.includes(`on ${bg}`)),
+          `expected low-contrast for text ${text} on ${bg}, got: ${snippets.join('; ')}`,
+        );
+      }
+
+      // `url(...), linear-gradient(red, blue)` paints the image on top; no
+      // finding may measure against the occluded gradient's stops.
+      const hidden = f.filter(r => /#ff0000|#0000ff/i.test(r.snippet || ''));
+      assert.equal(
+        hidden.length, 0,
+        `no finding may reference the occluded gradient's stops, got: ${hidden.map(r => r.snippet).join('; ')}`,
+      );
+    });
   });
 });
