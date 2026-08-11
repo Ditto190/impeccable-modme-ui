@@ -102,13 +102,13 @@ function hermesGlobalHome(home) {
   const envHome = process.env.HERMES_HOME;
   if (envHome) {
     try {
-      const resolvedEnv = path.resolve(envHome);
-      const resolvedHome = path.resolve(home);
+      const resolvedEnv = resolve(envHome);
+      const resolvedHome = resolve(home);
       // Honor HERMES_HOME only when it lives under the active home (real
       // ~/.hermes or ~/.hermes/profiles/<name>). Cross-home inheritance is
       // treated as not-set, so a test running under HOME=/tmp/... doesn't
       // pick up the developer's real ~/.hermes.
-      if (resolvedEnv === resolvedHome || resolvedEnv.startsWith(resolvedHome + path.sep)) {
+      if (resolvedEnv === resolvedHome || resolvedEnv.startsWith(resolvedHome + sep)) {
         return resolvedEnv;
       }
     } catch {
@@ -2271,6 +2271,8 @@ export {
   expectedHookDests,
   extractZip,
   formatInstallDetectionLines,
+  hermesGlobalHome,
+  HOME_SKILLS_DIR_OVERRIDES,
   linkProviderSkills,
   mergeHookManifests,
   migrateUnprefixImpeccable,
