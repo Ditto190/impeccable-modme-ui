@@ -176,7 +176,7 @@ if (hasFlag('schema')) {
     question: 'The roll assigned Fillmore Handbill. Keep it, take an alternate, or re-roll.',
     options: [
       { id: 'assigned', label: 'Fillmore Handbill', kicker: 'THE ROLL', lineage: '1966-71 Fillmore psychedelic handbills', thesis: 'The gig poster that treats every release like a one-night stand.', palette: ['#e8452c', '#f5d64c', '#1b2a52', '#f3ead8'], materials: ['letterpress', 'split-fountain ink'], viewport: 'A full-bleed dated bill with the product name in warped display type.', risk: 'Reads nostalgic when the type is set timidly.', raised: [{ from: 'challenger-microfiche', raise: 'The bill now owns its whole viewport as one continuous printed sheet.' }], comp: '.impeccable/mocks/decision/assigned.webp', hero: 'https://impeccable.style/worlds/cards/posters-covers-sleeves-fillmore-handbill-hero.webp', board: 'https://impeccable.style/worlds/cards/posters-covers-sleeves-fillmore-handbill.webp' },
-      { id: 'model-pick', label: 'The Broadside Ballad', kicker: 'MY PICK', lineage: 'street-sold ballad sheets', thesis: 'Every release printed as the day’s ballad sheet.', palette: ['#1f1c18', '#efe5d0', '#a33327'], materials: ['woodcut', 'rag paper'], viewport: 'One tall sheet, the newest release as today’s ballad.', risk: 'Also the direction most runs in this category land on.', comp: '.impeccable/mocks/decision/model-pick.webp' },
+      { id: 'model-pick', label: 'The Broadside Ballad', kicker: 'IMPECCABLE’S PICK', lineage: 'street-sold ballad sheets', thesis: 'Every release printed as the day’s ballad sheet.', palette: ['#1f1c18', '#efe5d0', '#a33327'], materials: ['woodcut', 'rag paper'], viewport: 'One tall sheet, the newest release as today’s ballad.', risk: 'Also the direction most runs in this category land on.', comp: '.impeccable/mocks/decision/model-pick.webp' },
       { id: 'challenger-teletext', label: 'Teletext Service', verdict: 'competitive', lineage: 'broadcast teletext magazines', thesis: 'The catalog as a broadcast index: pages, not sections.', palette: ['#0000c0', '#ffff00', '#00c000', '#ffffff'], materials: ['block mosaic', 'phosphor glow'], viewport: 'P100 index page, releases as numbered rows.', case: 'Fuses cleanly: releases map to numbered pages; loses narrowly on clarity.', risk: 'Reads retro-novelty when the grid is not strict.', comp: '.impeccable/mocks/decision/challenger-teletext.webp', hero: 'https://impeccable.style/worlds/cards/broadcast-programming-teletext-service-hero.webp' },
       { id: 'challenger-microfiche', label: 'Microfiche Reader', verdict: 'declined', lineage: 'library microfiche stations', palette: ['#101418', '#9fb4c0'], materials: ['film grain', 'backlit glass'], case: 'Fuses poorly: listeners do not identify with archival retrieval.', kept: 'Total environmental commitment.', hero: 'https://impeccable.style/worlds/cards/archives-microfiche-reader-hero.webp' },
     ],
@@ -185,7 +185,7 @@ if (hasFlag('schema')) {
     canonCard: { label: 'The category standard', thesis: 'What this category ships, executed impeccably.', palette: ['#ffffff', '#111827', '#2563eb'], materials: ['clean grid', 'product photography'], viewport: 'The arrangement a visitor expects, at full craft.', risk: 'Indistinguishable from the competition by design.', comp: '.impeccable/mocks/decision/canon.webp' },
     steer: true,
   }, null, 2));
-  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/comp accept URLs or local paths; comp slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the comp, never as the promise of the build. verdict routes rendering: "wins" and "competitive" challengers keep full cards, "declined" ones render demoted after them (narrow, quiet, art as a labeled thumb, "Adopt anyway"), with their kept line on the front; the page reorders declined cards to the end on its own. raised on the assigned card renders each donation as a named raise line. Salience parity: when the assigned card declares no comp (no image generation this round), catalog art on every card demotes to a labeled thumb, so what looks important is the verdict’s call, never rendering luck. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation. The pick card is a kicker convention, not a field: kicker "MY PICK" on your top-ranked grounded candidate, one at most, never in the lead slot. Every card gets the full anatomy, challengers, canon, and declined included: thesis, palette, materials, viewport, risk; the seed already hands you each challenger’s system rules, so a card with no palette chips is an authoring gap, not a data gap. Keep thesis and each fact to one short sentence: the card front shows thesis, identity, and a two-line risk, while first viewport and the case read on the card back behind the Details chip, so long facts cost the reader a flip, not the page its scanability. A card with no imagery at all has no back; its full read renders on the front, so a text-only round loses nothing. The comp slot carries the card’s full-fidelity direction comp (the legacy key "sketch" is accepted as an alias). Comp aspect follows the surface: portrait at device viewport for native or mobile-first surfaces, landscape otherwise; the page adapts its cards to either. reroll accepts true or { "registers": ["safer", "bolder"] }: the register buttons steer the next hand along the familiar-to-bold axis, the answer carries "register", and you re-run concept-seed with --register <value> for the next round; offer the registers on direction rounds, and never pre-select one. followup: true keeps the table open after a pick for a second round via --update (direction first, then the execution contract); send the next payload immediately, the page is waiting on it.');
+  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/comp accept URLs or local paths; comp slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the comp, never as the promise of the build. verdict routes rendering: "wins" and "competitive" challengers keep full cards, "declined" ones render demoted after them (narrow, quiet, art as a labeled thumb, "Adopt anyway"), with their kept line on the front; the page reorders declined cards to the end on its own. raised on the assigned card renders each donation as a named raise line. Salience parity: when the assigned card declares no comp (no image generation this round), catalog art on every card demotes to a labeled thumb, so what looks important is the verdict’s call, never rendering luck. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation. The pick card is a kicker convention, not a field: kicker "IMPECCABLE’S PICK" on your top-ranked grounded candidate, one at most, never in the lead slot. Every card gets the full anatomy, challengers, canon, and declined included: thesis, palette, materials, viewport, risk; the seed already hands you each challenger’s system rules, so a card with no palette chips is an authoring gap, not a data gap. Keep thesis and each fact to one short sentence: the card front shows thesis, identity, and a two-line risk, while first viewport and the case read on the card back behind the Details chip, so long facts cost the reader a flip, not the page its scanability. A card with no imagery at all has no back; its full read renders on the front, so a text-only round loses nothing. The comp slot carries the card’s full-fidelity direction comp (the legacy key "sketch" is accepted as an alias). Comp aspect follows the surface: portrait at device viewport for native or mobile-first surfaces, landscape otherwise; the page adapts its cards to either. reroll accepts true or { "registers": ["safer", "bolder"] }: the register buttons steer the next hand along the familiar-to-bold axis, the answer carries "register", and you re-run concept-seed with --register <value> for the next round; offer the registers on direction rounds, and never pre-select one. followup: true keeps the table open after a pick for a second round via --update (direction first, then the execution contract); send the next payload immediately, the page is waiting on it.');
   process.exit(0);
 }
 
@@ -402,15 +402,16 @@ function page() {
     // generous hand cannot blow the card out of proportion.
     if (Array.isArray(option.raised) && option.raised.length) {
       const nameOf = (id) => options.find((o) => o.id === id)?.label || String(id ?? '');
-      const raiseLines = option.raised.slice(0, 6).map((r) => `<p class="raise"><span class="fact-label">Raised by ${esc(nameOf(r.from))}</span>${esc(r.raise || r.kept || '')}</p>`);
+      const raiseLines = option.raised.slice(0, 6).map((r) => `<p class="raise"><span class="fact-label">From ${esc(nameOf(r.from))}</span>${esc(r.raise || r.kept || '')}</p>`);
+      const raisesHead = (count) => `<div class="raises-head"><span class="fact-label">Improved by Impeccable's worlds</span>${count > 1 ? `<span class="raises-count" data-raises-count>1/${count}</span>` : ''}</div>`;
       if (raiseLines.length > 1) {
-        rows.push(`<div class="raises raises-cycle" role="button" tabindex="0" title="Click or press Enter to see the next raise" aria-label="Raised by the hand; activate to see the next raise">
-              <div class="raises-head"><span class="fact-label">Raised by the hand</span><span class="raises-count" data-raises-count>1/${raiseLines.length}</span></div>
+        rows.push(`<div class="raises raises-cycle" role="button" tabindex="0" title="Click or press Enter for the next improvement" aria-label="How Impeccable's worlds improved this direction; activate to see the next improvement">
+              ${raisesHead(raiseLines.length)}
               ${raiseLines.join('')}
               <span class="sr-live" aria-live="polite"></span>
             </div>`);
       } else {
-        rows.push(`<div class="raises">${raiseLines[0]}</div>`);
+        rows.push(`<div class="raises">${raisesHead(1)}${raiseLines[0]}</div>`);
       }
     }
     // Demoted art stays reachable as a labeled thumb: the catalog world
@@ -526,9 +527,12 @@ function page() {
     --ks-font-display: "Alumni Sans", "Albert Sans", Arial, sans-serif;
     --ks-font: "Albert Sans", "Avenir Next", "Helvetica Neue", Arial, system-ui, sans-serif;
     --ks-mono: "SFMono-Regular", "Roboto Mono", "JetBrains Mono", Consolas, monospace;
+    /* One inset shared by the content column, the deck's snap padding, and
+       the sticky footer, so all three align on the same 90rem column. */
+    --page-inset: max(clamp(1rem, 5vw, 4rem), calc((100vw - 90rem) / 2));
   }
   * { box-sizing: border-box; margin: 0; }
-  body { background: var(--ks-lacquer); color: var(--ks-text); font: 15px/1.55 var(--ks-font); padding: 1.8rem clamp(1rem, 5vw, 4rem) 2rem; min-height: 100dvh; display: flex; flex-direction: column; overflow-x: clip; }
+  body { background: var(--ks-lacquer); color: var(--ks-text); font: 15px/1.55 var(--ks-font); padding: 1.8rem clamp(1rem, 5vw, 4rem) 0; min-height: 100dvh; display: flex; flex-direction: column; overflow-x: clip; }
   #ambient { position: fixed; inset: -40px; z-index: 0; background-size: cover; background-position: center; filter: blur(34px) saturate(1.05); opacity: 0; transition: opacity .55s ease, background-image .2s; pointer-events: none; }
   #scrim { position: fixed; inset: 0; z-index: 0; background: linear-gradient(180deg, oklch(7% 0.006 95 / 0.62), oklch(7% 0.006 95 / 0.78)); pointer-events: none; }
   header, main, footer { position: relative; z-index: 1; }
@@ -552,12 +556,24 @@ function page() {
   .deck-shell { position: relative; width: 100vw; margin-left: calc(50% - 50vw); }
   /* One row in a wide viewport, one column in a tall one; the deck scrolls on
      its axis with snap points and the arrows page it card by card. */
-  .grid { --deck-inset: max(clamp(1rem, 5vw, 4rem), calc((100vw - 90rem) / 2)); display: flex; gap: 1.6rem; width: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; padding: 6px var(--deck-inset); scroll-padding-inline: var(--deck-inset); align-items: stretch; }
+  .grid { --deck-inset: var(--page-inset); display: flex; gap: 1.6rem; width: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; padding: 6px var(--deck-inset); scroll-padding-inline: var(--deck-inset); align-items: stretch; }
   .grid::-webkit-scrollbar { display: none; }
   /* Wide enough that the comp carries the card: at 27vw the imagery read
      as a thumbnail above a column of copy, and the copy won the attention
      contest the comp is supposed to win. */
   .grid > .card { flex: 0 0 clamp(24rem, 34vw, 34rem); scroll-snap-align: center; }
+  /* Short landscape viewports (13-inch laptops): header, a 34vw card, and the
+     footer do not fit 800px of height, so the headline compacts and the deck
+     narrows. Height is the axis that gives; the sticky footer keeps the
+     round's verbs on screen while a too-tall card scrolls. */
+  @media (min-aspect-ratio: 1/1) and (max-height: 900px) {
+    body { padding-top: 1.1rem; }
+    h1 { font-size: clamp(2rem, 3.4vw, 2.9rem); }
+    .question { margin-top: .45rem; }
+    .stage { gap: 1rem; }
+    .grid > .card { flex-basis: clamp(20rem, 27vw, 27rem); }
+    .grid > .card.declined { flex-basis: clamp(13rem, 18vw, 18rem); }
+  }
   .nav { position: absolute; z-index: 6; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: oklch(7% 0.006 95 / 0.78); border: 1px solid var(--ks-rule); color: var(--ks-kinpaku); cursor: pointer; backdrop-filter: blur(6px); transition: border-color .2s, color .2s, opacity .2s; }
   .nav:hover { border-color: var(--ks-kinpaku-deep); color: var(--ks-kinpaku-pale); }
   .nav[disabled] { opacity: .25; cursor: default; }
@@ -588,6 +604,10 @@ function page() {
        shrink a declined card to content WIDTH, not height, so it stretches
        like every other card and its height is already its own. */
     .grid > .card.declined { align-self: stretch; }
+    /* The sticky bar is a wide-viewport fix. Here it would sit over the
+       deck's More pager and cost a third of a phone screen, and the deck
+       already scrolls internally, so the footer stays in the page flow. */
+    footer { position: static; width: auto; margin: 1rem 0 0; padding: .7rem 0 1.2rem; background: transparent; border-top: 0; backdrop-filter: none; }
   }
   .card { position: relative; perspective: 1400px; transform: rotate(var(--fan, 0deg)); transition: transform .25s cubic-bezier(.16, 1, .3, 1); }
   .card:hover { transform: rotate(0deg) translateY(-4px); }
@@ -695,17 +715,19 @@ function page() {
   .inspo { position: relative; flex: none; margin: 2px 0; width: 104px; height: 64px; border: 1px solid var(--ks-rule); border-radius: 6px; overflow: hidden; cursor: zoom-in; background: var(--ks-lacquer); }
   .inspo img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .inspo figcaption { position: absolute; left: 0; right: 0; bottom: 0; font-family: var(--ks-mono); font-size: .48rem; letter-spacing: .16em; text-transform: uppercase; color: var(--ks-text); text-align: center; padding: 2px 0 3px; background: oklch(7% 0.006 95 / 0.72); }
-  /* Raises: the donations the assigned direction took from the hand it beat,
-     each named for its donor. Patina, not kinpaku: a raise is provenance. */
-  .raises { display: flex; flex-direction: column; gap: 4px; margin: 2px 0; }
-  .raise { font-size: .78rem; color: var(--ks-text-muted); line-height: 1.45; border-left: 2px solid var(--ks-patina); padding-left: 8px; }
+  /* Raises: the improvements the dealt worlds donated to the assigned
+     direction, each named for its donor world. Patina, not kinpaku:
+     provenance, not a call to action. A quiet contained panel, never an
+     accent side-tab. */
+  .raises { display: flex; flex-direction: column; gap: 4px; margin: 2px 0; padding: 7px 10px 8px; background: oklch(70% 0.12 188 / 0.06); border: 1px solid oklch(70% 0.12 188 / 0.22); border-radius: 8px; }
+  .raise { font-size: .78rem; color: var(--ks-text-muted); line-height: 1.45; }
   .raise .fact-label { color: var(--ks-patina); }
-  /* Several raises cycle instead of stacking: one visible at a time, a
+  /* Several kept ideas cycle instead of stacking: one visible at a time, a
      counter for the rest, the whole block advances on click. */
-  .raises-cycle { cursor: pointer; border-radius: 6px; }
-  .raises-cycle .raise { display: none; border-left: none; padding-left: 0; }
+  .raises-cycle { cursor: pointer; transition: border-color .2s ease; }
+  .raises-cycle:hover { border-color: oklch(70% 0.12 188 / 0.45); }
+  .raises-cycle .raise { display: none; }
   .raises-cycle .raise.active { display: block; }
-  .raises-cycle { border-left: 2px solid var(--ks-patina); padding-left: 8px; }
   .raises-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .raises-head .fact-label { color: var(--ks-patina); }
   .raises-count { font-family: var(--ks-mono); font-size: .58rem; letter-spacing: .14em; color: var(--ks-text-faint); }
@@ -721,7 +743,10 @@ function page() {
   .card.canon button.choose:hover { border-color: var(--ks-text-muted); background: var(--ks-graphite-2); }
   button.choose { margin-top: auto; align-self: start; background: var(--ks-kinpaku); color: var(--ks-dark-ink); border: 0; font-family: var(--ks-font); font-size: 1rem; font-weight: 500; line-height: 1.35; padding: 10px 38px; border-radius: 6px; cursor: pointer; transition: background .15s; }
   button.choose:hover { background: var(--ks-kinpaku-pale); }
-  footer { width: 100%; max-width: 90rem; margin: 1.6rem auto 0; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+  /* The round's verbs stay reachable on short viewports: the footer is a
+     full-bleed bar stuck to the viewport bottom and the deck scrolls under
+     it. Same inset as the content column, so the controls stay aligned. */
+  footer { position: sticky; bottom: 0; z-index: 10; width: 100vw; margin: 1.2rem calc(50% - 50vw) 0; padding: .7rem var(--page-inset) calc(.7rem + env(safe-area-inset-bottom, 0px)); display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; background: oklch(7% 0.006 95 / 0.82); backdrop-filter: blur(10px); border-top: 1px solid var(--ks-rule); }
   #steer { flex: 1; min-width: 16rem; background: var(--ks-lacquer-raised); color: var(--ks-text); border: 1px solid var(--ks-rule); border-radius: 7px; padding: .6rem .85rem; font: inherit; }
   #steer:focus { outline: none; border-color: var(--ks-patina); }
   .reroll-btn { display: inline-flex; align-items: center; align-self: stretch; gap: 8px; padding: 0 16px; font-family: var(--ks-mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ks-kinpaku); background: transparent; border: 1px solid var(--ks-rule); border-radius: 6px; cursor: pointer; transition: border-color .2s ease, color .2s ease; }
@@ -822,7 +847,7 @@ function page() {
       if (count) count.textContent = (at + 1) + '/' + raises.length;
       // Screen readers hear the raise they just advanced to; the initial
       // render stays quiet so page load does not narrate every card.
-      if (announce && live) live.textContent = 'Raise ' + (at + 1) + ' of ' + raises.length + ': ' + (raises[at]?.textContent || '');
+      if (announce && live) live.textContent = 'Improvement ' + (at + 1) + ' of ' + raises.length + ': ' + (raises[at]?.textContent || '');
     };
     show(false);
     const advance = (e) => { e.stopPropagation(); at = (at + 1) % raises.length; show(true); };

@@ -404,7 +404,7 @@ export function renderConceptSeed({
   interaction and state, and a substantially different future surface. In an
   attended run, present the assigned direction fully committed and offer
   re-roll. You may add ONE card for your top-ranked grounded candidate when
-  it is not the assigned direction, kicker MY PICK, with an honest risk line
+  it is not the assigned direction, kicker IMPECCABLE’S PICK, with an honest risk line
   naming its familiarity; one pick card, never a ranked lineup, and the pick
   never takes the lead position. When the assignment IS your top candidate,
   there is no pick card. Re-roll yourself only
