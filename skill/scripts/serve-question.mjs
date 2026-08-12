@@ -907,8 +907,10 @@ function page() {
       const textOnlyFacts = m.querySelector('template.text-only-facts');
       const choose = body?.querySelector(':scope > button.choose');
       if (body && textOnlyFacts && choose) {
+        const plainDetail = body.querySelector(':scope > .detail:not(.more)');
         [...body.children].filter((el) => el.classList.contains('fact') || el.matches('.detail.more')).forEach((el) => el.remove());
         choose.before(textOnlyFacts.content.cloneNode(true));
+        if (plainDetail) choose.before(plainDetail);
       }
       card?.classList.remove('flipped');
       front?.classList.add('text-only');

@@ -344,6 +344,12 @@ describe('new-work-e2e: serve-question decision page', () => {
           comp: path.join(cwd, '.impeccable', 'mocks', 'decision', 'body-missing.webp'),
         },
         {
+          id: 'plain-body', label: 'Plain Body',
+          body: 'Plain body follows the promoted facts.',
+          viewport: 'A compact neighborhood notice fills the first viewport.',
+          comp: path.join(cwd, '.impeccable', 'mocks', 'decision', 'plain-body-missing.webp'),
+        },
+        {
           id: 'board-only', label: 'Board Fallback',
           board,
           comp: path.join(cwd, '.impeccable', 'mocks', 'decision', 'board-missing.webp'),
@@ -366,7 +372,7 @@ describe('new-work-e2e: serve-question decision page', () => {
       await page.waitForSelector('.card[data-id="assigned"] .media.comp-pending');
 
       await page.evaluate(() => window.__advanceDecisionClock(241000));
-      await page.waitForFunction(() => ['assigned', 'kept-only', 'body-only'].every((id) =>
+      await page.waitForFunction(() => ['assigned', 'kept-only', 'body-only', 'plain-body'].every((id) =>
         !document.querySelector(`.card[data-id="${id}"] .media`)), null, { timeout: 6000 });
       await page.waitForSelector('.card[data-id="board-only"] .media.stand-in');
 
@@ -375,6 +381,8 @@ describe('new-work-e2e: serve-question decision page', () => {
       const frontRead = await page.$eval('.card[data-id="assigned"] .face.front', (el) => el.textContent);
       const keptOnlyRead = await page.$eval('.card[data-id="kept-only"] .face.front', (el) => el.textContent);
       const bodyOnlyRead = await page.$eval('.card[data-id="body-only"] .face.front', (el) => el.textContent);
+      const plainBodyOrder = await page.$$eval('.card[data-id="plain-body"] .body > .fact, .card[data-id="plain-body"] .body > .detail',
+        (els) => els.map((el) => el.className));
       const boardFallbackLabel = await page.$eval('.card[data-id="board-only"] .stand-in-label', (el) => el.textContent);
       await context.close();
 
@@ -387,6 +395,8 @@ describe('new-work-e2e: serve-question decision page', () => {
       assert.match(keptOnlyRead, /Keep the hand-painted timetable/, 'kept-only content survives without a back face');
       assert.equal(bodyOnlyRead.match(/Body copy must remain present exactly once\./g)?.length, 1,
         'body prose already on a no-back front is not duplicated');
+      assert.deepEqual(plainBodyOrder, ['fact', 'detail'],
+        'thesis-less body prose follows the facts promoted from the missing comp');
       assert.equal(boardFallbackLabel, 'inspiration · comp pending', 'board-only art remains as the labeled fallback');
     } finally {
       await stopDaemon(cwd, key);
