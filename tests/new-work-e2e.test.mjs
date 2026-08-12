@@ -471,6 +471,46 @@ describe('new-work-e2e: serve-question decision page', () => {
     }
   });
 
+  it('(g) a wireframe card draws its schematic in the media slot and keeps its full read on the front', async () => {
+    const cwd = makeWorkspace();
+    const key = 'wire';
+    const payload = {
+      title: 'Choose the structure',
+      options: [
+        {
+          id: 'assigned', label: 'The Ledger Spine', kicker: 'THE ROLL',
+          viewport: 'An alphabetical spine with a sticky category rail.',
+          wireframe: { cols: 12, rows: 10, regions: [
+            { label: 'category rail', x: 0, y: 0, w: 3, h: 10, accent: true },
+            { label: 'ledger rows', x: 3, y: 0, w: 9, h: 10 },
+          ] },
+        },
+        { id: 'alt', label: 'The Switchboard', wireframe: { regions: [{ label: 'board', x: 0, y: 0, w: 12, h: 10 }] } },
+      ],
+      reroll: true,
+      steer: true,
+    };
+    await startDaemon(cwd, payload, key);
+    const state = JSON.parse(readFileSync(path.join(cwd, '.impeccable', 'questions', `${key}.state.json`), 'utf8'));
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(state.url, { waitUntil: 'load' });
+      const regions = await page.$$eval('.card[data-id="assigned"] .wire-region', (els) => els.length);
+      const accent = await page.$('.card[data-id="assigned"] .wire-region.accent');
+      const back = await page.$('.card[data-id="assigned"] .face.back');
+      const front = await page.$eval('.card[data-id="assigned"] .face.front', (el) => el.textContent);
+      await context.close();
+      assert.equal(regions, 2, 'both wireframe regions render');
+      assert.ok(accent, 'the accent region carries its class');
+      assert.equal(back, null, 'a wireframe card has no back; the full read stays on the front');
+      assert.match(front, /alphabetical spine/, 'the front keeps the full read beside the schematic');
+    } finally {
+      await stopDaemon(cwd, key);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('(f) a hero that never loads collapses to a labeled palette field, not a dark void', async () => {
     const cwd = makeWorkspace();
     const key = 'brokenart';
