@@ -333,8 +333,9 @@ describe('new-work-e2e: serve-question decision page', () => {
           id: 'challenger-deepsea', label: 'Deep Sea Survey', verdict: 'declined',
           case: 'Fuses poorly: buyers do not identify with abyssal instrumentation.',
           kept: 'Total environmental commitment.', hero,
-          // A stray sketch on a declined card must not re-promote it to a
-          // full media face; the renderer ignores it outright.
+          // A stray comp on a declined card must not re-promote it to a
+          // full media face; the renderer ignores it outright. Declared with
+          // the legacy `sketch` key, which doubles as alias coverage.
           sketch: '.impeccable/sketches/challenger-deepsea.webp',
         },
         { id: 'challenger-waxprint', label: 'Wax Print Market', verdict: 'competitive', hero: winnerHero },
