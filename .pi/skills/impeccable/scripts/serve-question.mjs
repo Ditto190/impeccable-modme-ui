@@ -185,7 +185,7 @@ if (hasFlag('schema')) {
     canonCard: { label: 'The category standard', thesis: 'What this category ships, executed impeccably.', palette: ['#ffffff', '#111827', '#2563eb'], materials: ['clean grid', 'product photography'], viewport: 'The arrangement a visitor expects, at full craft.', risk: 'Indistinguishable from the competition by design.', comp: '.impeccable/mocks/decision/canon.webp' },
     steer: true,
   }, null, 2));
-  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/comp accept URLs or local paths; comp slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the comp, never as the promise of the build. verdict routes rendering: "wins" and "competitive" challengers keep full cards, "declined" ones render demoted after them (narrow, quiet, art as a labeled thumb, "Adopt anyway"), with their kept line on the front; the page reorders declined cards to the end on its own. raised on the assigned card renders each donation as a named raise line. Salience parity: when the assigned card declares no comp (no image generation this round), catalog art on every card demotes to a labeled thumb, so what looks important is the verdict’s call, never rendering luck. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation. The pick card is a kicker convention, not a field: kicker "IMPECCABLE’S PICK" on your top-ranked grounded candidate, one at most, never in the lead slot. Every card gets the full anatomy, challengers, canon, and declined included: thesis, palette, materials, viewport, risk; the seed already hands you each challenger’s system rules, so a card with no palette chips is an authoring gap, not a data gap. Keep thesis and each fact to one short sentence: the card front shows thesis, identity, and a two-line risk, while first viewport and the case read on the card back behind the Details chip, so long facts cost the reader a flip, not the page its scanability. A card with no imagery at all has no back; its full read renders on the front, so a text-only round loses nothing. The comp slot carries the card’s full-fidelity direction comp (the legacy key "sketch" is accepted as an alias). Comp aspect follows the surface: portrait at device viewport for native or mobile-first surfaces, landscape otherwise; the page adapts its cards to either. reroll accepts true or { "registers": ["safer", "bolder"] }: the register buttons steer the next hand along the familiar-to-bold axis, the answer carries "register", and you re-run concept-seed with --register <value> for the next round; offer the registers on direction rounds, and never pre-select one. followup: true keeps the table open after a pick for a second round via --update (direction first, then the execution contract); send the next payload immediately, the page is waiting on it.');
+  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/comp accept URLs or local paths; comp slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the comp, never as the promise of the build. verdict routes rendering: "wins" and "competitive" challengers keep full cards, "declined" ones render demoted after them (narrow, quiet, art as a labeled thumb, "Adopt anyway"), with their kept line on the front; the page reorders declined cards to the end on its own. raised on the assigned card renders each donation as a named raise line. Salience parity: when the assigned card declares no comp (no image generation this round), catalog art on every card demotes to a labeled thumb, so what looks important is the verdict’s call, never rendering luck. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation. The pick card is a kicker convention, not a field: kicker "IMPECCABLE’S PICK" on your top-ranked grounded candidate, one at most, never in the lead slot. Every card gets the full anatomy, challengers, canon, and declined included: thesis, palette, materials, viewport, risk; the seed already hands you each challenger’s system rules, so a card with no palette chips is an authoring gap, not a data gap. Keep thesis and each fact to one short sentence: the card front shows thesis, identity, and a two-line risk, while first viewport and the case read on the card back behind the Details chip, so long facts cost the reader a flip, not the page its scanability. A card with no imagery at all has no back; its full read renders on the front, so a text-only round loses nothing. A card may instead declare "wireframe" ({"cols":12,"rows":10,"regions":[{"label":"nav rail","x":0,"y":0,"w":3,"h":10,"accent":true}]}): the page draws it as a layout schematic in the media slot; surface-scope rounds use it on code-led builds, it never counts toward salience, and the card keeps its full read on the front. The comp slot carries the card’s full-fidelity direction comp (the legacy key "sketch" is accepted as an alias). Comp aspect follows the surface: portrait at device viewport for native or mobile-first surfaces, landscape otherwise; the page adapts its cards to either. reroll accepts true or { "registers": ["safer", "bolder"] }: the register buttons steer the next hand along the familiar-to-bold axis, the answer carries "register", and you re-run concept-seed with --register <value> for the next round; offer the registers on direction rounds, and never pre-select one. followup: true keeps the table open after a pick for a second round via --update (direction first, then the execution contract); send the next payload immediately, the page is waiting on it.');
   process.exit(0);
 }
 
@@ -472,13 +472,36 @@ function page() {
     }
     return '';
   };
+  // Wireframe media: a code-led card's layout schematic, authored as grid
+  // regions in the payload and drawn by the page; boxes and labels, no art.
+  // It fills the media slot only when the card has no imagery, and it never
+  // counts toward salience or earns a card back: the full read stays on the
+  // front, exactly like a text-only card.
+  const wire = (option) => {
+    const frame = option.wireframe;
+    if (!frame || !Array.isArray(frame.regions) || !frame.regions.length || media(option) || demoted(option)) return '';
+    const cols = Number(frame.cols) > 0 ? Number(frame.cols) : 12;
+    const rows = Number(frame.rows) > 0 ? Number(frame.rows) : 10;
+    const pct = (n, total) => `${Math.max(0, Math.min(100, (n / total) * 100)).toFixed(2)}%`;
+    const cells = frame.regions.slice(0, 12).map((region) => {
+      const x = Number(region.x) || 0;
+      const y = Number(region.y) || 0;
+      const w = Math.max(Number(region.w) || 1, 0.5);
+      const h = Math.max(Number(region.h) || 1, 0.5);
+      return `<div class="wire-region${region.accent ? ' accent' : ''}" style="left:${pct(x, cols)};top:${pct(y, rows)};width:${pct(w, cols)};height:${pct(h, rows)}"><span>${esc(region.label || '')}</span></div>`;
+    }).join('');
+    return `<div class="media wire" role="img" aria-label="Layout schematic">
+            <div class="wire-field">${cells}</div>
+            <p class="media-label">layout</p>
+          </div>`;
+  };
   const chooseLabel = (option) => option.isCanon ? 'Play it straight' : demoted(option) ? 'Adopt anyway' : 'Build this';
   const cards = options.map((option, index) => `
     <article class="card${option.isCanon ? ' canon' : ''}${demoted(option) ? ' declined' : ''}" style="--fan:${index === 0 ? '0deg' : (index % 2 ? '1.4deg' : '-1.2deg')};--deal:${index * 90}ms" data-id="${esc(option.id)}">
       <div class="card-inner">
-        <div class="face front${index === 0 ? ' lead' : ''}${media(option) ? '' : ' text-only'}">
+        <div class="face front${index === 0 ? ' lead' : ''}${(media(option) || wire(option)) ? '' : ' text-only'}">
           ${option.kicker ? `<span class="kicker">${esc(option.kicker)}</span>` : demoted(option) ? '<span class="kicker declined-k">Declined</span>' : option.isCanon ? '<span class="kicker standing">The standing door</span>' : ''}
-          ${media(option)}
+          ${media(option) || wire(option)}
           <div class="body">
             ${option.lineage ? `<p class="tier">${esc(option.lineage)}</p>` : ''}
             <h2>${esc(option.label)}</h2>
@@ -710,6 +733,15 @@ function page() {
   .kicker.declined-k { background: transparent; border: 1px solid var(--ks-rule); color: var(--ks-text-faint); }
   .card.declined button.choose { background: transparent; color: var(--ks-text-muted); border: 1px solid var(--ks-rule); font-size: .85rem; padding: 8px 22px; }
   .card.declined button.choose:hover { background: var(--ks-graphite-2); border-color: var(--ks-text-muted); }
+  /* Wireframe media: the code-led schematic. Quiet boxes in the card's own
+     chrome; uniform salience across cards by construction, so it needs no
+     parity rules. */
+  .media.wire { background: var(--ks-lacquer); border-bottom: 1px solid var(--ks-rule); }
+  .wire-field { position: absolute; inset: 12px 12px 26px; }
+  .wire-region { position: absolute; border: 1px solid oklch(78% 0 0 / 0.26); border-radius: 3px; background: oklch(78% 0 0 / 0.05); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .wire-region span { font-family: var(--ks-mono); font-size: .55rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ks-text-faint); text-align: center; padding: 2px 4px; }
+  .wire-region.accent { border-color: oklch(84% 0.19 80.46 / 0.5); background: oklch(84% 0.19 80.46 / 0.06); }
+  .wire-region.accent span { color: var(--ks-kinpaku-rich); }
   /* Thumb-scale inspiration: present, labeled, zoomable, and incapable of
      outshouting a text-only assigned card. */
   .inspo { position: relative; flex: none; margin: 2px 0; width: 104px; height: 64px; border: 1px solid var(--ks-rule); border-radius: 6px; overflow: hidden; cursor: zoom-in; background: var(--ks-lacquer); }
