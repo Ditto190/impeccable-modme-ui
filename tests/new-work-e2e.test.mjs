@@ -371,7 +371,7 @@ describe('new-work-e2e: serve-question decision page', () => {
       assert.match(declinedFront, /Kept/, 'the declined front carries its kept line');
       assert.equal(declinedButton, 'Adopt anyway', 'the declined action is adopt, not build');
       assert.ok(competitiveMedia, 'a competitive challenger keeps its full media face');
-      assert.match(raise, /Raised by Deep Sea Survey/, 'the assigned card names its donor');
+      assert.match(raise, /From Deep Sea Survey/, 'the assigned card names its donor');
       assert.equal(answer.optionId, 'challenger-deepsea', 'adopting a declined card answers with its id');
     } finally {
       await stopDaemon(cwd, key);
