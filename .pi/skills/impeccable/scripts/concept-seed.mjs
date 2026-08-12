@@ -433,10 +433,12 @@ export function renderConceptSeed({
   present the three dealt structures as full cards of equal salience, the
   lead carrying kicker THE ROLL, with steer and re-roll, and let the user
   lock one in; the world is already settled, so this choice is composition.
-  Visualize every dealt card: with image generation available and no
-  standing code-led preference, declare a comp per card and generate after
+  Visualize every dealt card: with image generation available and a
+  comp-led default (.impeccable/settings.json buildPath; the page toggle
+  handles the exception), declare a comp per card and generate after
   serving, lead first; otherwise author each card's wireframe field (see
-  serve-question --schema) and the page draws the schematic. Locking a card
+  serve-question --schema) and the page draws the schematic. Carry the
+  recorded default in the payload as buildPath with toggle: true. Locking a card
   approves its comp: a surface round that put three visualized structures on
   the table replaces the three-option comp round in visualize.md. Re-roll
   yourself only when every dealt structure fails audience identification or
