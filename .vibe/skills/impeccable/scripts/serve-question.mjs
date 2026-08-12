@@ -160,6 +160,14 @@ function printAnswer(raw) {
     if (a.followup && a.optionId !== 'reroll') {
       console.log('FOLLOWUP OPEN: the table stays open and the page is showing a loading hand. Deliver the next round now with --update --key <key> --payload <file>, then collect it with --wait; never leave the page waiting on a round you have not sent.');
     }
+    if (a.buildPath === 'comp' || a.buildPath === 'code') {
+      const origin = a.buildPathFlipped
+        ? 'flipped on the page, so it binds this session only; never write it to settings'
+        : 'the round’s recorded default';
+      console.log(`BUILD PATH: ${a.buildPath} (${origin}). ${a.buildPath === 'comp'
+        ? 'Comp-led: the chosen card’s comp is law; generate it before building when it does not exist yet, and the finish review audits the build against it.'
+        : 'Code-led: no comp is owed; a comp that already rendered rides at the finish review as the critique reference, and the ambition lives in the direction contract.'}`);
+    }
   } catch { /* raw answer */ }
 }
 
@@ -169,6 +177,11 @@ const portArg = Number(arg('port', '0'));
 const QUESTION_DIR = path.join(process.cwd(), '.impeccable', 'questions');
 const stateFile = (key) => path.join(QUESTION_DIR, `${key}.state.json`);
 const answerFile = (key) => path.join(QUESTION_DIR, `${key}.answer.json`);
+// A code-to-comp flip mid-round: the page records it here and --wait
+// surfaces it as its own event, because the agent must start generating
+// comps while the round is still open. Comp-to-code needs no event; it is
+// free and rides the final ANSWER.
+const flipFile = (key) => path.join(QUESTION_DIR, `${key}.flip.json`);
 
 if (hasFlag('schema')) {
   console.log(JSON.stringify({
@@ -181,11 +194,12 @@ if (hasFlag('schema')) {
       { id: 'challenger-microfiche', label: 'Microfiche Reader', verdict: 'declined', lineage: 'library microfiche stations', palette: ['#101418', '#9fb4c0'], materials: ['film grain', 'backlit glass'], case: 'Fuses poorly: listeners do not identify with archival retrieval.', kept: 'Total environmental commitment.', hero: 'https://impeccable.style/worlds/cards/archives-microfiche-reader-hero.webp' },
     ],
     reroll: { registers: ['safer', 'bolder'] },
+    buildPath: { value: 'comp', toggle: true },
     canon: true,
     canonCard: { label: 'The category standard', thesis: 'What this category ships, executed impeccably.', palette: ['#ffffff', '#111827', '#2563eb'], materials: ['clean grid', 'product photography'], viewport: 'The arrangement a visitor expects, at full craft.', risk: 'Indistinguishable from the competition by design.', comp: '.impeccable/mocks/decision/canon.webp' },
     steer: true,
   }, null, 2));
-  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/comp accept URLs or local paths; comp slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the comp, never as the promise of the build. verdict routes rendering: "wins" and "competitive" challengers keep full cards, "declined" ones render demoted after them (narrow, quiet, art as a labeled thumb, "Adopt anyway"), with their kept line on the front; the page reorders declined cards to the end on its own. raised on the assigned card renders each donation as a named raise line. Salience parity: when the assigned card declares no comp (no image generation this round), catalog art on every card demotes to a labeled thumb, so what looks important is the verdict’s call, never rendering luck. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation. The pick card is a kicker convention, not a field: kicker "IMPECCABLE’S PICK" on your top-ranked grounded candidate, one at most, never in the lead slot. Every card gets the full anatomy, challengers, canon, and declined included: thesis, palette, materials, viewport, risk; the seed already hands you each challenger’s system rules, so a card with no palette chips is an authoring gap, not a data gap. Keep thesis and each fact to one short sentence: the card front shows thesis, identity, and a two-line risk, while first viewport and the case read on the card back behind the Details chip, so long facts cost the reader a flip, not the page its scanability. A card with no imagery at all has no back; its full read renders on the front, so a text-only round loses nothing. A card may instead declare "wireframe" ({"cols":12,"rows":10,"regions":[{"label":"nav rail","x":0,"y":0,"w":3,"h":10,"accent":true}]}): the page draws it as a layout schematic in the media slot; surface-scope rounds use it on code-led builds, it never counts toward salience, and the card keeps its full read on the front. The comp slot carries the card’s full-fidelity direction comp (the legacy key "sketch" is accepted as an alias). Comp aspect follows the surface: portrait at device viewport for native or mobile-first surfaces, landscape otherwise; the page adapts its cards to either. reroll accepts true or { "registers": ["safer", "bolder"] }: the register buttons steer the next hand along the familiar-to-bold axis, the answer carries "register", and you re-run concept-seed with --register <value> for the next round; offer the registers on direction rounds, and never pre-select one. followup: true keeps the table open after a pick for a second round via --update (direction first, then the execution contract); send the next payload immediately, the page is waiting on it.');
+  console.log('\nOption ids return verbatim in ANSWER; "reroll" and "canon" are reserved. hero/board/comp accept URLs or local paths; comp slots may point at files that do not exist yet (serve first, generate after; the page polls until they land, so never block serving on generation). hero on a challenger is the inspiration it draws from and renders picture-in-picture beside the comp, never as the promise of the build. verdict routes rendering: "wins" and "competitive" challengers keep full cards, "declined" ones render demoted after them (narrow, quiet, art as a labeled thumb, "Adopt anyway"), with their kept line on the front; the page reorders declined cards to the end on its own. raised on the assigned card renders each donation as a named raise line. Salience parity: when the assigned card declares no comp (no image generation this round), catalog art on every card demotes to a labeled thumb, so what looks important is the verdict’s call, never rendering luck. canonCard renders the standing exit as a subordinate card with the same anatomy; without it, canon stays a quiet footer action. Include canon only for visual-direction rounds; never present it as your own recommendation. The pick card is a kicker convention, not a field: kicker "IMPECCABLE’S PICK" on your top-ranked grounded candidate, one at most, never in the lead slot. Every card gets the full anatomy, challengers, canon, and declined included: thesis, palette, materials, viewport, risk; the seed already hands you each challenger’s system rules, so a card with no palette chips is an authoring gap, not a data gap. Keep thesis and each fact to one short sentence: the card front shows thesis, identity, and a two-line risk, while first viewport and the case read on the card back behind the Details chip, so long facts cost the reader a flip, not the page its scanability. A card with no imagery at all has no back; its full read renders on the front, so a text-only round loses nothing. A card may instead declare "wireframe" ({"cols":12,"rows":10,"regions":[{"label":"nav rail","x":0,"y":0,"w":3,"h":10,"accent":true}]}): the page draws it as a layout schematic in the media slot; surface-scope rounds use it on code-led builds, it never counts toward salience, and the card keeps its full read on the front. The comp slot carries the card’s full-fidelity direction comp (the legacy key "sketch" is accepted as an alias). Comp aspect follows the surface: portrait at device viewport for native or mobile-first surfaces, landscape otherwise; the page adapts its cards to either. reroll accepts true or { "registers": ["safer", "bolder"] }: the register buttons steer the next hand along the familiar-to-bold axis, the answer carries "register", and you re-run concept-seed with --register <value> for the next round; offer the registers on direction rounds, and never pre-select one. buildPath rides the payload as { "value": "comp"|"code", "toggle": true }: the value is the recorded default (.impeccable/settings.json, or a PRODUCT.md standing commitment as fallback) and the toggle renders a footer switch whose flip binds that session only; the ANSWER then carries buildPath plus buildPathFlipped. On a code-led round each card still declares its comp path as a flip reserve: wireframes render, and a flip to comp makes --wait return once with BUILD PATH FLIPPED so you generate the comps into the declared slots while the round stays open; a flip back to code is free, and a comp that already landed stays as the critique reference. Offer the toggle only when image generation exists. followup: true keeps the table open after a pick for a second round via --update; send the next payload immediately, the page is waiting on it.');
   process.exit(0);
 }
 
@@ -212,6 +226,13 @@ if (hasFlag('wait')) {
   let sawClose = false;
   while (Date.now() < deadline) {
     if (answered()) break;
+    // A build-path flip is its own event, not an answer: the round stays
+    // open, and the agent's job right now is comps, not code.
+    if (fs.existsSync(flipFile(key))) {
+      try { fs.rmSync(flipFile(key)); } catch { /* consumed elsewhere */ }
+      console.log('BUILD PATH FLIPPED: comp (for this session only; never write it to settings). The table is still open and the page shows shimmer where the images will land: generate each open card’s comp into its declared path now, lead first, then collect the answer with --wait again. A card whose comp already exists needs nothing.');
+      process.exit(0);
+    }
     if (!alive()) {
       console.log('serve-question: the question server is gone with no answer. This is a server failure, not a user decision: restart it with --start and the same payload, reopen the URL for the user, and wait again. Never proceed without their choice while their browser session is open.');
       process.exit(2);
@@ -307,6 +328,12 @@ else raw = fs.readFileSync(0, 'utf8');
 let payload;
 let options;
 let localImages = [];
+// Build path (comp-led vs code-led): the payload carries the recorded
+// default; the page's toggle updates the live value per session. The server
+// owns both so the final ANSWER states the path and whether it was flipped
+// even when the round never rendered a toggle.
+let buildPathDefault = null;
+let liveBuildPath = null;
 
 function loadRound(json) {
   const parsed = JSON.parse(json);
@@ -352,6 +379,10 @@ function loadRound(json) {
     options = [...options, { ...decorate(parsed.canonCard), id: 'canon', isCanon: true }];
   }
   options = [...options, ...declined];
+  buildPathDefault = (parsed.buildPath && (parsed.buildPath.value === 'comp' || parsed.buildPath.value === 'code'))
+    ? { value: parsed.buildPath.value, toggle: parsed.buildPath.toggle === true }
+    : null;
+  liveBuildPath = buildPathDefault?.value ?? null;
 }
 try { loadRound(raw); } catch (error) { console.error(`serve-question: ${error.message}`); process.exit(1); }
 const detachedKey = hasFlag('detached-serve') ? arg('key') : null;
@@ -368,6 +399,13 @@ function page() {
   // no generation luck can distort.
   const fact = (label, value, cls = '') => value ? `<p class="fact${cls ? ` ${cls}` : ''}"><span class="fact-label">${label}</span>${esc(value)}</p>` : '';
   const demoted = (option) => option.verdict === 'declined';
+  // The build path (comp-led vs code-led) is a workflow preference, not a
+  // design decision: the payload carries the recorded default and whether
+  // the page offers the toggle. On a code-led round a declared comp path is
+  // a flip reserve, not a face: wireframes render, and the slot only starts
+  // shimmering when the user flips to comp.
+  const buildPath = buildPathDefault;
+  const codeLed = buildPath?.value === 'code';
   // Salience parity: a card's imagery weight is capped by the assigned card's.
   // When the lead card has no media at all (no image generation this round,
   // and no catalog art of its own), full-bleed catalog art beside a text-only
@@ -377,7 +415,7 @@ function page() {
   const identityRound = !(options[0] && (options[0].compSrc || options[0].heroSrc || options[0].boardSrc));
   // A declined card never renders a full media face, comp included: even a
   // declared comp would buy back the salience the verdict took away.
-  const faceComp = (option) => demoted(option) ? null : option.compSrc;
+  const faceComp = (option) => (demoted(option) || codeLed) ? null : option.compSrc;
   const thumbOnly = (option) => !faceComp(option) && Boolean(option.heroSrc || option.boardSrc) && (demoted(option) || identityRound);
   const hasMedia = (option) => Boolean(faceComp(option) || ((option.heroSrc || option.boardSrc) && !thumbOnly(option)));
   // The back exists to keep long facts off a card whose front is an image;
@@ -497,7 +535,7 @@ function page() {
   };
   const chooseLabel = (option) => option.isCanon ? 'Play it straight' : demoted(option) ? 'Adopt anyway' : 'Build this';
   const cards = options.map((option, index) => `
-    <article class="card${option.isCanon ? ' canon' : ''}${demoted(option) ? ' declined' : ''}" style="--fan:${index === 0 ? '0deg' : (index % 2 ? '1.4deg' : '-1.2deg')};--deal:${index * 90}ms" data-id="${esc(option.id)}">
+    <article class="card${option.isCanon ? ' canon' : ''}${demoted(option) ? ' declined' : ''}" style="--fan:${index === 0 ? '0deg' : (index % 2 ? '1.4deg' : '-1.2deg')};--deal:${index * 90}ms" data-id="${esc(option.id)}"${codeLed && option.compSrc && !demoted(option) ? ` data-comp-slot="${esc(option.compSrc)}"` : ''}>
       <div class="card-inner">
         <div class="face front${index === 0 ? ' lead' : ''}${(media(option) || wire(option)) ? '' : ' text-only'}">
           ${option.kicker ? `<span class="kicker">${esc(option.kicker)}</span>` : demoted(option) ? '<span class="kicker declined-k">Declined</span>' : option.isCanon ? '<span class="kicker standing">The standing door</span>' : ''}
@@ -781,6 +819,17 @@ function page() {
   footer { position: sticky; bottom: 0; z-index: 10; width: 100vw; margin: 1.2rem calc(50% - 50vw) 0; padding: .7rem var(--page-inset) calc(.7rem + env(safe-area-inset-bottom, 0px)); display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; background: oklch(7% 0.006 95 / 0.82); backdrop-filter: blur(10px); border-top: 1px solid var(--ks-rule); }
   #steer { flex: 1; min-width: 16rem; background: var(--ks-lacquer-raised); color: var(--ks-text); border: 1px solid var(--ks-rule); border-radius: 7px; padding: .6rem .85rem; font: inherit; }
   #steer:focus { outline: none; border-color: var(--ks-patina); }
+  /* Build-path toggle: a workflow preference surfaced as a quiet segmented
+     control, its trade stated in one line that changes with the selection.
+     The default comes from the payload (settings); flipping binds this
+     session only, and the agent learns about a code-to-comp flip live. */
+  #build-path { display: flex; flex-direction: column; gap: 4px; }
+  .bp-switch { display: inline-flex; border: 1px solid var(--ks-rule); border-radius: 6px; overflow: hidden; align-self: flex-start; }
+  .bp-opt { font-family: var(--ks-mono); font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; padding: 7px 12px; background: transparent; border: 0; color: var(--ks-text-faint); cursor: pointer; transition: color .2s ease, background-color .2s ease; }
+  .bp-opt + .bp-opt { border-left: 1px solid var(--ks-rule); }
+  .bp-opt.active { color: var(--ks-dark-ink); background: var(--ks-kinpaku-rich); }
+  .bp-opt:not(.active):hover { color: var(--ks-text); }
+  .bp-note { font-family: var(--ks-mono); font-size: .58rem; letter-spacing: .04em; color: var(--ks-text-faint); max-width: 21rem; line-height: 1.5; }
   .reroll-btn { display: inline-flex; align-items: center; align-self: stretch; gap: 8px; padding: 0 16px; font-family: var(--ks-mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ks-kinpaku); background: transparent; border: 1px solid var(--ks-rule); border-radius: 6px; cursor: pointer; transition: border-color .2s ease, color .2s ease; }
   .reroll-btn:hover { color: var(--ks-kinpaku-pale); border-color: var(--ks-kinpaku-deep); }
   .reroll-btn svg { width: 15px; height: 15px; }
@@ -833,6 +882,13 @@ function page() {
 </main>
 <footer>
   ${payload.steer ? '<input id="steer" placeholder="Optional steer: what should be different or kept?">' : ''}
+  ${buildPath?.toggle ? `<div id="build-path" data-default="${buildPath.value}">
+    <div class="bp-switch" role="radiogroup" aria-label="Build path">
+      <button type="button" class="bp-opt" data-bp="comp" role="radio" aria-checked="false">Comp first</button>
+      <button type="button" class="bp-opt" data-bp="code" role="radio" aria-checked="false">Code first</button>
+    </div>
+    <p class="bp-note" data-bp-note></p>
+  </div>` : ''}
   ${(() => {
     if (!payload.reroll) return '';
     const die = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8.4" cy="8.4" r="1.5" fill="currentColor"/><circle cx="15.6" cy="8.4" r="1.5" fill="currentColor"/><circle cx="8.4" cy="15.6" r="1.5" fill="currentColor"/><circle cx="15.6" cy="15.6" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>';
@@ -928,7 +984,7 @@ function page() {
   // stand-in is labeled as such, and polling continues so the real comp
   // still swaps in whenever it arrives. Progress anywhere resets patience.
   const landTracker = { last: Date.now() };
-  document.querySelectorAll('.media.comp-pending').forEach(m => {
+  const pollComp = (m) => {
     const url = m.dataset.comp;
     const img = m.querySelector('img.comp');
     const note = m.querySelector('.comp-note');
@@ -949,6 +1005,8 @@ function page() {
       m.appendChild(label);
     };
     const tryLoad = () => {
+      // A slot the user flipped back out of leaves the DOM; let its loop die.
+      if (!m.isConnected) { clearInterval(tick); return; }
       const probe = new Image();
       probe.onload = () => { landTracker.last = Date.now(); img.src = probe.src; img.hidden = false; settle(); };
       probe.onerror = () => {
@@ -959,7 +1017,65 @@ function page() {
       probe.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
     };
     tryLoad();
-  });
+  };
+  document.querySelectorAll('.media.comp-pending').forEach(pollComp);
+
+  // Build-path toggle: the default is the round's recorded preference and
+  // flipping binds this session only. Flipping code to comp swaps every
+  // reserve slot (data-comp-slot) to its shimmer and tells the server, so
+  // the waiting agent starts generating; flipping back is free: pending
+  // slots return to their wireframes, a comp that already landed stays.
+  const bp = document.getElementById('build-path');
+  if (bp) {
+    const notes = {
+      comp: 'An image sets the bar first and the build must match it. Bolder composition; comps render before code.',
+      code: 'Code builds directly; the ambition is written into the contract and audited at the finish. Leaner, faster.',
+    };
+    const noteEl = bp.querySelector('[data-bp-note]');
+    let current = bp.dataset.default;
+    const set = (value) => {
+      current = value;
+      bp.querySelectorAll('.bp-opt').forEach(b => {
+        const on = b.dataset.bp === value;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+      });
+      if (noteEl) noteEl.textContent = notes[value];
+    };
+    set(current);
+    const enterComp = () => {
+      document.querySelectorAll('.card[data-comp-slot]').forEach(card => {
+        const front = card.querySelector('.face.front');
+        if (!front || front.querySelector('.media.comp-pending') || front.querySelector('.media img.comp:not([hidden])')) return;
+        const m = document.createElement('div');
+        m.className = 'media comp-pending';
+        m.dataset.comp = card.dataset.compSlot;
+        m.innerHTML = '<div class="shimmer"><span class="comp-note">rendering&hellip;</span></div><img class="comp" alt="" hidden>';
+        const wireEl = front.querySelector('.media.wire');
+        if (wireEl) { wireEl.hidden = true; front.insertBefore(m, wireEl); }
+        else { front.classList.remove('text-only'); front.insertBefore(m, front.querySelector('.body')); }
+        pollComp(m);
+      });
+    };
+    const exitComp = () => {
+      document.querySelectorAll('.card[data-comp-slot]').forEach(card => {
+        const front = card.querySelector('.face.front');
+        const pending = front?.querySelector('.media.comp-pending');
+        if (!pending) return; // landed comps stay; they exist either way
+        pending.remove();
+        const wireEl = front.querySelector('.media.wire');
+        if (wireEl) wireEl.hidden = false;
+        else if (!front.querySelector('.media')) front.classList.add('text-only');
+      });
+    };
+    bp.querySelectorAll('.bp-opt').forEach(b => b.addEventListener('click', () => {
+      const value = b.dataset.bp;
+      if (value === current) return;
+      set(value);
+      fetch('/build-path', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) });
+      if (value === 'comp') enterComp(); else exitComp();
+    }));
+  }
 
   // A declared image that never loads (missing catalog asset, offline shell)
   // must not sit as a dark void: the slot collapses to the card's own
@@ -1166,6 +1282,26 @@ const server = http.createServer((req, res) => {
     fs.createReadStream(abs).pipe(res);
     return;
   }
+  if (req.method === 'POST' && req.url === '/build-path') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+      let value = null;
+      try { value = JSON.parse(body).value; } catch { /* ignore */ }
+      if (value !== 'comp' && value !== 'code') return;
+      const wasComp = liveBuildPath === 'comp';
+      liveBuildPath = value;
+      // Only a flip TO comp needs the agent mid-round: comps must start
+      // rendering into the declared slots. The reverse is free.
+      if (detachedKey && value === 'comp' && !wasComp) {
+        fs.mkdirSync(QUESTION_DIR, { recursive: true });
+        fs.writeFileSync(flipFile(detachedKey), JSON.stringify({ buildPath: 'comp' }) + '\n');
+      }
+    });
+    return;
+  }
   if (req.method === 'POST' && req.url === '/answer') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
@@ -1187,6 +1323,7 @@ const server = http.createServer((req, res) => {
         ...(followupOpen ? { followup: true } : {}),
         ...(chosen?.hero || chosen?.board ? { hero: chosen.hero ?? null, board: chosen.board ?? null } : {}),
         ...((chosen?.comp ?? chosen?.sketch) ? { comp: chosen.comp ?? chosen.sketch } : {}),
+        ...(liveBuildPath && !isReroll ? { buildPath: liveBuildPath, buildPathFlipped: liveBuildPath !== (buildPathDefault?.value ?? null) } : {}),
       });
       if (detachedKey) {
         fs.mkdirSync(QUESTION_DIR, { recursive: true });
