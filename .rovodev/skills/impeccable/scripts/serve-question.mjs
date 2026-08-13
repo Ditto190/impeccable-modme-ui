@@ -602,6 +602,7 @@ function page() {
   #lightbox.open { opacity: 1; }
   #lightbox img { max-width: 94vw; max-height: 94vh; border: 1px solid var(--ks-rule); border-radius: 8px; box-shadow: 0 30px 80px oklch(0% 0 0 / 0.6); }
   header { width: 100%; max-width: 90rem; margin: 0 auto; }
+  .header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.2rem; }
   .brand { display: flex; align-items: center; gap: .55rem; color: var(--ks-kinpaku); }
   .brand svg { width: 22px; height: 22px; }
   .wordmark { font-family: var(--ks-font-display); font-weight: 400; font-size: 1.125rem; letter-spacing: 0.15em; text-transform: uppercase; line-height: 1; color: var(--ks-kinpaku); }
@@ -820,13 +821,14 @@ function page() {
   #steer { flex: 1; min-width: 16rem; background: var(--ks-lacquer-raised); color: var(--ks-text); border: 1px solid var(--ks-rule); border-radius: 7px; padding: .6rem .85rem; font: inherit; }
   #steer:focus { outline: none; border-color: var(--ks-patina); }
   /* Build-path toggle: a workflow preference surfaced as a quiet segmented
-     control in the header, top-left under the brand, its trade stated in
+     control on the header row, right-aligned opposite the brand, its trade stated in
      one line that changes with the selection. The default comes from the
      payload (settings); flipping binds this session only, and the agent
      learns about a code-to-comp flip live. Rendered only when the payload
      offers it, which the agent does only when image generation exists. */
-  #build-path { display: flex; flex-direction: column; gap: 4px; margin: 1rem 0 0.2rem; }
-  .bp-switch { display: inline-flex; border: 1px solid var(--ks-rule); border-radius: 6px; overflow: hidden; align-self: flex-start; }
+  #build-path { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; flex: none; }
+  .bp-switch { display: inline-flex; border: 1px solid var(--ks-rule); border-radius: 6px; overflow: hidden; }
+  .bp-note { text-align: right; }
   .bp-opt { font-family: var(--ks-mono); font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; padding: 7px 12px; background: transparent; border: 0; color: var(--ks-text-faint); cursor: pointer; transition: color .2s ease, background-color .2s ease; }
   .bp-opt + .bp-opt { border-left: 1px solid var(--ks-rule); }
   .bp-opt.active { color: var(--ks-dark-ink); background: var(--ks-kinpaku-rich); }
@@ -884,17 +886,19 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
   </div>
 </div>` : ''}
 <header>
-  <div class="brand">
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 2.5 L13.5 2.5 L5.5 21.5 L5 21.5 Q2.5 21.5 2.5 19 L2.5 5 Q2.5 2.5 5 2.5 Z"/><path d="M16.5 2.5 L19 2.5 Q21.5 2.5 21.5 5 L21.5 19 Q21.5 21.5 19 21.5 L8.5 21.5 Z"/></svg>
-    <span class="wordmark">Impeccable</span>
-  </div>
-  ${buildPath?.toggle ? `<div id="build-path" data-default="${buildPath.value}">
-    <div class="bp-switch" role="radiogroup" aria-label="Build path">
-      <button type="button" class="bp-opt" data-bp="comp" role="radio" aria-checked="false">Comp first</button>
-      <button type="button" class="bp-opt" data-bp="code" role="radio" aria-checked="false">Code first</button>
+  <div class="header-row">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 2.5 L13.5 2.5 L5.5 21.5 L5 21.5 Q2.5 21.5 2.5 19 L2.5 5 Q2.5 2.5 5 2.5 Z"/><path d="M16.5 2.5 L19 2.5 Q21.5 2.5 21.5 5 L21.5 19 Q21.5 21.5 19 21.5 L8.5 21.5 Z"/></svg>
+      <span class="wordmark">Impeccable</span>
     </div>
-    <p class="bp-note" data-bp-note></p>
-  </div>` : ''}
+    ${buildPath?.toggle ? `<div id="build-path" data-default="${buildPath.value}">
+      <div class="bp-switch" role="radiogroup" aria-label="Build path">
+        <button type="button" class="bp-opt" data-bp="comp" role="radio" aria-checked="false">Comp first</button>
+        <button type="button" class="bp-opt" data-bp="code" role="radio" aria-checked="false">Code first</button>
+      </div>
+      <p class="bp-note" data-bp-note></p>
+    </div>` : ''}
+  </div>
 </header>
 <main>
   <div class="stage">
