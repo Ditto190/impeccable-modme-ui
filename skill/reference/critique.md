@@ -12,6 +12,8 @@ Resolve one stable target, run two independent assessments, synthesize a design 
 - Viewable targets require browser inspection when available.
 - Any local server started only for critique visualization must run in the background, have a recorded stop method, and be stopped before final reporting unless the user asks to keep it.
 - Do not claim a user-visible overlay exists unless script injection succeeded and the detector ran in the page.
+- The question is the LAST thing in the response. Write the entire report out first, then ask; nothing follows the question. Prose emitted after a structured question is withheld until the user answers it, so a report written after the question reads as if the critique never ran.
+- A run that ends with neither the targeted questions nor a literal `Questions skipped: <reason>` line is an incomplete run. The report is not the finish; the close is.
 
 ### Setup
 
@@ -210,6 +212,8 @@ Skip this step if the Setup slug was null (vague or root-level target).
 
 1. **Write the body to a temp file** so you can pipe it to the helper. Use the full critique report (heuristic table, design-specificity verdict, priority issues, persona red flags, minor observations, and questions), but stop before the "Ask the User" / "Recommended Actions" sections that come later.
 
+   This file is an archive copy, not delivery. The same report must still be written out in the chat response. Authoring it into a heredoc, storing it, and moving on produces a run with nothing the user can see: the snapshot is for later commands, the chat response is for the person who asked.
+
    <codex>
    Codex: exclude Run Notes from the temp body file; Run Notes are final-chat only because persistence, trend read, and temp cleanup happen after the snapshot write.
    </codex>
@@ -221,13 +225,15 @@ Skip this step if the Setup slug was null (vague or root-level target).
    ```
    `max_score` is the applicable maximum from the heuristic table (40 when every heuristic applied), so a later run can tell a renormalized total from a full one. The helper prints the absolute path it wrote.
 
-3. **Read the trend** for context:
+3. **Delete the temp body file** after the write attempt completes, whether the write succeeded or failed. If deletion fails, mention `temp-file cleanup failed: <reason>` briefly in the final output, but do not block the critique.
+
+4. **Read the trend** for context:
    ```bash
    node {{scripts_path}}/critique-storage.mjs trend "<resolved target>" 5
    ```
    This returns a JSON array of the last 5 frontmatter entries (including the one you just wrote).
 
-4. **Append a single line to the user-visible output**, after the report and before the questions:
+5. **Append a single line to the user-visible output**, after the report and before the questions:
 
    > **Trend for `<slug>` (last 5 runs): 24 → 28 → 32 → 29 → 32 (out of 40)**
    > Wrote `.impeccable/critique/<filename>`.
@@ -236,15 +242,13 @@ Skip this step if the Setup slug was null (vague or root-level target).
 
    If this is the first run for the slug, the trend is just one score; say so: "First run for this target, no trend yet."
 
-5. **Send the report and trend line to the user, then delete the temp body file**, whether the write succeeded or failed. The order is deliberate: the deletion is the last thing in the message that carries the report, so the questions below open a fresh one. Do not hold the report back to bundle it with the questions. If deletion fails, mention `temp-file cleanup failed: <reason>` briefly in the final output, but do not block the critique.
-
 This is fire-and-forget. Do not show the user the helper's JSON output; only the human-readable trend line and the written path. Failures here should not block the rest of the flow; print the error and move on.
 
 ### Ask the User
 
 **After presenting findings**, use targeted questions based on what was actually found. {{ask_instruction}} These answers will shape the action plan.
 
-The report must already be sent before you ask. A structured question blocks the message it rides in until the user answers, so a report bundled with the questions stays invisible until they have answered, and the critique reads as if it never ran. The temp-file cleanup that closed the persistence step ends the report's message; ask once it returns, and put nothing but the questions in that turn.
+Ask in the same message that carries the report, with the report written out first and the question last. Do not split the two across turns: a turn that ends on the report is a turn that ends, and the questions never arrive. Order within the message is what matters, because prose emitted after a structured question is withheld until the user answers.
 
 Ask questions along these lines (adapt to the specific findings; do NOT ask generic questions):
 
@@ -260,11 +264,9 @@ Ask questions along these lines (adapt to the specific findings; do NOT ask gene
 - Every question must reference specific findings from the report. Never ask generic "who is your audience?" questions.
 - Keep it to 2-4 questions maximum. Respect the user's time.
 - Offer concrete options, not open-ended prompts.
-- If findings are straightforward (e.g., only 1-2 clear issues), skip questions and go directly to Recommended Actions.
+- Skipping is allowed only when the report listed **fewer than 3 Priority Issues**. Count them; do not judge the findings "straightforward" by feel. At 3 or more, the questions are required.
 
-<codex>
-Codex final-question gate: The user-visible response must either include the targeted questions or explicitly say `Questions skipped: <reason>` because the findings were straightforward. Each question must include 2-3 concrete answer options tied to the actual critique findings. Do not end with only open-ended questions.
-</codex>
+**Final-question gate.** The user-visible response must either include the targeted questions or carry the literal line `Questions skipped: <reason>` naming the count that permitted the skip. Each question must include 2-3 concrete answer options tied to the actual critique findings. Do not end with only open-ended questions, and do not end with neither: stopping after the report, having asked nothing and printed no skip line, is the most common way this command fails.
 
 ### Recommended Actions
 

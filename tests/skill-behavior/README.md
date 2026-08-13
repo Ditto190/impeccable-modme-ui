@@ -59,9 +59,18 @@ The trace is the source of truth, not the model's free-form reply.
 | 15 | same iOS fixture; prompt is `/impeccable audit` | agent loads `reference/audit.native.md` (the Commands-table native variant, routed instead of `audit.md`) |
 
 The workflow-contract file adds end-to-end assertions for attended fresh init,
-an initialized natural build request, replacement-world redesign, and scope-preserving bolder
-refinement. It checks question order and context/artifact writes rather than
-only reference-file loading.
+an initialized natural build request, replacement-world redesign, scope-preserving bolder
+refinement, and critique's closing question. It checks question order and
+context/artifact writes rather than only reference-file loading.
+
+`critique closes with the question or an explicit skip line` is a regression
+guard, not a routing check. A critique that prints its report and then stops,
+asking nothing and printing no `Questions skipped: <reason>` line, is an
+incomplete run: the close is half the deliverable, and `polish` downstream has
+no priorities to inherit without it. The fixture page is deliberately broken
+enough to put the report past the three-Priority-Issue threshold, so the run
+cannot reach the skip branch on merit. The assertion is deliberately loose about
+*how* the run closes, because either close is valid; what it forbids is neither.
 
 ## Workflow-contract baseline (2026-08-13, current lineup)
 
@@ -77,6 +86,7 @@ failure beyond these.
 | initialized natural build | not measured | not measured | not measured | not measured |
 | redesign replaces DESIGN | flaky | not measured | not measured | not measured |
 | bolder refinement | not measured | pass | pass | **fail** |
+| critique closes | pass (2 of 2) | **fail (1 of 6)** | pass (2 of 2) | flaky (1 of 2) |
 
 `not measured` means exactly that: the cell was never run in isolation on this
 lineup. Only the two failing scenarios were scoped per model, because the
@@ -90,6 +100,32 @@ editing anything: empty `writePaths`, no `ask_user_question` call, well short of
 the 16-step cap. Confirmed identical on HEAD with `bolder.md` reverted, so it is
 not a skill-text problem. Same shape as the gpt-5.4-mini scenario 6/7 failures
 below: the model consumes the references and then declines to act.
+
+**`critique closes`, gpt-5.6-luna.** Five runs while tuning the instruction text
+produced one pass. It fails in three distinct ways, which is why the scenario
+asserts on emission order rather than only on the presence of a question:
+
+1. *No close.* Report lands, no question, no skip line. The failure this
+   scenario was written for.
+2. *Question before report.* The question is emitted first and the report after
+   it, so the report is withheld until the user answers. Observed directly, and
+   the reason the invariant is stated as a position rule ("the question is the
+   LAST thing in the response") rather than as prose order.
+3. *Report never spoken.* The full report is authored into the persistence
+   heredoc, archived, and never written to chat. The snapshot is perfect and the
+   user sees nothing. This is why persistence step 1 says the temp file is an
+   archive copy, not delivery.
+
+claude-sonnet-5 and gemini-3.5-flash pass consistently. deepseek-v4-flash has
+hit mode 3 once in two runs, so it is flaky here, not clean. Strengthening the
+instruction text moved luna from consistently failing to occasionally passing,
+and further prose tuning stopped paying.
+
+Read the counts in the table as what they are: small samples on a nondeterministic
+system, gathered while the instruction text was being changed between runs. They
+say the close is reliable on the two strongest models and unreliable on the two
+cheapest ones. They do not support a finer claim than that. Re-measure rather
+than assuming when the lineup changes.
 
 **`redesign replaces DESIGN`, flaky.** It has failed on two different assertions
 across runs (`designWrite > question` and `implementation > designWrite`), and on
