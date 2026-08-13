@@ -483,8 +483,9 @@ function page() {
     option.body && option.thesis ? `<p class="detail more">${esc(option.body)}</p>` : '',
   ].filter(Boolean).join('\n            ');
   const media = (option) => {
-    const inspiration = option.heroSrc ? `<figure class="pip" title="Inspiration: the world this direction draws from. Your page will not look like this image.">
-              <img src="${esc(option.heroSrc)}" alt="">
+    const inspirationSrc = option.heroSrc || option.boardSrc;
+    const inspiration = inspirationSrc ? `<figure class="pip" title="Inspiration: the world this direction draws from. Your page will not look like this image.">
+              <img src="${esc(inspirationSrc)}" alt="">
               <figcaption>inspiration</figcaption>
             </figure>` : '';
     const details = hasBack(option) ? flipChip('Details') : '';
@@ -492,10 +493,12 @@ function page() {
     // and a declined card's comp slot is ignored outright.
     if (thumbOnly(option)) return '';
     if (faceComp(option)) {
+      const textOnlyFacts = backFacts(option);
       return `<div class="media comp-pending" data-comp="${esc(option.compSrc)}">
             <div class="shimmer"><span class="comp-note">rendering&hellip;</span></div>
             <img class="comp" alt="" hidden>
             ${inspiration}
+            <template class="text-only-facts">${textOnlyFacts}</template>
             <div class="chips">${expandChip}${details}</div>
           </div>`;
     }
@@ -1018,17 +1021,42 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
     // A live elapsed count is the difference between "working" and "frozen".
     const tick = setInterval(() => { if (note) note.textContent = 'rendering · ' + Math.round((Date.now() - started) / 1000) + 's'; }, 1000);
     const settle = () => { clearInterval(tick); m.classList.remove('comp-pending', 'stand-in'); m.querySelector('.shimmer')?.remove(); m.querySelector('.stand-in-label')?.remove(); };
-    const standIn = () => {
+    const fallback = () => {
       const pip = m.querySelector('.pip img');
-      if (!pip || m.classList.contains('stand-in')) return;
-      img.src = pip.getAttribute('src'); img.hidden = false;
-      m.classList.add('stand-in');
-      m.querySelector('.shimmer')?.remove();
-      clearInterval(tick);
-      const label = document.createElement('p');
-      label.className = 'stand-in-label';
-      label.textContent = 'inspiration · comp pending';
-      m.appendChild(label);
+      if (pip) {
+        if (m.classList.contains('stand-in')) return false;
+        img.src = pip.getAttribute('src'); img.hidden = false;
+        m.classList.add('stand-in');
+        m.querySelector('.shimmer')?.remove();
+        clearInterval(tick);
+        const label = document.createElement('p');
+        label.className = 'stand-in-label';
+        label.textContent = 'inspiration · comp pending';
+        m.appendChild(label);
+        return false;
+      }
+
+      // No comp and no inspiration is the text-only card the payload would
+      // have rendered without a comp declaration. Bring the complete read
+      // forward before removing the now-unreachable back face.
+      const card = m.closest('.card');
+      const front = card?.querySelector('.face.front');
+      const body = front?.querySelector('.body');
+      const back = card?.querySelector('.face.back');
+      const textOnlyFacts = m.querySelector('template.text-only-facts');
+      const choose = body?.querySelector(':scope > button.choose');
+      if (body && textOnlyFacts && choose) {
+        const plainDetail = body.querySelector(':scope > .detail:not(.more)');
+        [...body.children].filter((el) => el.classList.contains('fact') || el.matches('.detail.more')).forEach((el) => el.remove());
+        choose.before(textOnlyFacts.content.cloneNode(true));
+        if (plainDetail) choose.before(plainDetail);
+      }
+      card?.classList.remove('flipped');
+      front?.classList.add('text-only');
+      back?.remove();
+      settle();
+      m.remove();
+      return true;
     };
     const tryLoad = () => {
       // A slot the user flipped back out of leaves the DOM; let its loop die.
@@ -1037,7 +1065,7 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
       probe.onload = () => { landTracker.last = Date.now(); img.src = probe.src; img.hidden = false; settle(); };
       probe.onerror = () => {
         const quiet = Date.now() - landTracker.last > 240000;
-        if (Date.now() - started > 240000 && quiet) standIn();
+        if (Date.now() - started > 240000 && quiet && fallback()) return;
         setTimeout(tryLoad, m.classList.contains('stand-in') ? 5000 : 2500);
       };
       probe.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
