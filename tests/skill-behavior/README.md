@@ -15,6 +15,7 @@ contract.
 bun run test:skill-behavior
 IMPECCABLE_SKILL_BEHAVIOR_VERBOSE=1 bun run test:skill-behavior   # dump per-scenario traces
 IMPECCABLE_SKILL_BEHAVIOR_MODELS=claude-sonnet-5 bun run test:skill-behavior   # scope to one model
+IMPECCABLE_SKILL_BEHAVIOR_EFFORT=xhigh bun run test:skill-behavior             # OpenAI reasoning effort (default: high)
 ```
 
 Requires `.env` at repo root with at least one of `ANTHROPIC_API_KEY`,
@@ -74,25 +75,40 @@ cannot reach the skip branch on merit. The assertion is deliberately loose about
 
 ## Workflow-contract baseline (2026-08-13, current lineup)
 
-Measured on `claude-sonnet-5`, `gpt-5.6-luna`, `gemini-3.5-flash`, and
-`deepseek-v4-flash` while checking whether an `{{ask_instruction}}` rewrite had
-regressed anything. Two of the four workflow-contract scenarios fail for reasons
-that predate that change. Treat both as the known floor; a regression is a
-failure beyond these.
+Measured while checking whether an `{{ask_instruction}}` rewrite had regressed
+anything.
 
-| Scenario | claude-sonnet-5 | gpt-5.6-luna | gemini-3.5-flash | deepseek-v4-flash |
+**The last two columns are no longer in the default lineup.** `gpt-5.6-luna` and
+`deepseek-v4-flash` were dropped in 2026-08 for being below the frontier tier:
+they fail scenarios by stopping mid-run or archiving a report without stating
+it, which is model-floor behavior rather than a skill-text defect. Their columns
+stay here because they are the record of what a weaker model does with this text,
+and that is the useful part. Reproduce with
+`IMPECCABLE_SKILL_BEHAVIOR_MODELS=gpt-5.6-luna,deepseek-v4-flash`.
+
+Against the current default lineup, two cells are the known floor:
+`redesign replaces DESIGN` is flaky, and `critique closes` is flaky on
+gemini-3.6-flash. A regression is a failure beyond those two.
+
+| Scenario | claude-sonnet-5 | gpt-5.6-terra | gemini-3.6-flash | luna / deepseek (dropped) |
 |---|---|---|---|---|
 | attended fresh init | not measured | not measured | not measured | not measured |
 | initialized natural build | not measured | not measured | not measured | not measured |
 | redesign replaces DESIGN | flaky | not measured | not measured | not measured |
-| bolder refinement | not measured | pass | pass | **fail** |
-| critique closes | pass (2 of 2) | **fail (1 of 6)** | pass (2 of 2) | flaky (1 of 2) |
+| bolder refinement | not measured | not measured | pass (on 3.5) | luna pass, deepseek **fail** |
+| critique closes | pass (2 of 2) | pass (2 of 2) | **flaky (1 of 3)** | luna **fail (1 of 6)**, deepseek flaky |
+
+Gemini cells marked `on 3.5` were measured on the superseded `gemini-3.5-flash`
+and have not been re-run on 3.6. That distinction is not pedantic. `critique
+closes` passed twice on 3.5-flash, then failed three times in a row on 3.6-flash
+against identical instruction text, and only passed once the report delivery step
+was made explicit. A version bump inside one family changed the outcome, so treat
+cross-version carryover as unmeasured rather than inherited.
 
 `not measured` means exactly that: the cell was never run in isolation on this
-lineup. Only the two failing scenarios were scoped per model, because the
-investigation was about whether a specific edit had regressed them. The rows are
-worth keeping anyway, since a scenario absent from the table is easy to mistake
-for a scenario that passed.
+lineup. Only the scenarios under investigation were scoped per model. The rows
+are worth keeping anyway, since a scenario absent from the table is easy to
+mistake for a scenario that passed.
 
 **`bolder refinement`, deepseek-v4-flash.** The model runs `context.mjs`, reads
 `bolder.md`, `craft-floor.md`, and `current.html`, then ends its turn without
@@ -101,31 +117,44 @@ the 16-step cap. Confirmed identical on HEAD with `bolder.md` reverted, so it is
 not a skill-text problem. Same shape as the gpt-5.4-mini scenario 6/7 failures
 below: the model consumes the references and then declines to act.
 
-**`critique closes`, gpt-5.6-luna.** Five runs while tuning the instruction text
-produced one pass. It fails in three distinct ways, which is why the scenario
-asserts on emission order rather than only on the presence of a question:
+**`critique closes`: the three ways a critique fails to land.** The scenario
+asserts emission order, not just the presence of a question, because the command
+fails in three distinct ways and only one of them was the reported bug:
 
-1. *No close.* Report lands, no question, no skip line. The failure this
-   scenario was written for.
+1. *No close.* Report lands, no question, no skip line. `polish` downstream
+   inherits nothing.
 2. *Question before report.* The question is emitted first and the report after
-   it, so the report is withheld until the user answers. Observed directly, and
-   the reason the invariant is stated as a position rule ("the question is the
-   LAST thing in the response") rather than as prose order.
-3. *Report never spoken.* The full report is authored into the persistence
-   heredoc, archived, and never written to chat. The snapshot is perfect and the
-   user sees nothing. This is why persistence step 1 says the temp file is an
-   archive copy, not delivery.
+   it, so the report is withheld until the user answers. Observed directly on
+   gpt-5.6-luna, and the reason the invariant is a position rule ("the question
+   is the LAST thing in the response") rather than a statement about prose order.
+3. *Report never spoken.* The report is authored straight into the persistence
+   heredoc, archived, and never written to chat. A perfect snapshot and a user
+   who sees nothing.
 
-claude-sonnet-5 and gemini-3.5-flash pass consistently. deepseek-v4-flash has
-hit mode 3 once in two runs, so it is flaky here, not clean. Strengthening the
-instruction text moved luna from consistently failing to occasionally passing,
-and further prose tuning stopped paying.
+Mode 3 is the one worth understanding, because it was structural rather than a
+model quirk. `critique.md` described the report's format and then went directly
+to writing a temp file, with no step that said to output the report. Both
+gemini-3.6-flash and luna responded by bundling heredoc, snapshot write, trend
+read, and cleanup into a single bash call and stopping. The `Deliver the Report`
+section exists to close that gap, and it worked: gemini-3.6-flash failed three
+consecutive runs before it, and its failures afterward all show the report
+reaching chat.
 
-Read the counts in the table as what they are: small samples on a nondeterministic
-system, gathered while the instruction text was being changed between runs. They
-say the close is reliable on the two strongest models and unreliable on the two
-cheapest ones. They do not support a finer claim than that. Re-measure rather
-than assuming when the lineup changes.
+**Mode 1 is not fixed on gemini-3.6-flash.** It passes 1 run in 3 on the final
+text. Two structural attempts were made and neither settled it: the close was
+promoted into Hard Invariants with a printable `Questions skipped: <reason>`
+string, then made step 6 of the persistence list so it would sit inside the
+numbered flow rather than after it (the shape that fixed mode 3). Both moved it
+from consistently failing to intermittently passing, and further prose tuning
+was not paying, so it stopped. claude-sonnet-5 and gpt-5.6-terra are clean.
+Treat this cell as the known floor and re-measure rather than tuning blindly:
+the next useful move is probably a structural one, such as making the close
+something the run cannot syntactically finish without, not another paragraph.
+
+Read the counts here as what they are: small samples on a nondeterministic
+system, several of them gathered while the instruction text was still changing
+between runs. They support "the close works on the current lineup" and not much
+finer than that. Re-measure rather than assuming when the lineup changes.
 
 **`redesign replaces DESIGN`, flaky.** It has failed on two different assertions
 across runs (`designWrite > question` and `implementation > designWrite`), and on
@@ -158,9 +187,8 @@ and truncating it costs you the per-model attribution.
 
 ## Baseline state (2026-05-20, previous cheap tier)
 
-> **Historical record.** The default models are now `claude-sonnet-5`,
-> `gpt-5.6-luna`, `gemini-3.5-flash`, and `deepseek-v4-flash`. The table below
-> was measured on an older cheap tier
+> **Historical record.** The default models are now `claude-sonnet-5` and
+> `gemini-3.6-flash`. The table below was measured on an older cheap tier
 > (`claude-haiku-4-5` / `gpt-5.4-mini`) and is kept as the historical record.
 > Re-measure on the current lineup and update this section; the stronger
 > models are expected to clear the scenario 6/7 routing failures that the old

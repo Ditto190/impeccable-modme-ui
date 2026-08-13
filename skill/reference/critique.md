@@ -204,6 +204,14 @@ Codex Run Notes are final-chat only. Do not include this section in the persiste
 - Prioritize ruthlessly. If everything is important, nothing is.
 - Don't soften criticism. Developers need honest feedback to ship great design.
 
+### Deliver the Report
+
+Write the full report into the chat response now, before any persistence work. This is the deliverable; everything below it is bookkeeping.
+
+Do this first because the alternative is the most common way this command fails: the report gets composed once, straight into the persistence heredoc, and the run ends with a perfect archive nobody has read. Composing it into a file is not delivering it. If the report exists only in `.impeccable/critique/`, the run produced nothing.
+
+Persistence is not the end of the run. After it, the response continues with the trend line and the close.
+
 ### Persist the Snapshot
 
 Once the report above is finalized, write it to `.impeccable/critique/` so the user can refer back, and so `{{command_prefix}}impeccable polish` can pick up the priority issues without a copy-paste.
@@ -212,7 +220,7 @@ Skip this step if the Setup slug was null (vague or root-level target).
 
 1. **Write the body to a temp file** so you can pipe it to the helper. Use the full critique report (heuristic table, design-specificity verdict, priority issues, persona red flags, minor observations, and questions), but stop before the "Ask the User" / "Recommended Actions" sections that come later.
 
-   This file is an archive copy, not delivery. The same report must still be written out in the chat response. Authoring it into a heredoc, storing it, and moving on produces a run with nothing the user can see: the snapshot is for later commands, the chat response is for the person who asked.
+   This is a copy of the report you already delivered above, for later commands to read. It is not delivery. If you find yourself composing the report for the first time inside this heredoc, you have skipped Deliver the Report; go back and send it.
 
    <codex>
    Codex: exclude Run Notes from the temp body file; Run Notes are final-chat only because persistence, trend read, and temp cleanup happen after the snapshot write.
@@ -241,6 +249,8 @@ Skip this step if the Setup slug was null (vague or root-level target).
    Read `max_score` on each trend entry. When every entry shares one maximum, state it once as above. When they differ, print each score with its own denominator (`24/32 → 30/40`) and note that the runs scored different heuristic sets, so the line is not a like-for-like comparison. Treat a missing `max_score` on an older entry as 40.
 
    If this is the first run for the slug, the trend is just one score; say so: "First run for this target, no trend yet."
+
+6. **Close the run.** Go to Ask the User below and emit the questions, or the `Questions skipped: <reason>` line when the count allows it. The run is not complete until you do. Persistence is bookkeeping and cleanup is not an ending; stopping here leaves the user with a report and no way forward, and leaves `{{command_prefix}}impeccable polish` with no priorities to inherit.
 
 This is fire-and-forget. Do not show the user the helper's JSON output; only the human-readable trend line and the written path. Failures here should not block the rest of the flow; print the error and move on.
 
