@@ -494,6 +494,9 @@ describe('new-work-e2e: serve-question decision page', () => {
       assert.equal(await page.$('.media.comp-pending'), null, 'code-led serves no shimmer');
       assert.ok(await page.$('.media.wire'), 'code-led serves the wireframe');
       await page.click('.bp-opt[data-bp="comp"]');
+      await page.waitForSelector('#bp-confirm:not([hidden])');
+      assert.equal(await page.$('.media.comp-pending'), null, 'nothing renders before the flip is confirmed');
+      await page.click('#bp-confirm [data-confirm]');
       await page.waitForSelector('.media.comp-pending');
       const flipped = await waitLoop(cwd, key, { poll: 10 });
       assert.equal(flipped.code, 0, flipped.out);
