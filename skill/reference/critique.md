@@ -221,15 +221,13 @@ Skip this step if the Setup slug was null (vague or root-level target).
    ```
    `max_score` is the applicable maximum from the heuristic table (40 when every heuristic applied), so a later run can tell a renormalized total from a full one. The helper prints the absolute path it wrote.
 
-3. **Delete the temp body file** after the write attempt completes, whether the write succeeded or failed. If deletion fails, mention `temp-file cleanup failed: <reason>` briefly in the final output, but do not block the critique.
-
-4. **Read the trend** for context:
+3. **Read the trend** for context:
    ```bash
    node {{scripts_path}}/critique-storage.mjs trend "<resolved target>" 5
    ```
    This returns a JSON array of the last 5 frontmatter entries (including the one you just wrote).
 
-5. **Append a single line to the user-visible output**, after the report and before the questions:
+4. **Append a single line to the user-visible output**, after the report and before the questions:
 
    > **Trend for `<slug>` (last 5 runs): 24 → 28 → 32 → 29 → 32 (out of 40)**
    > Wrote `.impeccable/critique/<filename>`.
@@ -238,11 +236,15 @@ Skip this step if the Setup slug was null (vague or root-level target).
 
    If this is the first run for the slug, the trend is just one score; say so: "First run for this target, no trend yet."
 
+5. **Send the report and trend line to the user, then delete the temp body file**, whether the write succeeded or failed. The order is deliberate: the deletion is the last thing in the message that carries the report, so the questions below open a fresh one. Do not hold the report back to bundle it with the questions. If deletion fails, mention `temp-file cleanup failed: <reason>` briefly in the final output, but do not block the critique.
+
 This is fire-and-forget. Do not show the user the helper's JSON output; only the human-readable trend line and the written path. Failures here should not block the rest of the flow; print the error and move on.
 
 ### Ask the User
 
 **After presenting findings**, use targeted questions based on what was actually found. {{ask_instruction}} These answers will shape the action plan.
+
+The report must already be sent before you ask. A structured question blocks the message it rides in until the user answers, so a report bundled with the questions stays invisible until they have answered, and the critique reads as if it never ran. The temp-file cleanup that closed the persistence step ends the report's message; ask once it returns, and put nothing but the questions in that turn.
 
 Ask questions along these lines (adapt to the specific findings; do NOT ask generic questions):
 

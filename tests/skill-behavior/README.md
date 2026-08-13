@@ -63,6 +63,63 @@ an initialized natural build request, replacement-world redesign, and scope-pres
 refinement. It checks question order and context/artifact writes rather than
 only reference-file loading.
 
+## Workflow-contract baseline (2026-08-13, current lineup)
+
+Measured on `claude-sonnet-5`, `gpt-5.6-luna`, `gemini-3.5-flash`, and
+`deepseek-v4-flash` while checking whether an `{{ask_instruction}}` rewrite had
+regressed anything. Two of the four workflow-contract scenarios fail for reasons
+that predate that change. Treat both as the known floor; a regression is a
+failure beyond these.
+
+| Scenario | claude-sonnet-5 | gpt-5.6-luna | gemini-3.5-flash | deepseek-v4-flash |
+|---|---|---|---|---|
+| attended fresh init | not measured | not measured | not measured | not measured |
+| initialized natural build | not measured | not measured | not measured | not measured |
+| redesign replaces DESIGN | flaky | not measured | not measured | not measured |
+| bolder refinement | not measured | pass | pass | **fail** |
+
+`not measured` means exactly that: the cell was never run in isolation on this
+lineup. Only the two failing scenarios were scoped per model, because the
+investigation was about whether a specific edit had regressed them. The rows are
+worth keeping anyway, since a scenario absent from the table is easy to mistake
+for a scenario that passed.
+
+**`bolder refinement`, deepseek-v4-flash.** The model runs `context.mjs`, reads
+`bolder.md`, `craft-floor.md`, and `current.html`, then ends its turn without
+editing anything: empty `writePaths`, no `ask_user_question` call, well short of
+the 16-step cap. Confirmed identical on HEAD with `bolder.md` reverted, so it is
+not a skill-text problem. Same shape as the gpt-5.4-mini scenario 6/7 failures
+below: the model consumes the references and then declines to act.
+
+**`redesign replaces DESIGN`, flaky.** It has failed on two different assertions
+across runs (`designWrite > question` and `implementation > designWrite`), and on
+one run claude-sonnet-5 exhausted the 300s per-test timeout instead of asserting.
+The traces never load `document.md`; the ordering under test comes from
+`new-work.md`. Re-run before believing a single red result here. Which model
+produced which failure was not pinned down, so the row records only that the
+scenario is unstable.
+
+The `bolder` claude-sonnet-5 cell is unmeasured for a specific reason: the scoped
+run that produced this table used a 180s cap, which sonnet exceeded. That is a
+timeout, not a failure, and it is why the guidance below insists on 300000.
+
+### Scoping a run while investigating
+
+Both files honor `--test-name-pattern`, which is much cheaper than a full sweep
+when bisecting one scenario:
+
+```bash
+IMPECCABLE_QUESTION_DISABLED=1 CI=1 IMPECCABLE_SKILL_BEHAVIOR_MODELS=deepseek-v4-flash \
+  node --test --test-timeout=300000 --test-force-exit \
+  --test-name-pattern="bolder refinement" tests/skill-behavior/workflow-contract.test.mjs
+```
+
+Keep `--test-timeout` at 300000. A tighter cap turns claude-sonnet-5's slower
+runs into timeouts that look like failures. Set `IMPECCABLE_QUESTION_DISABLED=1`
+and `CI=1` so `serve-question.mjs` cannot open a browser window on the host. Pipe
+to a file rather than `tail`; node prints the failing-test summary at the end,
+and truncating it costs you the per-model attribution.
+
 ## Baseline state (2026-05-20, previous cheap tier)
 
 > **Historical record.** The default models are now `claude-sonnet-5`,
