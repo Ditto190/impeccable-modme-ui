@@ -315,6 +315,95 @@ describe('new-work-e2e: serve-question decision page', () => {
     }
   });
 
+  it('(e1) a missing comp without inspiration settles into a complete text-only card', async () => {
+    const cwd = makeWorkspace();
+    const key = 'missing-comp';
+    const board = makeFakeImage(cwd, 'board fallback', 'board-fallback.png');
+    const payload = {
+      title: 'Choose the visual world',
+      options: [
+        {
+          id: 'assigned', label: 'Shotengai Chalkboard', kicker: 'THE ROLL',
+          thesis: 'A hand-lettered neighborhood noticeboard.',
+          body: 'Program notes explain how the board changes through the day.',
+          palette: ['#18251d', '#f2e8cb'], materials: ['chalk', 'painted timber'],
+          viewport: 'The daily program fills a ruled community board.',
+          case: 'The audience already reads this visual language.',
+          risk: 'Can become nostalgic if the type loses discipline.',
+          comp: path.join(cwd, '.impeccable', 'mocks', 'decision', 'missing.webp'),
+        },
+        {
+          id: 'kept-only', label: 'Kept Line Only',
+          kept: 'Keep the hand-painted timetable as the organizing device.',
+          comp: path.join(cwd, '.impeccable', 'mocks', 'decision', 'kept-missing.webp'),
+        },
+        {
+          id: 'body-only', label: 'Body Line Only',
+          thesis: 'A compact neighborhood notice.',
+          body: 'Body copy must remain present exactly once.',
+          comp: path.join(cwd, '.impeccable', 'mocks', 'decision', 'body-missing.webp'),
+        },
+        {
+          id: 'plain-body', label: 'Plain Body',
+          body: 'Plain body follows the promoted facts.',
+          viewport: 'A compact neighborhood notice fills the first viewport.',
+          comp: path.join(cwd, '.impeccable', 'mocks', 'decision', 'plain-body-missing.webp'),
+        },
+        {
+          id: 'board-only', label: 'Board Fallback',
+          board,
+          comp: path.join(cwd, '.impeccable', 'mocks', 'decision', 'board-missing.webp'),
+        },
+      ],
+      reroll: true,
+      steer: true,
+    };
+    const { url } = await startDaemon(cwd, payload, key);
+    try {
+      const context = await browser.newContext();
+      await context.addInitScript(() => {
+        const realNow = Date.now.bind(Date);
+        let offset = 0;
+        Date.now = () => realNow() + offset;
+        window.__advanceDecisionClock = (ms) => { offset += ms; };
+      });
+      const page = await context.newPage();
+      await page.goto(url, { waitUntil: 'load' });
+      await page.waitForSelector('.card[data-id="assigned"] .media.comp-pending');
+
+      await page.evaluate(() => window.__advanceDecisionClock(241000));
+      await page.waitForFunction(() => ['assigned', 'kept-only', 'body-only', 'plain-body'].every((id) =>
+        !document.querySelector(`.card[data-id="${id}"] .media`)), null, { timeout: 6000 });
+      await page.waitForSelector('.card[data-id="board-only"] .media.stand-in');
+
+      const faceClass = await page.getAttribute('.card[data-id="assigned"] .face.front', 'class');
+      const back = await page.$('.card[data-id="assigned"] .face.back');
+      const frontRead = await page.$eval('.card[data-id="assigned"] .face.front', (el) => el.textContent);
+      const keptOnlyRead = await page.$eval('.card[data-id="kept-only"] .face.front', (el) => el.textContent);
+      const bodyOnlyRead = await page.$eval('.card[data-id="body-only"] .face.front', (el) => el.textContent);
+      const plainBodyOrder = await page.$$eval('.card[data-id="plain-body"] .body > .fact, .card[data-id="plain-body"] .body > .detail',
+        (els) => els.map((el) => el.className));
+      const boardFallbackLabel = await page.$eval('.card[data-id="board-only"] .stand-in-label', (el) => el.textContent);
+      await context.close();
+
+      assert.match(faceClass, /text-only/, 'the settled card uses the text-only layout');
+      assert.equal(back, null, 'the settled card has no unreachable back face');
+      assert.match(frontRead, /First viewport/, 'the full first-viewport fact moves to the front');
+      assert.match(frontRead, /The case/, 'the full case moves to the front');
+      assert.match(frontRead, /Risk/, 'the risk remains readable after the media collapses');
+      assert.match(frontRead, /Program notes explain/, 'thesis-linked body prose moves off the removed back face');
+      assert.match(keptOnlyRead, /Keep the hand-painted timetable/, 'kept-only content survives without a back face');
+      assert.equal(bodyOnlyRead.match(/Body copy must remain present exactly once\./g)?.length, 1,
+        'body prose already on a no-back front is not duplicated');
+      assert.deepEqual(plainBodyOrder, ['fact', 'detail'],
+        'thesis-less body prose follows the facts promoted from the missing comp');
+      assert.equal(boardFallbackLabel, 'inspiration · comp pending', 'board-only art remains as the labeled fallback');
+    } finally {
+      await stopDaemon(cwd, key);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('(e2) verdicts route the deck: declined cards demote, reorder to the end, and stay adoptable', async () => {
     const cwd = makeWorkspace();
     const key = 'verdicts';
