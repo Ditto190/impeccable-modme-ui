@@ -477,8 +477,10 @@ export const PROVIDER_PLACEHOLDERS = {
   'codex': {
     model: 'GPT',
     config_file: 'AGENTS.md',
-    // Every {{ask_instruction}} call site is sentence-initial, so each value is a
-    // complete capitalized sentence. Keep it that way when adding a provider.
+    // Each value is a complete capitalized sentence, because every
+    // {{ask_instruction}} call site is sentence-initial. That is enforced by
+    // validateAskInstructionSites() in scripts/build.js, not left to authors:
+    // four reference files had already spliced the placeholder mid-sentence.
     ask_instruction: "STOP and use Codex's structured user-input/question tool when available; if unavailable, ask directly in chat to clarify what you cannot infer.",
     command_prefix: '$'
   },
