@@ -311,7 +311,15 @@ export const SUITES = {
     commands: [
       {
         runner: 'node',
-        timeoutMs: 300000,
+        // 300000 was too low to measure what these scenarios assert. The
+        // workflow-contract turns run 20+ steps against a frontier model, and
+        // the *correct* path is the slow one: a run that stops to put the
+        // concept to the user before building was measured at 579s, while the
+        // runs that skipped that checkpoint and failed the assertion finished
+        // in 130-200s. At a 300s cap the thorough path is killed and the hasty
+        // path is graded, so the cap was selecting for the behavior the suite
+        // exists to forbid.
+        timeoutMs: 900000,
         files: [
           'tests/skill-behavior/scenarios.test.mjs',
           'tests/skill-behavior/workflow-contract.test.mjs',
