@@ -1019,7 +1019,9 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
   // exits on any pick and has no update channel, so a followup payload there
   // still gets the goodbye screen, never a loading hand nothing will resolve.
   const FOLLOWUP = ${payload.followup === true && Boolean(detachedKey) ? 'true' : 'false'};
-  const beat = () => { try { navigator.sendBeacon('/heartbeat'); } catch { fetch('/heartbeat', { method: 'POST' }); } };
+  const KEY = ${JSON.stringify(detachedKey || '')};
+  const keyQ = KEY ? '?key=' + encodeURIComponent(KEY) : '';
+  const beat = () => { try { navigator.sendBeacon('/heartbeat' + keyQ); } catch { fetch('/heartbeat' + keyQ, { method: 'POST' }); } };
   ${waiting && waitBudgetMs <= 0 ? '' : 'beat();'}
   const beatTimer = setInterval(beat, 5000);
   // A dead server must fail loudly: awaiting a rejected fetch here used to
@@ -1030,7 +1032,7 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
     // is in flight would overwrite the answer being collected.
     document.querySelectorAll('.reroll-btn, #canon').forEach(b => b.setAttribute('disabled', ''));
     try {
-      await fetch('/answer', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId, steer: steer() }) });
+      await fetch('/answer' + keyQ, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId, steer: steer() }) });
     } catch {
       document.body.innerHTML = '<div class="done">The question server went away before this choice could land.<br>Tell the agent your pick in the chat instead.</div>';
       return;
@@ -1472,7 +1474,7 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
     // re-roll and renewed the delivery deadline.
     document.querySelectorAll('.reroll-btn, #canon').forEach(b => b.setAttribute('disabled', ''));
     try {
-      await fetch('/answer', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: steer(), ...(register ? { register } : {}) }) });
+      await fetch('/answer' + keyQ, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: steer(), ...(register ? { register } : {}) }) });
     } catch {
       document.body.innerHTML = '<div class="done">The question server went away before this choice could land.<br>Tell the agent your pick in the chat instead.</div>';
       return;
@@ -1566,8 +1568,35 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
 </script>`;
 }
 
+function allowedHost(host, port) {
+  return host === `127.0.0.1:${port}` || host === `localhost:${port}`;
+}
+
+function allowedOrigin(origin, port) {
+  return origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`;
+}
+
+function rejectDetachedPost(req, res, url, port) {
+  if (detachedKey && url.searchParams.get('key') !== detachedKey) {
+    res.writeHead(401); res.end(); return true;
+  }
+  const origin = req.headers.origin;
+  if (origin && !allowedOrigin(origin, port)) {
+    res.writeHead(403); res.end(); return true;
+  }
+  return false;
+}
+
 const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/') {
+  const { port } = server.address();
+  if (!allowedHost(req.headers.host, port)) {
+    res.writeHead(403); res.end(); return;
+  }
+  let url;
+  try { url = new URL(req.url, 'http://127.0.0.1'); }
+  catch { res.writeHead(400); res.end(); return; }
+  const pathname = url.pathname;
+  if (req.method === 'GET' && pathname === '/') {
     const pending = nextFile();
     if (pending && fs.existsSync(pending)) {
       // A next file the round cannot load has to leave the disk either way:
@@ -1593,7 +1622,8 @@ const server = http.createServer((req, res) => {
     res.end(page(awaitingNext));
     return;
   }
-  if (req.method === 'POST' && req.url === '/heartbeat') {
+  if (req.method === 'POST' && pathname === '/heartbeat') {
+    if (rejectDetachedPost(req, res, url, port)) return;
     res.writeHead(204); res.end();
     server.lastBeatSeen = Date.now();
     if (detachedKey) {
@@ -1609,13 +1639,13 @@ const server = http.createServer((req, res) => {
     }
     return;
   }
-  if (req.method === 'GET' && req.url === '/next-status') {
+  if (req.method === 'GET' && pathname === '/next-status') {
     const pending = nextFile();
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ready: Boolean(pending && fs.existsSync(pending)) }));
     return;
   }
-  const imageMatch = req.method === 'GET' && req.url?.match(/^\/img\/(\d+)(?:\?.*)?$/);
+  const imageMatch = req.method === 'GET' && pathname.match(/^\/img\/(\d+)$/);
   if (imageMatch) {
     const abs = localImages[Number(imageMatch[1])];
     if (!abs || !fs.existsSync(abs)) { res.writeHead(404); res.end(); return; }
@@ -1628,7 +1658,7 @@ const server = http.createServer((req, res) => {
     fs.createReadStream(abs).pipe(res);
     return;
   }
-  if (req.method === 'POST' && req.url === '/build-path') {
+  if (req.method === 'POST' && pathname === '/build-path') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
@@ -1648,7 +1678,8 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  if (req.method === 'POST' && req.url === '/answer') {
+  if (req.method === 'POST' && pathname === '/answer') {
+    if (rejectDetachedPost(req, res, url, port)) return;
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
