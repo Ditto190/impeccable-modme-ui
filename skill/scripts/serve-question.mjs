@@ -881,6 +881,7 @@ function page() {
 <div id="ambient" aria-hidden="true"></div>
 <div id="scrim" aria-hidden="true"></div>
 <div id="lightbox" hidden><img alt=""></div>
+<template id="tpl-expand-chip">${expandChip}</template>
 ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria-labelledby="bp-confirm-title" hidden>
   <div class="bp-confirm-panel">
     <h2 id="bp-confirm-title">Flip to comp-first?</h2>
@@ -1063,8 +1064,10 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
       return true;
     };
     const tryLoad = () => {
-      // A slot the user flipped back out of leaves the DOM; let its loop die.
-      if (!m.isConnected) { clearInterval(tick); return; }
+      // A slot the user flipped back out of either leaves the DOM or, when it
+      // was an inspiration face converted in place, stays and loses its
+      // pending state. Either way its loop is done.
+      if (!m.isConnected || !m.classList.contains('comp-pending')) { clearInterval(tick); return; }
       const probe = new Image();
       probe.onload = () => { landTracker.last = Date.now(); img.src = probe.src; img.hidden = false; settle(); };
       probe.onerror = () => {
@@ -1101,17 +1104,58 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
       if (noteEl) noteEl.textContent = notes[value];
     };
     set(current);
+    const INSPO_TITLE = 'Inspiration: the world this direction draws from. Your page will not look like this image.';
+    // Every media slot carries the expand affordance. A slot built here after
+    // the deal used to ship without one, so a comp the user waited minutes for
+    // could not be opened.
+    const ensureChips = (m) => {
+      if (m.querySelector('.chips')) return;
+      const tpl = document.getElementById('tpl-expand-chip');
+      if (!tpl) return;
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+      chips.appendChild(tpl.content.cloneNode(true));
+      m.appendChild(chips);
+    };
+    const shimmerHtml = '<div class="shimmer"><span class="comp-note">rendering&hellip;</span></div><img class="comp" alt="" hidden>';
     const enterComp = () => {
       document.querySelectorAll('.card[data-comp-slot]').forEach(card => {
         const front = card.querySelector('.face.front');
         if (!front || front.querySelector('.media.comp-pending') || front.querySelector('.media img.comp:not([hidden])')) return;
-        const m = document.createElement('div');
-        m.className = 'media comp-pending';
-        m.dataset.comp = card.dataset.compSlot;
-        m.innerHTML = '<div class="shimmer"><span class="comp-note">rendering&hellip;</span></div><img class="comp" alt="" hidden>';
-        const wireEl = front.querySelector('.media.wire');
-        if (wireEl) { wireEl.hidden = true; front.insertBefore(m, wireEl); }
-        else { front.classList.remove('text-only'); front.insertBefore(m, front.querySelector('.body')); }
+        // On a code-led card the inspiration IS the face. Comp-first demotes it
+        // to the corner, so convert that slot in place rather than inserting a
+        // second one: two stacked images say the catalog art and the comp are
+        // peers, and the whole point of the corner is that they are not.
+        const inspo = front.querySelector('.media:not(.wire):not(.comp-pending)');
+        let m;
+        if (inspo) {
+          m = inspo;
+          m.dataset.compRestore = 'inspiration';
+          m.dataset.comp = card.dataset.compSlot;
+          m.classList.add('comp-pending');
+          m.removeAttribute('title');
+          m.querySelector('.media-label')?.remove();
+          const art = m.querySelector(':scope > img');
+          if (art) {
+            const pip = document.createElement('figure');
+            pip.className = 'pip';
+            pip.title = INSPO_TITLE;
+            const cap = document.createElement('figcaption');
+            cap.textContent = 'inspiration';
+            pip.append(art, cap);
+            m.appendChild(pip);
+          }
+          m.insertAdjacentHTML('afterbegin', shimmerHtml);
+        } else {
+          m = document.createElement('div');
+          m.className = 'media comp-pending';
+          m.dataset.comp = card.dataset.compSlot;
+          m.innerHTML = shimmerHtml;
+          const wireEl = front.querySelector('.media.wire');
+          if (wireEl) { wireEl.hidden = true; front.insertBefore(m, wireEl); }
+          else { front.classList.remove('text-only'); front.insertBefore(m, front.querySelector('.body')); }
+        }
+        ensureChips(m);
         pollComp(m);
       });
     };
@@ -1120,6 +1164,25 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
         const front = card.querySelector('.face.front');
         const pending = front?.querySelector('.media.comp-pending');
         if (!pending) return; // landed comps stay; they exist either way
+        // A converted slot is restored, not removed: the inspiration goes back
+        // to being the face, so flipping back leaves the card as it was dealt.
+        if (pending.dataset.compRestore === 'inspiration') {
+          pending.classList.remove('comp-pending');
+          delete pending.dataset.compRestore;
+          delete pending.dataset.comp;
+          pending.querySelector('.shimmer')?.remove();
+          pending.querySelector('img.comp')?.remove();
+          const pip = pending.querySelector('.pip');
+          const art = pip?.querySelector('img');
+          if (art) pending.insertBefore(art, pending.firstChild);
+          pip?.remove();
+          const label = document.createElement('p');
+          label.className = 'media-label';
+          label.textContent = 'inspiration';
+          pending.insertBefore(label, pending.querySelector('.chips'));
+          pending.title = INSPO_TITLE;
+          return;
+        }
         pending.remove();
         const wireEl = front.querySelector('.media.wire');
         if (wireEl) wireEl.hidden = false;
@@ -1182,14 +1245,17 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
   });
 
   // Inspiration PIP or body thumb opens the full catalog card in the lightbox.
-  document.querySelectorAll('.pip, .inspo').forEach(p => p.addEventListener('click', (e) => {
+  // Delegated, like every other zoom target: a build-path flip builds media
+  // slots after load, and a per-element listener bound at deal time never
+  // reaches them. That is how a streamed-in comp ended up unopenable.
+  document.addEventListener('click', (e) => {
+    const p = e.target.closest?.('.pip, .inspo');
+    if (!p) return;
     e.stopPropagation();
     const img = p.querySelector('img');
     if (!img) return;
-    lightboxImg.src = img.getAttribute('src');
-    lightbox.hidden = false;
-    requestAnimationFrame(() => lightbox.classList.add('open'));
-  }));
+    openLightbox(img);
+  });
 
   // Deck paging: arrows appear only when the deck overflows its axis, page
   // one card at a time, and follow the aspect-ratio flip between row and column.
@@ -1239,16 +1305,23 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
   // Expand: lightbox for whichever face is showing.
   const lightbox = document.getElementById('lightbox');
   const lightboxImg = lightbox.querySelector('img');
-  document.querySelectorAll('.expand').forEach(b => b.addEventListener('click', (e) => {
+  // Declared, not assigned to a const, so the delegated handlers above can call
+  // it wherever they sit in this file.
+  function openLightbox(img) {
+    lightboxImg.src = img.getAttribute('src');
+    lightbox.hidden = false;
+    requestAnimationFrame(() => lightbox.classList.add('open'));
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest?.('.expand');
+    if (!b) return;
     e.stopPropagation();
     const card = b.closest('.card');
     const face = card.classList.contains('flipped') ? '.face.back' : '.face.front';
     const img = card.querySelector(face + ' .media img:not([hidden])');
     if (!img || !img.getAttribute('src')) return;
-    lightboxImg.src = img.getAttribute('src');
-    lightbox.hidden = false;
-    requestAnimationFrame(() => lightbox.classList.add('open'));
-  }));
+    openLightbox(img);
+  });
   // Portrait art (native / mobile-first surfaces): the slot takes the
   // image's own ratio so nothing crops, and the whole deck narrows so
   // portrait cards sit side by side. Load events don't bubble; capture.
@@ -1266,13 +1339,13 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
   // The whole image is the zoom target, not just the expand chip; the chip
   // stays as the visible affordance. Chip and PIP handlers stop propagation,
   // so this fires only for clicks on the art itself.
-  document.querySelectorAll('.media').forEach(m => m.addEventListener('click', () => {
+  document.addEventListener('click', (e) => {
+    const m = e.target.closest?.('.media');
+    if (!m) return;
     const img = m.querySelector(':scope > img:not([hidden])');
     if (!img || !img.getAttribute('src')) return;
-    lightboxImg.src = img.getAttribute('src');
-    lightbox.hidden = false;
-    requestAnimationFrame(() => lightbox.classList.add('open'));
-  }));
+    openLightbox(img);
+  });
   const closeLightbox = () => { lightbox.classList.remove('open'); setTimeout(() => { lightbox.hidden = true; }, 250); };
   lightbox.addEventListener('click', closeLightbox);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !lightbox.hidden) closeLightbox(); });
