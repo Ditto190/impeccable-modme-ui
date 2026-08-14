@@ -86,17 +86,50 @@ stay here because they are the record of what a weaker model does with this text
 and that is the useful part. Reproduce with
 `IMPECCABLE_SKILL_BEHAVIOR_MODELS=gpt-5.6-luna,deepseek-v4-flash`.
 
-Against the current default lineup, two cells are the known floor:
-`redesign replaces DESIGN` is flaky, and `critique closes` is flaky on
-gemini-3.6-flash. A regression is a failure beyond those two.
+Against the current default lineup, three cells are the known floor:
+`redesign replaces DESIGN` is flaky on every model, `critique closes` is flaky on
+gemini-3.6-flash, and `initialized natural build` fails on claude-sonnet-5.
+A regression is a failure beyond those three.
 
 | Scenario | claude-sonnet-5 | gpt-5.6-terra | gemini-3.6-flash | luna / deepseek (dropped) |
 |---|---|---|---|---|
-| attended fresh init | not measured | not measured | not measured | not measured |
-| initialized natural build | not measured | not measured | not measured | not measured |
-| redesign replaces DESIGN | flaky | not measured | not measured | not measured |
-| bolder refinement | not measured | not measured | pass (on 3.5) | luna pass, deepseek **fail** |
-| critique closes | pass (2 of 2) | pass (2 of 2) | **flaky (1 of 3)** | luna **fail (1 of 6)**, deepseek flaky |
+| attended fresh init | pass | pass | pass | not measured |
+| initialized natural build | **fail (3 of 3)** | pass | pass | not measured |
+| redesign replaces DESIGN | flaky (timeout this run) | **fail** | **fail (timeout)** | not measured |
+| bolder refinement | pass | pass | pass (on 3.5) | luna pass, deepseek **fail** |
+| critique closes | pass (4 of 4) | pass (3 of 3) | **flaky (1 of 4)** | luna **fail (1 of 6)**, deepseek flaky |
+
+Gemini's `bolder refinement` and `critique closes` runs in this sweep died on
+`AI_APICallError` / `ETIMEDOUT` before completing a turn. Network failures are
+not behavior measurements and are excluded from the counts above.
+
+## Scenario baseline (2026-08-13, current lineup)
+
+Measured on the same sweep. `scenarios.test.mjs` passes 15 of 15 on
+gpt-5.6-terra and gemini-3.6-flash. Only claude-sonnet-5 fails anything, and
+that asymmetry is the finding: the two cells below fail on the frontier model
+while two weaker-on-paper lineups route correctly, so read them as a text
+problem that one model's priors expose rather than as a model floor.
+
+| Scenario | claude-sonnet-5 | gpt-5.6-terra | gemini-3.6-flash |
+|---|---|---|---|
+| 1-7, 10, 12-14 | pass | pass | pass |
+| 8 (SvelteKit exploration) | flaky | pass | pass |
+| 9 (update surfaced, never auto-run) | **fail (3 of 3)** | pass | pass |
+| 11 (shape resolves the build gate) | flaky | pass | pass |
+| 15 (native audit variant) | **fail (3 of 3)** | pass | pass |
+
+**Scenarios 9 and 15 and `initialized natural build` fail on unmodified `main`.**
+Confirmed against a clean worktree at `ddd23b18` with the same model and prompt:
+same assertion, same shape. They are open defects in the current text, not
+regressions from whatever change you are testing. Scenario 9 fails by auto-running
+the skill update instead of surfacing it; scenario 15 loads `audit.md` where the
+iOS platform should route it to `audit.native.md`; the natural-build contract
+begins implementation before the attended concept checkpoint. Check them against
+`main` before attributing any of the three to your branch.
+
+Scenarios 8 and 11 pass on re-run, so treat a single failure there as flake and
+confirm with a second run before investigating.
 
 Gemini cells marked `on 3.5` were measured on the superseded `gemini-3.5-flash`
 and have not been re-run on 3.6. That distinction is not pedantic. `critique

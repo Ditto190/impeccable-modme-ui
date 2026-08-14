@@ -1142,7 +1142,7 @@ async function cli() {
     parts.push(buildResolvedContextDirective(ctx, cliOptions, { targetExists }));
     appendDetectorFallback(parts, ctx);
     appendImageGenDirective(parts);
-    appendBuildPathDirective(parts);
+    appendBuildPathDirective(parts, ctx);
     appendAutonomyCounterDirective(parts);
     appendSubagentAuthorizationDirective(parts);
     if (shouldWarnMissingTarget(ctx, targetProvided, targetExists)) {
@@ -1162,7 +1162,7 @@ async function cli() {
   parts.push(buildResolvedContextDirective(ctx, cliOptions, { targetExists }));
   appendDetectorFallback(parts, ctx);
   appendImageGenDirective(parts);
-  appendBuildPathDirective(parts);
+  appendBuildPathDirective(parts, ctx);
   appendAutonomyCounterDirective(parts);
   appendSubagentAuthorizationDirective(parts);
   if (shouldWarnMissingTarget(ctx, targetProvided, targetExists)) {
@@ -1271,17 +1271,34 @@ function automaticHookMode(ctx) {
 }
 
 
-// Build-path preference: a workflow setting (comp-led vs code-led), read
-// here so every session starts knowing it without a file hunt. Absence
-// stays silent; new-work's own default applies, and the decision page
-// toggle can flip the value for a single session.
-function appendBuildPathDirective(parts) {
-  try {
-    const settings = JSON.parse(fs.readFileSync(path.join(process.cwd(), '.impeccable', 'settings.json'), 'utf8'));
-    if (settings.buildPath === 'comp' || settings.buildPath === 'code') {
-      parts.push(`BUILD_PATH_DEFAULT: ${settings.buildPath} (from .impeccable/settings.json). Author direction and surface rounds with this as buildPath.value and toggle: true; a flip on the page binds that session only and is never written back to settings.`);
+// Build-path preference: a workflow setting (comp-led vs code-led), read here
+// so every session starts knowing it without a file hunt. It rides the unified
+// config beside the hook and detector settings, and the gitignored local file
+// wins, because whether a machine has an image tool is a property of that
+// machine, not of the team's committed default. Absence stays silent;
+// new-work's own default applies, and the decision page toggle can flip the
+// value for a single session.
+function readBuildPathAt(root) {
+  let value = null;
+  let source = null;
+  for (const name of ['config.json', 'config.local.json']) {
+    const raw = readJson(path.join(root, '.impeccable', name));
+    if (raw?.buildPath === 'comp' || raw?.buildPath === 'code') {
+      value = raw.buildPath;
+      source = `.impeccable/${name}`;
     }
-  } catch { /* no settings file */ }
+  }
+  return value ? { value, source } : null;
+}
+
+function appendBuildPathDirective(parts, ctx) {
+  const roots = [...new Set([ctx?.projectRoot, process.cwd()].filter(Boolean).map((root) => path.resolve(root)))];
+  for (const root of roots) {
+    const found = readBuildPathAt(root);
+    if (!found) continue;
+    parts.push(`BUILD_PATH_DEFAULT: ${found.value} (from ${found.source}). Author direction and surface rounds with this as buildPath.value and toggle: true; a flip on the page binds that session only and is never written back to the config.`);
+    return;
+  }
 }
 
 // Image generation availability: harness-native tools always win, but when the

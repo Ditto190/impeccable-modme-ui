@@ -1060,6 +1060,42 @@ describe('context.mjs CLI', () => {
     assert.match(res.stdout, /detect\.mjs --json <changed targets>/);
   });
 
+  // The build-path preference rides the unified config beside hook and
+  // detector settings. The local file wins because whether a machine can
+  // generate images is a property of that machine, not of the committed
+  // default the rest of the team shares.
+  describe('BUILD_PATH_DEFAULT', () => {
+    const run = () => spawnSync(process.execPath, [SCRIPT_PATH], {
+      cwd: scratch,
+      encoding: 'utf8',
+      env: { ...process.env, IMPECCABLE_NO_UPDATE_CHECK: '1', IMPECCABLE_NO_STALENESS_CHECK: '1' },
+    });
+
+    it('reports a recorded preference from the shared config', () => {
+      write('PRODUCT.md', '# Acme\n');
+      write('.impeccable/config.json', JSON.stringify({ buildPath: 'code' }));
+      assert.match(run().stdout, /BUILD_PATH_DEFAULT: code \(from \.impeccable\/config\.json\)/);
+    });
+
+    it('lets the gitignored local config win over the committed one', () => {
+      write('PRODUCT.md', '# Acme\n');
+      write('.impeccable/config.json', JSON.stringify({ buildPath: 'comp' }));
+      write('.impeccable/config.local.json', JSON.stringify({ buildPath: 'code' }));
+      assert.match(run().stdout, /BUILD_PATH_DEFAULT: code \(from \.impeccable\/config\.local\.json\)/);
+    });
+
+    it('stays silent when nothing is recorded, leaving new-work its own default', () => {
+      write('PRODUCT.md', '# Acme\n');
+      assert.equal(run().stdout.includes('BUILD_PATH_DEFAULT'), false);
+    });
+
+    it('stays silent on a value nothing reads rather than guessing at it', () => {
+      write('PRODUCT.md', '# Acme\n');
+      write('.impeccable/config.json', JSON.stringify({ buildPath: 'code-first' }));
+      assert.equal(run().stdout.includes('BUILD_PATH_DEFAULT'), false);
+    });
+  });
+
   it('keeps the manual-detector directive out of early context when the current provider hook is active', () => {
     const scripts = path.join(scratch, 'bundle', 'skills', 'impeccable', 'scripts');
     stageContextBundle(scripts, { providerId: 'codex' });

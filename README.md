@@ -361,6 +361,16 @@ On an interactive `install`/`update`, Impeccable explains the hook and offers to
 
 For debugging, set `hook.auditLog` in `.impeccable/config.json` to a path (or the legacy `IMPECCABLE_HOOK_LOG` env var) to write one NDJSON line per hook invocation. Leave it unset for normal use.
 
+## Build path: comp-first or code-first
+
+When a new surface gets designed, Impeccable either generates a full-fidelity comp first and builds to match it, or builds straight in code with the ambition written into the direction contract and checked at the finish. Comp-first composes bolder and takes longer; code-first is leaner and faster. `/impeccable init` asks once and records the answer as `buildPath` in `.impeccable/config.json`:
+
+```json
+{ "buildPath": "comp" }
+```
+
+The values are `comp` and `code`, and nothing else is read. Set it in the gitignored `.impeccable/config.local.json` to override the team's committed value on one machine, which is what you want when your harness has no image generation. Whatever is recorded is a default rather than a lock: every decision page carries a footer toggle, and flipping it binds that session only. The choice appears at all only where image generation is available, since without it there is nothing to comp.
+
 Codex requires one platform step that Impeccable cannot safely skip: open `/hooks` after install or update and approve the project hook. There is no Codex marketplace/plugin install flow for this hook.
 
 Full hook docs: [impeccable.style/docs/hooks](https://impeccable.style/docs/hooks).
