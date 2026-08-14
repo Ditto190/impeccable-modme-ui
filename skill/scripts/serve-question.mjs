@@ -1020,6 +1020,12 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
   const landTracker = { last: Date.now() };
   const pollComp = (m) => {
     const url = m.dataset.comp;
+    // A converted slot is the SAME node across flip cycles, so a probe from an
+    // earlier cycle can still be in flight when the next one starts. Without a
+    // generation stamp its late onload settles the new slot: shimmer stripped,
+    // pending state cleared, comp still hidden, live poll stopped.
+    const generation = String(Number(m.dataset.pollGen || 0));
+    const current = () => String(Number(m.dataset.pollGen || 0)) === generation;
     const img = m.querySelector('img.comp');
     const note = m.querySelector('.comp-note');
     const started = Date.now();
@@ -1067,10 +1073,18 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
       // A slot the user flipped back out of either leaves the DOM or, when it
       // was an inspiration face converted in place, stays and loses its
       // pending state. Either way its loop is done.
-      if (!m.isConnected || !m.classList.contains('comp-pending')) { clearInterval(tick); return; }
+      if (!m.isConnected || !m.classList.contains('comp-pending') || !current()) { clearInterval(tick); return; }
       const probe = new Image();
-      probe.onload = () => { landTracker.last = Date.now(); img.src = probe.src; img.hidden = false; settle(); };
+      probe.onload = () => {
+        if (!current()) return;
+        landTracker.last = Date.now();
+        const target = m.querySelector('img.comp') || img;
+        target.src = probe.src;
+        target.hidden = false;
+        settle();
+      };
       probe.onerror = () => {
+        if (!current()) return;
         const quiet = Date.now() - landTracker.last > 240000;
         if (Date.now() - started > 240000 && quiet && fallback()) return;
         setTimeout(tryLoad, m.classList.contains('stand-in') ? 5000 : 2500);
@@ -1167,20 +1181,29 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
         // A converted slot is restored, not removed: the inspiration goes back
         // to being the face, so flipping back leaves the card as it was dealt.
         if (pending.dataset.compRestore === 'inspiration') {
-          pending.classList.remove('comp-pending');
+          // Everything the pending state added has to leave, presentation
+          // included: a slot that reached stand-in kept its "inspiration comp
+          // pending" label beside a fresh one, and a slot whose art had failed
+          // came back still marked unavailable.
+          pending.classList.remove('comp-pending', 'stand-in');
           delete pending.dataset.compRestore;
           delete pending.dataset.comp;
+          pending.dataset.pollGen = String(Number(pending.dataset.pollGen || 0) + 1);
           pending.querySelector('.shimmer')?.remove();
           pending.querySelector('img.comp')?.remove();
+          pending.querySelector('.stand-in-label')?.remove();
+          pending.querySelectorAll('.media-label').forEach((el) => el.remove());
           const pip = pending.querySelector('.pip');
           const art = pip?.querySelector('img');
           if (art) pending.insertBefore(art, pending.firstChild);
           pip?.remove();
+          // No art means the image failed to load before the flip, so hand the
+          // slot back to the same honest treatment rather than calling it art.
           const label = document.createElement('p');
           label.className = 'media-label';
-          label.textContent = 'inspiration';
+          label.textContent = art ? 'inspiration' : 'artwork unavailable';
           pending.insertBefore(label, pending.querySelector('.chips'));
-          pending.title = INSPO_TITLE;
+          if (art) pending.title = INSPO_TITLE; else pending.classList.add('unavailable');
           return;
         }
         pending.remove();
@@ -1244,17 +1267,41 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
     else img.addEventListener('error', gone, { once: true });
   });
 
-  // Inspiration PIP or body thumb opens the full catalog card in the lightbox.
-  // Delegated, like every other zoom target: a build-path flip builds media
-  // slots after load, and a per-element listener bound at deal time never
-  // reaches them. That is how a streamed-in comp ended up unopenable.
+  // Every zoom target resolves in ONE delegated listener, in priority order.
+  // Delegation is what lets a slot built by a build-path flip work at all, and
+  // a single listener is what keeps the targets from fighting: stopPropagation
+  // ends bubbling, not other listeners on the same target, so split across two
+  // handlers a click on the corner inspiration opened the inspiration and then
+  // the comp overwrote it in the lightbox. Per-element handlers elsewhere (the
+  // flip chip, the raise cycler) still stop bubbling before the event lands
+  // here, so they keep their own behavior.
   document.addEventListener('click', (e) => {
-    const p = e.target.closest?.('.pip, .inspo');
-    if (!p) return;
-    e.stopPropagation();
-    const img = p.querySelector('img');
-    if (!img) return;
-    openLightbox(img);
+    const target = e.target;
+    if (!target || !target.closest) return;
+    // The corner inspiration wins over the slot it sits inside.
+    const pip = target.closest('.pip, .inspo');
+    if (pip) {
+      const art = pip.querySelector('img');
+      if (art) openLightbox(art);
+      return;
+    }
+    const chip = target.closest('.chip');
+    if (chip) {
+      // Only expand zooms. Any other chip owns its click and must not fall
+      // through to the media underneath it.
+      if (!chip.classList.contains('expand')) return;
+      const card = chip.closest('.card');
+      const face = card && card.classList.contains('flipped') ? '.face.back' : '.face.front';
+      const shown = card && card.querySelector(face + ' .media img:not([hidden])');
+      if (shown && shown.getAttribute('src')) openLightbox(shown);
+      return;
+    }
+    // The whole image is the zoom target, not just the chip; the chip stays as
+    // the visible affordance.
+    const media = target.closest('.media');
+    if (!media) return;
+    const art = media.querySelector(':scope > img:not([hidden])');
+    if (art && art.getAttribute('src')) openLightbox(art);
   });
 
   // Deck paging: arrows appear only when the deck overflows its axis, page
@@ -1312,16 +1359,6 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
     lightbox.hidden = false;
     requestAnimationFrame(() => lightbox.classList.add('open'));
   }
-  document.addEventListener('click', (e) => {
-    const b = e.target.closest?.('.expand');
-    if (!b) return;
-    e.stopPropagation();
-    const card = b.closest('.card');
-    const face = card.classList.contains('flipped') ? '.face.back' : '.face.front';
-    const img = card.querySelector(face + ' .media img:not([hidden])');
-    if (!img || !img.getAttribute('src')) return;
-    openLightbox(img);
-  });
   // Portrait art (native / mobile-first surfaces): the slot takes the
   // image's own ratio so nothing crops, and the whole deck narrows so
   // portrait cards sit side by side. Load events don't bubble; capture.
@@ -1335,17 +1372,6 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
       document.querySelector('.grid')?.classList.add('portrait-media');
     }
   }, true);
-
-  // The whole image is the zoom target, not just the expand chip; the chip
-  // stays as the visible affordance. Chip and PIP handlers stop propagation,
-  // so this fires only for clicks on the art itself.
-  document.addEventListener('click', (e) => {
-    const m = e.target.closest?.('.media');
-    if (!m) return;
-    const img = m.querySelector(':scope > img:not([hidden])');
-    if (!img || !img.getAttribute('src')) return;
-    openLightbox(img);
-  });
   const closeLightbox = () => { lightbox.classList.remove('open'); setTimeout(() => { lightbox.hidden = true; }, 250); };
   lightbox.addEventListener('click', closeLightbox);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !lightbox.hidden) closeLightbox(); });

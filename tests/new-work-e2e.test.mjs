@@ -664,16 +664,30 @@ describe('new-work-e2e: serve-question decision page', () => {
       await page.waitForSelector(`${front} .media img.comp:not([hidden])`, { timeout: 15000 });
       await page.click(`${front} .media .chip.expand`);
       await page.waitForSelector('#lightbox:not([hidden])');
-      assert.ok(
-        await page.$eval('#lightbox img', (img) => Boolean(img.getAttribute('src'))),
-        'the streamed-in comp opens full screen',
-      );
+      const compSrc = await page.$eval('#lightbox img', (img) => img.getAttribute('src'));
+      assert.ok(compSrc, 'the streamed-in comp opens full screen');
       await page.click('#lightbox');
+      await page.waitForSelector('#lightbox', { state: 'hidden' });
 
-      // Flipping back restores the card as it was dealt.
+      // The corner inspiration opens the catalog art, not the comp behind it.
+      // Both zoom targets are delegated to document, where stopPropagation
+      // cannot stop a sibling listener, so split handlers let the media one
+      // overwrite the lightbox the pip had just filled.
+      const cornerSrc = await page.$eval(`${front} .media .pip img`, (img) => img.getAttribute('src'));
+      await page.click(`${front} .media .pip`);
+      await page.waitForSelector('#lightbox:not([hidden])');
+      const pipSrc = await page.$eval('#lightbox img', (img) => img.getAttribute('src'));
+      assert.notEqual(pipSrc, compSrc, 'the corner opens the inspiration, not the comp');
+      assert.equal(pipSrc, cornerSrc, 'and it is exactly the art in the corner');
+      await page.click('#lightbox');
+      await page.waitForSelector('#lightbox', { state: 'hidden' });
+
+      // Flipping back keeps a comp that already landed, by design, and must
+      // still leave exactly one slot. exitComp is synchronous, so there is
+      // nothing to wait for.
       await page.click('.bp-opt[data-bp="code"]');
-      await page.waitForTimeout(200);
       assert.equal(await page.$$eval(`${front} .media`, (els) => els.length), 1, 'still one slot after flipping back');
+      assert.ok(await page.$(`${front} .media img.comp:not([hidden])`), 'the landed comp survives the flip back');
       await context.close();
     } finally {
       await stopDaemon(cwd, key);
