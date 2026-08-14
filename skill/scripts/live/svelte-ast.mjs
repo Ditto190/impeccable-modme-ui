@@ -938,9 +938,9 @@ function collectFreeIdentifierRanges(node, scopes, emit) {
 // onto the template's own declaration: `var /** @type {...} */ (h1) = root()`.
 // That is a syntax error, so the browser's dynamic import of the variant dies
 // with "Unexpected token '('" and nothing renders. `@typedef` carries the same
-// shape without being a cast. Keep it a typedef; see PROPS_SCRIPT_SHAPES in
-// tests/live-svelte-props-script.test.mjs, which compiles what these builders
-// emit and parses the result.
+// shape without being a cast. Keep it a typedef;
+// tests/live-svelte-props-script.test.mjs compiles what these builders emit
+// and parses the result.
 export function buildPropsScriptV2(contract) {
   if (!contract || contract.length === 0) {
     return '<script>\n  /** @typedef {Record<string, never>} Props */\n  let {} = $props();\n</script>\n';

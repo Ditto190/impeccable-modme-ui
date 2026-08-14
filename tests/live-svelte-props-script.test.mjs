@@ -122,11 +122,20 @@ describe('the real scaffolder writes variants that parse', () => {
 
   beforeEach(() => {
     scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-svelte-scaffold-'));
-    // The scaffolder resolves the compiler from the app root, so the staged app
-    // needs a package.json and a reachable svelte. Symlinking the repo's
-    // node_modules is what the static fixture sweep already does.
     fs.writeFileSync(path.join(scratch, 'package.json'), JSON.stringify({ name: 'app', type: 'module' }));
-    fs.symlinkSync(path.join(REPO_ROOT, 'node_modules'), path.join(scratch, 'node_modules'), 'dir');
+    // Only `svelte` is linked, into a node_modules this workspace owns.
+    // Symlinking the whole directory pointed `node_modules/.impeccable-live` at
+    // the REPO's node_modules, so the scaffolder wrote its variants there:
+    // afterEach cleaned the temp dir and left them behind, the next case reused
+    // the session id, and a stale variant could be parsed against a fresh
+    // manifest. Svelte's own dependencies still resolve, because node follows
+    // the link to its real path before looking for them.
+    fs.mkdirSync(path.join(scratch, 'node_modules'), { recursive: true });
+    fs.symlinkSync(
+      path.join(REPO_ROOT, 'node_modules', 'svelte'),
+      path.join(scratch, 'node_modules', 'svelte'),
+      'dir',
+    );
   });
 
   afterEach(() => {
@@ -138,10 +147,15 @@ describe('the real scaffolder writes variants that parse', () => {
     'markup with a free expression': ['<h1 class="hero-title">{headline}</h1>'],
   };
 
+  let caseIndex = 0;
   for (const [label, originalLines] of Object.entries(CASES)) {
     it(label, () => {
+      // Distinct per case as well: an id shared across cases is only safe while
+      // the output directory is genuinely per-case, and that coupling is the
+      // kind that quietly breaks again.
+      const sessionId = `testsession${caseIndex++}`;
       const result = scaffoldSvelteComponentSession({
-        id: 'testsession',
+        id: sessionId,
         count: 3,
         sourceFile: 'src/routes/+page.svelte',
         sourceStartLine: 1,
@@ -151,7 +165,7 @@ describe('the real scaffolder writes variants that parse', () => {
       });
       assert.equal(result.fallback, undefined, `scaffold fell back: ${result.reason}`);
 
-      const dir = path.join(scratch, 'node_modules', '.impeccable-live', 'testsession');
+      const dir = path.join(scratch, 'node_modules', '.impeccable-live', sessionId);
       const variants = fs.readdirSync(dir).filter((name) => /^v\d+\.svelte$/.test(name));
       assert.ok(variants.length > 0, 'scaffolder wrote no variant files');
 
