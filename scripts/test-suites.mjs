@@ -161,6 +161,7 @@ export const SUITES = {
           'tests/live-source-search.test.mjs',
           'tests/live-svelte-ast.test.mjs',
           'tests/live-svelte-component-accept.test.mjs',
+          'tests/live-svelte-props-script.test.mjs',
           'tests/live-tanstack-adapter.test.mjs',
           'tests/live-target-context.test.mjs',
           'tests/live-ui-surfaces.test.mjs',
