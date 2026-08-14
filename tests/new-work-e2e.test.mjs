@@ -609,6 +609,92 @@ describe('new-work-e2e: serve-question decision page', () => {
     }
   });
 
+  // The flip used to be tested only on a wireframe card, where the schematic
+  // is hidden and a fresh slot inserted. A card carrying catalog art instead
+  // took the other branch: the inspiration stayed the face and the comp slot
+  // was inserted below it, so the card showed two stacked images. Comp-first
+  // demotes the inspiration to the corner, and a flip has to reach the same
+  // shape a comp-first render would have served.
+  it('(f2) flipping to comp demotes an inspiration face to the corner instead of stacking a second slot', async () => {
+    const cwd = makeWorkspace();
+    const key = 'flipinspo';
+    const hero = makeFakeImage(cwd, 'catalog inspiration', 'inspo.png');
+    const payload = {
+      title: 'Choose the visual world',
+      buildPath: { value: 'code', toggle: true },
+      options: [
+        {
+          id: 'assigned', label: 'The Ledger Spine', kicker: 'THE ROLL', hero,
+          comp: '.impeccable/mocks/decision/assigned.webp',
+          viewport: 'A ruled masthead over a dense grid.', risk: 'Reads editorial.',
+        },
+      ],
+    };
+    const { url } = await startDaemon(cwd, payload, key);
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(url, { waitUntil: 'load' });
+
+      const front = '.card[data-id="assigned"] .face.front';
+      // Code-led: the catalog art is the face, labeled so it never reads as a promise.
+      assert.equal(await page.$$eval(`${front} .media`, (els) => els.length), 1, 'one media slot before the flip');
+      assert.ok(await page.$(`${front} .media .media-label`), 'the inspiration face is labeled');
+      assert.equal(await page.$(`${front} .pip`), null, 'no corner inspiration while code-led');
+
+      await page.click('.bp-opt[data-bp="comp"]');
+      await page.waitForSelector('#bp-confirm:not([hidden])');
+      await page.click('#bp-confirm [data-confirm]');
+      await page.waitForSelector(`${front} .media.comp-pending`);
+
+      // The whole point: one slot, not two.
+      assert.equal(await page.$$eval(`${front} .media`, (els) => els.length), 1,
+        'the flip converts the inspiration slot rather than stacking a second one');
+      assert.ok(await page.$(`${front} .media.comp-pending .pip img`), 'the inspiration moved into the corner');
+      assert.equal(await page.$(`${front} .media > .media-label`), null, 'it is no longer presented as the face');
+      assert.ok(await page.$(`${front} .media .chip.expand`), 'the converted slot keeps its expand affordance');
+
+      const flipped = await waitLoop(cwd, key, { poll: 10 });
+      assert.match(flipped.out, /BUILD PATH FLIPPED: comp/);
+
+      // A comp that streams in must be openable. The zoom handlers used to be
+      // bound once at deal time, so anything built by the flip was inert.
+      mkdirSync(path.join(cwd, '.impeccable', 'mocks', 'decision'), { recursive: true });
+      makeFakeImage(path.join(cwd, '.impeccable', 'mocks', 'decision'), 'ledger spine comp', 'assigned.webp');
+      await page.waitForSelector(`${front} .media img.comp:not([hidden])`, { timeout: 15000 });
+      await page.click(`${front} .media .chip.expand`);
+      await page.waitForSelector('#lightbox:not([hidden])');
+      const compSrc = await page.$eval('#lightbox img', (img) => img.getAttribute('src'));
+      assert.ok(compSrc, 'the streamed-in comp opens full screen');
+      await page.click('#lightbox');
+      await page.waitForSelector('#lightbox', { state: 'hidden' });
+
+      // The corner inspiration opens the catalog art, not the comp behind it.
+      // Both zoom targets are delegated to document, where stopPropagation
+      // cannot stop a sibling listener, so split handlers let the media one
+      // overwrite the lightbox the pip had just filled.
+      const cornerSrc = await page.$eval(`${front} .media .pip img`, (img) => img.getAttribute('src'));
+      await page.click(`${front} .media .pip`);
+      await page.waitForSelector('#lightbox:not([hidden])');
+      const pipSrc = await page.$eval('#lightbox img', (img) => img.getAttribute('src'));
+      assert.notEqual(pipSrc, compSrc, 'the corner opens the inspiration, not the comp');
+      assert.equal(pipSrc, cornerSrc, 'and it is exactly the art in the corner');
+      await page.click('#lightbox');
+      await page.waitForSelector('#lightbox', { state: 'hidden' });
+
+      // Flipping back keeps a comp that already landed, by design, and must
+      // still leave exactly one slot. exitComp is synchronous, so there is
+      // nothing to wait for.
+      await page.click('.bp-opt[data-bp="code"]');
+      assert.equal(await page.$$eval(`${front} .media`, (els) => els.length), 1, 'still one slot after flipping back');
+      assert.ok(await page.$(`${front} .media img.comp:not([hidden])`), 'the landed comp survives the flip back');
+      await context.close();
+    } finally {
+      await stopDaemon(cwd, key);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('(g) a wireframe card draws its schematic in the media slot and keeps its full read on the front', async () => {
     const cwd = makeWorkspace();
     const key = 'wire';
