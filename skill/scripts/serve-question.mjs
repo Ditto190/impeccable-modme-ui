@@ -161,8 +161,12 @@ function printAnswer(raw) {
       console.log('FOLLOWUP OPEN: the table stays open and the page is showing a loading hand. Deliver the next round now with --update --key <key> --payload <file>, then collect it with --wait; never leave the page waiting on a round you have not sent.');
     }
     if (a.buildPath === 'comp' || a.buildPath === 'code') {
+      // The page never writes the flip itself, but "never write it" overstated
+      // that into a rule the agent then applied to new-work's one-time offer,
+      // which exists for exactly this case: a flip on a project that had no
+      // recorded default is the only moment the preference is ever asked for.
       const origin = a.buildPathFlipped
-        ? 'flipped on the page, so it binds this session only; never write it to settings'
+        ? 'flipped on the page, so it binds this session only, and the page never writes it back; the sole exception is new-work’s one-time offer, on a project that had no recorded default at all, which asks after the round closes and writes the answer to .impeccable/config.json'
         : 'the round’s recorded default';
       console.log(`BUILD PATH: ${a.buildPath} (${origin}). ${a.buildPath === 'comp'
         ? 'Comp-led: the chosen card’s comp is law; generate it before building when it does not exist yet, and the finish review audits the build against it.'

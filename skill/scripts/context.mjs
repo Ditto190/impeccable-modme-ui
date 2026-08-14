@@ -1299,8 +1299,15 @@ function readBuildPathAt(root) {
   return value ? { value, source } : null;
 }
 
+// Roots in precedence order, nearest first: the active workspace decides, and
+// the repo root is the fallback a monorepo commits once for every app in it.
+// `checkBuildPathUnset` already reads both, so leaving repoRoot out here made
+// the two disagree: the finding stayed silent because a value existed while the
+// directive never named it, which is the one combination nobody can debug.
 function appendBuildPathDirective(parts, ctx) {
-  const roots = [...new Set([ctx?.projectRoot, process.cwd()].filter(Boolean).map((root) => path.resolve(root)))];
+  const roots = [...new Set(
+    [ctx?.projectRoot, process.cwd(), ctx?.repoRoot].filter(Boolean).map((root) => path.resolve(root)),
+  )];
   for (const root of roots) {
     const found = readBuildPathAt(root);
     if (!found) continue;

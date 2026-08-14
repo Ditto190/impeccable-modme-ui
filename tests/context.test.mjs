@@ -1094,6 +1094,36 @@ describe('context.mjs CLI', () => {
       write('.impeccable/config.json', JSON.stringify({ buildPath: 'code-first' }));
       assert.equal(run().stdout.includes('BUILD_PATH_DEFAULT'), false);
     });
+
+    // A monorepo commits the preference once at the repo root for every app in
+    // it. Reading only projectRoot left the staleness finding (which does read
+    // both) silent while the directive never named the value.
+    describe('in a monorepo', () => {
+      const writeWorkspace = () => {
+        write('package.json', JSON.stringify({ private: true, workspaces: ['apps/*'] }));
+        write('turbo.json', JSON.stringify({ tasks: {} }));
+        write('PRODUCT.md', '# Root product\n');
+        write('apps/dashboard/src/App.jsx', 'export default function App() { return "d"; }\n');
+      };
+      const runFromWorkspace = () => spawnSync(process.execPath, [SCRIPT_PATH, '--target', 'apps/dashboard/src/App.jsx'], {
+        cwd: scratch,
+        encoding: 'utf8',
+        env: { ...process.env, IMPECCABLE_NO_UPDATE_CHECK: '1', IMPECCABLE_NO_STALENESS_CHECK: '1' },
+      });
+
+      it('falls back to the repo-root value for a workspace that sets none', () => {
+        writeWorkspace();
+        write('.impeccable/config.json', JSON.stringify({ buildPath: 'code' }));
+        assert.match(runFromWorkspace().stdout, /BUILD_PATH_DEFAULT: code/);
+      });
+
+      it('lets the workspace override the repo root, nearest root first', () => {
+        writeWorkspace();
+        write('.impeccable/config.json', JSON.stringify({ buildPath: 'code' }));
+        write('apps/dashboard/.impeccable/config.json', JSON.stringify({ buildPath: 'comp' }));
+        assert.match(runFromWorkspace().stdout, /BUILD_PATH_DEFAULT: comp/);
+      });
+    });
   });
 
   it('keeps the manual-detector directive out of early context when the current provider hook is active', () => {
