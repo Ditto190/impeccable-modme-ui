@@ -1123,6 +1123,26 @@ describe('context.mjs CLI', () => {
         write('apps/dashboard/.impeccable/config.json', JSON.stringify({ buildPath: 'comp' }));
         assert.match(runFromWorkspace().stdout, /BUILD_PATH_DEFAULT: comp/);
       });
+
+      // Running from one workspace while targeting another must not hand the
+      // target the caller's preference. The invoking directory is not evidence
+      // about the project being worked on.
+      it('does not let the invoking workspace lend its value to the target', () => {
+        writeWorkspace();
+        write('apps/marketing/src/App.jsx', 'export default function App() { return "m"; }\n');
+        write('.impeccable/config.json', JSON.stringify({ buildPath: 'code' }));
+        write('apps/marketing/.impeccable/config.json', JSON.stringify({ buildPath: 'comp' }));
+        // Absolute, so the target actually resolves onto dashboard. A relative
+        // path would be read against the caller's cwd, which resolves the
+        // project back to marketing and tests nothing.
+        const res = spawnSync(process.execPath, [SCRIPT_PATH, '--target', path.join(scratch, 'apps', 'dashboard', 'src', 'App.jsx')], {
+          cwd: path.join(scratch, 'apps', 'marketing'),
+          encoding: 'utf8',
+          env: { ...process.env, IMPECCABLE_NO_UPDATE_CHECK: '1', IMPECCABLE_NO_STALENESS_CHECK: '1' },
+        });
+        // The repo-root default, not marketing's comp.
+        assert.match(res.stdout, /BUILD_PATH_DEFAULT: code/);
+      });
     });
   });
 

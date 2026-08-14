@@ -1299,14 +1299,19 @@ function readBuildPathAt(root) {
   return value ? { value, source } : null;
 }
 
-// Roots in precedence order, nearest first: the active workspace decides, and
+// Roots in precedence order, nearest first: the resolved project decides, and
 // the repo root is the fallback a monorepo commits once for every app in it.
-// `checkBuildPathUnset` already reads both, so leaving repoRoot out here made
-// the two disagree: the finding stayed silent because a value existed while the
-// directive never named it, which is the one combination nobody can debug.
+// `checkBuildPathUnset` reads exactly these two, and the pair has to match:
+// when they disagree the finding goes silent because a value exists while the
+// directive never names it, which is the one combination nobody can debug.
+//
+// The invoking directory is deliberately not in the chain. With `--target`
+// selecting another workspace, cwd is the caller's app, not the target's, and
+// letting it rank above the repo root hands one workspace another's workflow.
+// It stands in only when no project resolved at all.
 function appendBuildPathDirective(parts, ctx) {
   const roots = [...new Set(
-    [ctx?.projectRoot, process.cwd(), ctx?.repoRoot].filter(Boolean).map((root) => path.resolve(root)),
+    [ctx?.projectRoot || process.cwd(), ctx?.repoRoot].filter(Boolean).map((root) => path.resolve(root)),
   )];
   for (const root of roots) {
     const found = readBuildPathAt(root);
