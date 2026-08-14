@@ -117,6 +117,23 @@ describe('detect CLI monorepo DESIGN.md inheritance', () => {
     );
   });
 
+  it('pnpm flow list with inline comment and non-standard dirs still detected', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-detect-mono-flow-'));
+    tempRoots.push(dir);
+    fs.writeFileSync(path.join(dir, 'DESIGN.md'), DESIGN_MD);
+    fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'packages: ["services/*"] # deploy targets\n');
+    fs.mkdirSync(path.join(dir, 'services/api'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'services/api/package.json'), '{"name":"api"}');
+    const page = path.join(dir, 'services/api/page.html');
+    fs.writeFileSync(page, PAGE_HTML);
+
+    const findings = runDetect(dir, [page]);
+    assert.ok(
+      fontFindingsFor(findings, page).some((f) => f.ignoreValue === 'verdana'),
+      'inline YAML comment must not defeat workspace-glob recognition',
+    );
+  });
+
   it('directory target: scan apps/web dir inherits root DESIGN.md', () => {
     const { dir, page, webDir } = mkPnpmMonorepo();
     const findings = runDetect(dir, [webDir]);

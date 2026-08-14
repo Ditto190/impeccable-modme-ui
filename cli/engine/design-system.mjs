@@ -603,7 +603,7 @@ function readWorkspacePatterns(dir) {
   try {
     let inPackages = false;
     for (const line of fs.readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf-8').split(/\r?\n/)) {
-      const trimmed = line.trim();
+      const trimmed = stripInlineYamlComment(line).trim();
       if (!trimmed || trimmed.startsWith('#')) continue;
       const flow = trimmed.match(/^packages:\s*\[(.*)\]\s*$/);
       if (flow) {
