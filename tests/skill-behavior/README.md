@@ -86,15 +86,24 @@ stay here because they are the record of what a weaker model does with this text
 and that is the useful part. Reproduce with
 `IMPECCABLE_SKILL_BEHAVIOR_MODELS=gpt-5.6-luna,deepseek-v4-flash`.
 
-Against the current default lineup, three cells are the known floor:
-`redesign replaces DESIGN` is flaky on every model, `critique closes` is flaky on
-gemini-3.6-flash, and `initialized natural build` fails on claude-sonnet-5.
-A regression is a failure beyond those three.
+Against the current default lineup, two cells are the known floor:
+`redesign replaces DESIGN` is flaky on every model, and `critique closes` is
+flaky on gemini-3.6-flash. A regression is a failure beyond those two.
+
+**Read any failure against the clock before calling it behavior.** The suite ran
+at a 300s per-test timeout until 2026-08-13, and for the workflow-contract
+scenarios that cap was below the runtime of a correct run. `initialized natural
+build` on claude-sonnet-5 was measured at 579s when it stopped to put the
+concept to the user before building, while the runs that skipped that checkpoint
+and failed the assertion finished in 130-200s. The cap was therefore selecting
+for the behavior the scenario forbids: thorough runs were killed, hasty ones
+were graded. The timeout is now 900s (`scripts/test-suites.mjs`). A duration at
+or just past the cap is a timeout, not a verdict.
 
 | Scenario | claude-sonnet-5 | gpt-5.6-terra | gemini-3.6-flash | luna / deepseek (dropped) |
 |---|---|---|---|---|
 | attended fresh init | pass | pass | pass | not measured |
-| initialized natural build | **fail (3 of 3)** | pass | pass | not measured |
+| initialized natural build | flaky (1 of 4, and see the clock note) | pass | pass | not measured |
 | redesign replaces DESIGN | flaky (timeout this run) | **fail** | **fail (timeout)** | not measured |
 | bolder refinement | pass | pass | pass (on 3.5) | luna pass, deepseek **fail** |
 | critique closes | pass (4 of 4) | pass (3 of 3) | **flaky (1 of 4)** | luna **fail (1 of 6)**, deepseek flaky |
@@ -113,23 +122,35 @@ problem that one model's priors expose rather than as a model floor.
 
 | Scenario | claude-sonnet-5 | gpt-5.6-terra | gemini-3.6-flash |
 |---|---|---|---|
-| 1-7, 10, 12-14 | pass | pass | pass |
+| 1-7, 10, 12-15 | pass | pass | pass |
 | 8 (SvelteKit exploration) | flaky | pass | pass |
-| 9 (update surfaced, never auto-run) | **fail (3 of 3)** | pass | pass |
 | 11 (shape resolves the build gate) | flaky | pass | pass |
-| 15 (native audit variant) | **fail (3 of 3)** | pass | pass |
-
-**Scenarios 9 and 15 and `initialized natural build` fail on unmodified `main`.**
-Confirmed against a clean worktree at `ddd23b18` with the same model and prompt:
-same assertion, same shape. They are open defects in the current text, not
-regressions from whatever change you are testing. Scenario 9 fails by auto-running
-the skill update instead of surfacing it; scenario 15 loads `audit.md` where the
-iOS platform should route it to `audit.native.md`; the natural-build contract
-begins implementation before the attended concept checkpoint. Check them against
-`main` before attributing any of the three to your branch.
 
 Scenarios 8 and 11 pass on re-run, so treat a single failure there as flake and
 confirm with a second run before investigating.
+
+Scenarios 9 and 15 both failed on sonnet when this baseline was first measured,
+and the two causes are worth keeping because neither was where it looked:
+
+- **9 was a real defect in the directive.** `UPDATE_AVAILABLE` said to ask the
+  user, then "If they agree, run `npx impeccable update`", then to continue
+  without waiting. With no wait there is no agreement to read, so the command
+  was the only concrete instruction left standing and sonnet ran it. Fixed by
+  removing the command from the turn entirely rather than by strengthening the
+  warning around it.
+- **15 was a broken fixture.** The iOS workspace held PRODUCT.md and nothing
+  else, so `audit the app in this workspace` named an app that did not exist.
+  Sonnet spent its whole step budget looking for it and read no reference file
+  at all, which the assertion reported as "loaded `audit.md` instead of the
+  variant". The fixture now ships one SwiftUI screen, the same courtesy
+  `MINIMAL_LANDING_HTML` already did for the web scenarios. The scenario passes
+  on unmodified `main` once the fixture is answerable, which is the proof the
+  routing text was never at fault.
+
+The general lesson is worth more than either fix: **an assertion reports the
+property it checks, not the reason it failed.** Both of these read as routing
+defects and neither was one. Pull the trace before writing the diagnosis, and
+prefer `IMPECCABLE_SKILL_BEHAVIOR_VERBOSE=1` over inference from the message.
 
 Gemini cells marked `on 3.5` were measured on the superseded `gemini-3.5-flash`
 and have not been re-run on 3.6. That distinction is not pedantic. `critique
