@@ -1316,7 +1316,12 @@ function appendBuildPathDirective(parts, ctx) {
   for (const root of roots) {
     const found = readBuildPathAt(root);
     if (!found) continue;
-    parts.push(`BUILD_PATH_DEFAULT: ${found.value} (from ${found.source}). Author direction and surface rounds with this as buildPath.value and toggle: true; a flip on the page binds that session only and is never written back to the config.`);
+    // "Never written back" is scoped by the fact that this directive exists at
+    // all: it is emitted only where a value is already recorded, which is the
+    // case where a flip really is session-only. Saying so inline because the
+    // bare absolute reads as a rule that overrides new-work's one-time offer,
+    // which is exactly how the same wording misfired in serve-question.
+    parts.push(`BUILD_PATH_DEFAULT: ${found.value} (from ${found.source}). Author direction and surface rounds with this as buildPath.value and toggle: true; a flip on the page binds that session only and is never written back, because a default is already recorded here. New-work's one-time offer to record a flipped value applies only where no default exists, which is why you are not seeing this line on those projects.`);
     return;
   }
 }
