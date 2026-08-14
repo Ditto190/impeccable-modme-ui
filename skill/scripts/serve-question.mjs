@@ -1076,7 +1076,11 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
       if (!m.isConnected || !m.classList.contains('comp-pending') || !current()) { clearInterval(tick); return; }
       const probe = new Image();
       probe.onload = () => {
-        if (!current()) return;
+        // A stale generation also ends this run's clock. tryLoad clears it on
+        // re-entry, and an in-flight probe that finishes stale schedules no
+        // re-entry, so returning without clearing ran the interval for the rest
+        // of the page's life.
+        if (!current()) { clearInterval(tick); return; }
         landTracker.last = Date.now();
         const target = m.querySelector('img.comp') || img;
         target.src = probe.src;
@@ -1084,7 +1088,7 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
         settle();
       };
       probe.onerror = () => {
-        if (!current()) return;
+        if (!current()) { clearInterval(tick); return; }
         const quiet = Date.now() - landTracker.last > 240000;
         if (Date.now() - started > 240000 && quiet && fallback()) return;
         setTimeout(tryLoad, m.classList.contains('stand-in') ? 5000 : 2500);
