@@ -1013,14 +1013,22 @@ async function fetchLatestSkillVersion() {
   }
 }
 
+// Two instructions used to sit in one directive: ask, and "if they agree, run
+// it". Nothing gated the second on an answer, and the same sentence said to
+// continue without waiting, so a run that could never establish agreement was
+// still spelled out as the next command. The offer stays; the command leaves
+// this turn entirely, because installing over the skill mid-session changes
+// files the session is reading and only takes effect in the next one anyway.
 function buildUpdateDirective(localVersion, latestVersion) {
   return (
     `UPDATE_AVAILABLE: A newer Impeccable skill is available ` +
     `(installed v${localVersion}, latest v${latestVersion}). ` +
-    `Before continuing, ask the user once: "A newer Impeccable (v${latestVersion}) is available. ` +
+    `Mention it once, in this form: "A newer Impeccable (v${latestVersion}) is available. ` +
     `Update now? It runs \`npx impeccable update\`." ` +
-    `If they agree, run \`npx impeccable update\` (the update applies to the next session, not this one). ` +
-    `Either way, continue the current task without waiting, and do not raise this again.`
+    `Do not run \`npx impeccable update\` in this turn, whatever the user answers: it rewrites the skill files ` +
+    `this session is reading, and the update only takes effect in the next session, so there is nothing to gain now. ` +
+    `Run it in a later turn, only after the user has asked for it in their own words. ` +
+    `Continue the current task now without waiting, and do not raise this again.`
   );
 }
 

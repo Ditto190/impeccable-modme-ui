@@ -1451,6 +1451,18 @@ describe('context.mjs update check', () => {
     assert.match(res.stdout, /^# PRODUCT\.md/);
   });
 
+  // The directive used to say "ask once" and "if they agree, run it" while also
+  // saying to continue without waiting. Nothing gated the run on an answer that
+  // could not arrive, so the command read as the next step. It now forbids
+  // running in this turn outright, whatever the answer.
+  it('forbids running the update in the same turn, on any answer', () => {
+    const { stdout } = run({ lastCheck: Date.now(), latestVersion: '2.0.0' });
+    assert.match(stdout, /Do not run `npx impeccable update` in this turn, whatever the user answers/);
+    assert.match(stdout, /only after the user has asked for it in their own words/);
+    // The conditional that made the command look reachable must be gone.
+    assert.equal(/If they agree, run/.test(stdout), false);
+  });
+
   it('stays silent when the cached latest version is not newer', () => {
     const res = run({ lastCheck: Date.now(), latestVersion: '0.0.1' });
     assert.equal(res.status, 0);
