@@ -117,6 +117,41 @@ describe('detect CLI monorepo DESIGN.md inheritance', () => {
     );
   });
 
+  it('lerna packages globs: workspace outside apps/packages inherits root DESIGN.md', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-detect-mono-lerna-'));
+    tempRoots.push(dir);
+    fs.writeFileSync(path.join(dir, 'DESIGN.md'), DESIGN_MD);
+    fs.writeFileSync(path.join(dir, 'lerna.json'), '{"packages":["modules/*"]}');
+    fs.mkdirSync(path.join(dir, 'modules/web'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'modules/web/package.json'), '{"name":"web"}');
+    const page = path.join(dir, 'modules/web/page.html');
+    fs.writeFileSync(page, PAGE_HTML);
+
+    const findings = runDetect(dir, [page]);
+    assert.ok(
+      fontFindingsFor(findings, page).some((f) => f.ignoreValue === 'verdana'),
+      'lerna packages globs must be read as workspace declarations',
+    );
+  });
+
+  it('impeccable projectRoots: workspace inherits root DESIGN.md', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-detect-mono-iroots-'));
+    tempRoots.push(dir);
+    fs.writeFileSync(path.join(dir, 'DESIGN.md'), DESIGN_MD);
+    fs.mkdirSync(path.join(dir, '.impeccable'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.impeccable/config.json'), '{"projectRoots":["sites/*"]}');
+    fs.mkdirSync(path.join(dir, 'sites/docs'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'sites/docs/package.json'), '{"name":"docs"}');
+    const page = path.join(dir, 'sites/docs/page.html');
+    fs.writeFileSync(page, PAGE_HTML);
+
+    const findings = runDetect(dir, [page]);
+    assert.ok(
+      fontFindingsFor(findings, page).some((f) => f.ignoreValue === 'verdana'),
+      'impeccable projectRoots must be read as workspace declarations',
+    );
+  });
+
   it('pnpm flow list with inline comment and non-standard dirs still detected', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-detect-mono-flow-'));
     tempRoots.push(dir);
@@ -193,6 +228,32 @@ typography:
       fontFindingsFor(findings, page).length,
       0,
       'a project under a workspace-declaring $HOME must not inherit its DESIGN.md',
+    );
+  });
+
+  it('symlinked $HOME still stops the walk', () => {
+    // Some distros symlink home paths (/home -> /var/home), so $HOME never
+    // string-matches the physical paths a cwd-resolved target produces. The
+    // walk must compare against the realpath form too.
+    const real = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-detect-mono-realhome-'));
+    tempRoots.push(real);
+    const link = path.join(os.tmpdir(), `impeccable-detect-mono-linkhome-${path.basename(real).slice(-6)}`);
+    fs.symlinkSync(real, link);
+    tempRoots.push(link);
+    fs.writeFileSync(path.join(real, 'DESIGN.md'), DESIGN_MD);
+    fs.writeFileSync(path.join(real, 'pnpm-workspace.yaml'), "packages:\n  - 'apps/*'\n");
+    fs.mkdirSync(path.join(real, 'project'), { recursive: true });
+    fs.writeFileSync(path.join(real, 'project/package.json'), '{"name":"p"}');
+    const page = path.join(real, 'project/page.html');
+    fs.writeFileSync(page, PAGE_HTML);
+
+    // HOME is the symlink; the target is passed via its physical path, so a
+    // logical-only comparison would walk straight past home and inherit.
+    const findings = runDetect(real, [fs.realpathSync(page)], { HOME: link, USERPROFILE: link });
+    assert.equal(
+      fontFindingsFor(findings, page).length + fontFindingsFor(findings, fs.realpathSync(page)).length,
+      0,
+      'a symlinked $HOME must still stop the walk before inheriting',
     );
   });
 });

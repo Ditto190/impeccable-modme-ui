@@ -597,9 +597,20 @@ function designSystemStartDir(targetPath, cwd = process.cwd()) {
 // Returns { dir, hasDesign } for the stopping directory, or null when the walk
 // runs out. This is the fix for cross-project contamination.
 function readWorkspacePatterns(dir) {
+  const patterns = [];
+  // Same four glob sources as context.mjs's readProjectPatterns: Impeccable
+  // projectRoots, package.json workspaces, lerna packages, pnpm packages.
+  for (const name of ['config.json', 'config.local.json']) {
+    const roots = safeReadJson(path.join(dir, '.impeccable', name))?.projectRoots;
+    if (Array.isArray(roots)) {
+      patterns.push(...roots.filter(entry => typeof entry === 'string' && entry.trim()).map(entry => entry.trim()));
+    }
+  }
   const workspaces = safeReadJson(path.join(dir, 'package.json'))?.workspaces;
-  const patterns = Array.isArray(workspaces) ? [...workspaces]
-    : Array.isArray(workspaces?.packages) ? [...workspaces.packages] : [];
+  if (Array.isArray(workspaces)) patterns.push(...workspaces);
+  else if (Array.isArray(workspaces?.packages)) patterns.push(...workspaces.packages);
+  const lernaPackages = safeReadJson(path.join(dir, 'lerna.json'))?.packages;
+  if (Array.isArray(lernaPackages)) patterns.push(...lernaPackages);
   try {
     let inPackages = false;
     for (const line of fs.readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf-8').split(/\r?\n/)) {
@@ -632,9 +643,22 @@ function isMonorepoRoot(dir) {
   });
 }
 
+// Both forms of the home directory. The walk compares path strings, and a
+// symlinked home (e.g. /home -> /var/home) never string-matches the physical
+// paths a cwd-resolved target produces, which would let the post-boundary walk
+// sail through $HOME and inherit from it.
+function homeDirForms() {
+  const homeDir = path.resolve(os.homedir());
+  const forms = new Set([homeDir]);
+  try {
+    forms.add(fs.realpathSync(homeDir));
+  } catch { /* keep the logical form only */ }
+  return forms;
+}
+
 export function findDesignRoot(startDir) {
   let dir = path.resolve(startDir);
-  const homeDir = path.resolve(os.homedir());
+  const homeDirs = homeDirForms();
   let boundary = null;
   while (true) {
     if (!boundary && resolveDesignMdPath(dir)) return { dir, hasDesign: true };
@@ -646,7 +670,7 @@ export function findDesignRoot(startDir) {
       // the walk with nothing inherited. The home directory is never an
       // owning root, same as context.mjs's findMonorepoRoot, which stops at
       // homeDir before its monorepo check.
-      if (dir !== homeDir && isMonorepoRoot(dir)) return { dir, hasDesign: !!resolveDesignMdPath(dir) };
+      if (!homeDirs.has(dir) && isMonorepoRoot(dir)) return { dir, hasDesign: !!resolveDesignMdPath(dir) };
       if (fs.existsSync(path.join(dir, '.git'))) return boundary;
     } else if (PROJECT_ROOT_MARKERS.some((marker) => fs.existsSync(path.join(dir, marker)))) {
       boundary = { dir, hasDesign: false };
@@ -654,7 +678,7 @@ export function findDesignRoot(startDir) {
       // with its own .git, inherits nothing from above.
       if (isMonorepoRoot(dir) || fs.existsSync(path.join(dir, '.git'))) return boundary;
     }
-    if (dir === homeDir) return boundary;
+    if (homeDirs.has(dir)) return boundary;
     const parent = path.dirname(dir);
     if (parent === dir) return boundary;
     dir = parent;
