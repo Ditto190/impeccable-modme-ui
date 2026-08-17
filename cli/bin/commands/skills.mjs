@@ -1534,7 +1534,8 @@ function hookInstalledForProvider(root, provider) {
 
 function valueHasImpeccableHookMarker(value) {
   if (typeof value === 'string') {
-    return IMPECCABLE_HOOK_COMMAND_MARKERS.some(marker => value.includes(marker));
+    const normalized = value.replace(/\\/g, '/');
+    return IMPECCABLE_HOOK_COMMAND_MARKERS.some(marker => normalized.includes(marker));
   }
   if (Array.isArray(value)) return value.some(valueHasImpeccableHookMarker);
   if (value && typeof value === 'object') {

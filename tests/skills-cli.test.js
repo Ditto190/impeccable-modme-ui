@@ -1649,6 +1649,35 @@ describe('hook manifest merge helpers', () => {
       'node .cursor/skills/impeccable/scripts/hook-before-edit.mjs',
     ]);
   });
+
+  test('mergeHookManifests replaces legacy Windows-path Claude hooks (#604)', () => {
+    const legacyPath = 'C:\\Users\\alice\\.claude\\skills\\impeccable\\scripts\\hook.mjs';
+    const legacyCommand = `[ ! -f "${legacyPath}" ] || node "${legacyPath}"`;
+    const freshCommand = `node -e "guard" "${legacyPath}"`;
+    const merged = mergeHookManifests(
+      {
+        hooks: {
+          PostToolUse: [{ matcher: 'Edit|Write|MultiEdit', hooks: [
+            { type: 'command', command: legacyCommand },
+          ] }],
+          Stop: [{ hooks: [{ type: 'command', command: legacyCommand }] }],
+        },
+      },
+      {
+        hooks: {
+          PostToolUse: [{ matcher: 'Edit|Write|MultiEdit', hooks: [
+            { type: 'command', command: freshCommand },
+          ] }],
+          Stop: [{ hooks: [{ type: 'command', command: freshCommand }] }],
+        },
+      },
+    );
+
+    expect(merged.hooks.PostToolUse).toHaveLength(1);
+    expect(merged.hooks.Stop).toHaveLength(1);
+    expect(merged.hooks.PostToolUse[0].hooks[0].command).toBe(freshCommand);
+    expect(merged.hooks.Stop[0].hooks[0].command).toBe(freshCommand);
+  });
 });
 
 // ─── Hook command path resolution (issue #399, part 1) ───────────────────────
