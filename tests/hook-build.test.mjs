@@ -72,7 +72,8 @@ describe('hook manifest builders', () => {
     const group = manifest.hooks.PostToolUse[0];
     const handler = group.hooks[0];
 
-    assert.equal(group.matcher, 'Edit|Write|MultiEdit');
+    assert.equal(group.matcher, 'Edit|Write');
+    assert.doesNotMatch(manifest.description, /MultiEdit/);
     assert.equal(handler.type, 'command');
     assert.equal(handler.timeout, 5);
     assert.equal(handler.statusMessage, 'Checking UI changes');
@@ -356,7 +357,7 @@ describe('generated hook artifacts in repo', () => {
     assert.equal(manifest.description, undefined);
 
     const handler = manifest.hooks.PostToolUse[0].hooks[0];
-    assert.equal(manifest.hooks.PostToolUse[0].matcher, 'Edit|Write|MultiEdit');
+    assert.equal(manifest.hooks.PostToolUse[0].matcher, 'Edit|Write');
     expectCommand(handler.command, 'skills/impeccable/scripts/hook.mjs');
     // Resolves relative to the installed plugin, not a `.claude/skills/` layout.
     assert.ok(handler.command.includes('${CLAUDE_PLUGIN_ROOT}'),
