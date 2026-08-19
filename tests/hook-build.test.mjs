@@ -376,6 +376,15 @@ describe('generated hook artifacts in repo', () => {
     assert.ok(fs.existsSync(path.join(REPO_ROOT, 'plugin/skills/impeccable/scripts/hook-lib.mjs')));
   });
 
+  it('keeps the marketplace hook repair matcher aligned with Claude Code', () => {
+    const hookAdmin = fs.readFileSync(
+      path.join(REPO_ROOT, 'plugin/skills/impeccable/scripts/hook-admin.mjs'),
+      'utf8',
+    );
+    assert.match(hookAdmin, /matcher: 'Edit\|Write'/);
+    assert.doesNotMatch(hookAdmin, /matcher: 'Edit\|Write\|MultiEdit'/);
+  });
+
   it('generated hook runtime can import the bundled detector', async () => {
     for (const scriptDir of [
       '.claude/skills/impeccable/scripts',
