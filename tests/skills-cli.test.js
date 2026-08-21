@@ -325,6 +325,29 @@ describe('copyProviderAgents: Claude, Copilot, and Cursor subagents', () => {
     rmSync(home, { recursive: true, force: true });
   }, 15000);
 
+  test('inferred home-rooted updates refresh stale or missing Copilot user agents', () => {
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-update-home-'));
+    execSync('git init', { cwd: home });
+    const bundleRoot = createFakeUniversalBundle(home, ['.github']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    const userAgent = join(home, '.copilot', 'agents', 'impeccable-finish-reviewer.agent.md');
+    const projectAgent = join(home, '.github', 'agents', 'impeccable-finish-reviewer.agent.md');
+
+    run('skills install -y --scope=global --no-hooks --providers=github', { cwd: home, env });
+    writeFileSync(userAgent, 'stale copy\n');
+
+    run('skills update -y --no-hooks', { cwd: home, env });
+    expect(readFileSync(userAgent, 'utf8')).toContain('Copilot reviewer body.');
+    expect(existsSync(projectAgent)).toBe(false);
+
+    rmSync(userAgent);
+    run('skills update -y --no-hooks', { cwd: home, env });
+    expect(readFileSync(userAgent, 'utf8')).toContain('Copilot reviewer body.');
+    expect(existsSync(projectAgent)).toBe(false);
+
+    rmSync(home, { recursive: true, force: true });
+  }, 20000);
+
   test('project scope reports user-level Copilot agents that shadow the installed ones; Cursor never does (project wins there)', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-shadow-'));
     const home = mkdtempSync(join(tmpdir(), 'imp-agents-shadow-home-'));
