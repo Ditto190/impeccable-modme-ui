@@ -724,6 +724,8 @@ function isUpToDate(root, providers, bundleDir, scope) {
         if (bundleHash !== localHash) return false;
       }
     }
+
+    if (!providerAgentsUpToDate(bundleDir, root, provider, scope)) return false;
   }
   return true;
 }
@@ -1251,7 +1253,9 @@ function copyProviderSkills(bundleDir, root, targets, { scope } = {}) {
 }
 
 // Native subagent definitions that ship in the bundle next to a provider's
-// skills. GitHub Copilot's live at `.github/agents/impeccable-*.agent.md`:
+// skills. Claude Code's live at `.claude/agents/impeccable-*.md`; project
+// agents take precedence over user agents. GitHub Copilot's live at
+// `.github/agents/impeccable-*.agent.md`:
 // project installs commit them at `<repo>/.github/agents/`, user-level
 // installs go to `~/.copilot/agents/` (Copilot's user-scope dir, NOT
 // `~/.github/`). On a name conflict Copilot lets the user-level file shadow
@@ -1261,6 +1265,11 @@ function copyProviderSkills(bundleDir, root, targets, { scope } = {}) {
 // `~/.cursor/agents/`; project agents take precedence there, so no shadow
 // warning is needed.
 const PROVIDER_AGENT_ARTIFACTS = {
+  '.claude': {
+    ext: '.md',
+    userDir: home => join(home, '.claude', 'agents'),
+    userShadowsProject: false,
+  },
   '.github': {
     ext: '.agent.md',
     userDir: home => join(home, '.copilot', 'agents'),
@@ -1272,6 +1281,23 @@ const PROVIDER_AGENT_ARTIFACTS = {
     userShadowsProject: false,
   },
 };
+
+function providerAgentsUpToDate(bundleDir, root, provider, scope) {
+  const artifact = PROVIDER_AGENT_ARTIFACTS[provider];
+  if (!artifact) return true;
+  const srcDir = join(bundleDir, provider, 'agents');
+  if (!existsSync(srcDir)) return true;
+
+  const destDir = scope === 'user'
+    ? artifact.userDir(root)
+    : join(root, provider, 'agents');
+  const agentFiles = readdirSync(srcDir).filter(name => name.endsWith(artifact.ext));
+  return agentFiles.every(name => {
+    const localPath = join(destDir, name);
+    return existsSync(localPath)
+      && hashSkillFile(join(srcDir, name)) === hashSkillFile(localPath);
+  });
+}
 
 function copyProviderAgents(bundleDir, root, providers, { scope, home = homedir() } = {}) {
   const targets = Array.isArray(providers) ? providers : [providers];

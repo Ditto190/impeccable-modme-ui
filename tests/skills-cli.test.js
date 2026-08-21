@@ -84,11 +84,13 @@ function createFakeUniversalBundle(root, providers = ['.claude', '.agents', '.cu
     writeFileSync(join(skillDir, 'scripts', 'context.mjs'), 'console.log("local bundle context");\n');
   }
   if (providers.includes('.claude')) {
-    mkdirSync(join(bundleRoot, '.claude'), { recursive: true });
+    mkdirSync(join(bundleRoot, '.claude', 'agents'), { recursive: true });
     writeFileSync(join(bundleRoot, '.claude', 'settings.json'), JSON.stringify({
       description: 'fresh claude hook',
       hooks: { PostToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'node ".claude/skills/impeccable/scripts/hook.mjs"' }] }] },
     }, null, 2));
+    writeFileSync(join(bundleRoot, '.claude', 'agents', 'impeccable-finish-reviewer.md'),
+      '---\nname: impeccable-finish-reviewer\ndescription: Reviews a finished build.\n---\nClaude reviewer body.\n');
   }
   if (providers.includes('.cursor')) {
     mkdirSync(join(bundleRoot, '.cursor'), { recursive: true });
@@ -228,7 +230,51 @@ describe('copyProviderSkills: symlink handling', () => {
   });
 });
 
-describe('copyProviderAgents: Copilot and Cursor subagents', () => {
+describe('copyProviderAgents: Claude, Copilot, and Cursor subagents', () => {
+  test('Claude project and user scopes use .claude/agents, with project copies taking precedence', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-claude-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-claude-home-'));
+    const bundle = createFakeUniversalBundle(tmp, ['.claude']);
+    mkdirSync(join(home, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(home, '.claude', 'agents', 'impeccable-finish-reviewer.md'), 'stale copy\n');
+
+    const projectResults = copyProviderAgents(bundle, tmp, ['.claude'], { scope: 'project', home });
+    const userResults = copyProviderAgents(bundle, home, ['.claude'], { scope: 'user' });
+
+    expect(projectResults).toHaveLength(1);
+    expect(projectResults[0].shadowed).toEqual([]);
+    expect(userResults).toHaveLength(1);
+    expect(readFileSync(join(tmp, '.claude', 'agents', 'impeccable-finish-reviewer.md'), 'utf8'))
+      .toContain('Claude reviewer body.');
+    expect(readFileSync(join(home, '.claude', 'agents', 'impeccable-finish-reviewer.md'), 'utf8'))
+      .toContain('Claude reviewer body.');
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('Claude install and update backfill bundled agents beside an unchanged skill', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-claude-install-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-claude-install-home-'));
+    execSync('git init', { cwd: tmp });
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.claude']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    const agentPath = join(tmp, '.claude', 'agents', 'impeccable-finish-reviewer.md');
+
+    const installOutput = run('skills install -y --no-hooks --providers=claude', { cwd: tmp, env });
+    expect(installOutput).toContain('Installed Claude Code agents into:');
+    expect(existsSync(agentPath)).toBe(true);
+
+    rmSync(agentPath);
+    const updateOutput = run('skills update -y --no-hooks', { cwd: tmp, env });
+    expect(updateOutput).toContain('Updated');
+    expect(updateOutput).toContain('Installed Claude Code agents into:');
+    expect(existsSync(agentPath)).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
+
   test('project scope places agents at .github/agents/ and .cursor/agents/', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-project-'));
     const bundle = createFakeUniversalBundle(tmp, ['.github', '.cursor']);
