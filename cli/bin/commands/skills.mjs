@@ -1288,15 +1288,18 @@ function providerAgentsUpToDate(bundleDir, root, provider, scope) {
   const srcDir = join(bundleDir, provider, 'agents');
   if (!existsSync(srcDir)) return true;
 
-  const destDir = scope === 'user'
-    ? artifact.userDir(root)
-    : join(root, provider, 'agents');
+  const projectDir = join(root, provider, 'agents');
+  const destDirs = scope === 'user'
+    ? [artifact.userDir(root)]
+    : scope === 'project' || !isHomeDir(root)
+      ? [projectDir]
+      : [...new Set([artifact.userDir(root), projectDir])];
   const agentFiles = readdirSync(srcDir).filter(name => name.endsWith(artifact.ext));
-  return agentFiles.every(name => {
+  return agentFiles.every(name => destDirs.some(destDir => {
     const localPath = join(destDir, name);
     return existsSync(localPath)
       && hashSkillFile(join(srcDir, name)) === hashSkillFile(localPath);
-  });
+  }));
 }
 
 function copyProviderAgents(bundleDir, root, providers, { scope, home = homedir() } = {}) {
