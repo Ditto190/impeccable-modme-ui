@@ -6,7 +6,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import {
@@ -3362,6 +3362,56 @@ colors: {}
       assert.equal(res.status, 404);
     } finally {
       rmSync(linkPath, { force: true });
+    }
+  });
+
+  it('/source rejects a directory symlink whose nested file is outside the project', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'impeccable-live-outside-dir-'));
+    writeFileSync(join(outsideDir, 'cred.txt'), 'OUTSIDE SECRET');
+    const linkPath = join(serverCwd, 'escape-dir');
+    symlinkSync(outsideDir, linkPath);
+    try {
+      const res = await fetch(`http://localhost:${server.port}/source?token=${server.token}&path=escape-dir/cred.txt`);
+      await res.text().catch(() => {});
+      assert.equal(res.status, 403);
+    } finally {
+      rmSync(linkPath, { force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('/source rejects a chained symlink that resolves outside the project', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'impeccable-live-outside-chain-'));
+    const outsideFile = join(outsideDir, 'secret.txt');
+    writeFileSync(outsideFile, 'OUTSIDE SECRET');
+    const midPath = join(serverCwd, 'mid-link.txt');
+    const linkPath = join(serverCwd, 'double-out.txt');
+    symlinkSync(outsideFile, midPath);
+    symlinkSync(midPath, linkPath);
+    try {
+      const res = await fetch(`http://localhost:${server.port}/source?token=${server.token}&path=double-out.txt`);
+      await res.text().catch(() => {});
+      assert.equal(res.status, 403);
+    } finally {
+      rmSync(linkPath, { force: true });
+      rmSync(midPath, { force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('/source rejects a relative symlink that points outside the project', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'impeccable-live-outside-rel-'));
+    const outsideFile = join(outsideDir, 'secret.txt');
+    writeFileSync(outsideFile, 'OUTSIDE SECRET');
+    const linkPath = join(serverCwd, 'rel-out.txt');
+    symlinkSync(relative(serverCwd, outsideFile), linkPath);
+    try {
+      const res = await fetch(`http://localhost:${server.port}/source?token=${server.token}&path=rel-out.txt`);
+      await res.text().catch(() => {});
+      assert.equal(res.status, 403);
+    } finally {
+      rmSync(linkPath, { force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
     }
   });
 
