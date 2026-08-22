@@ -551,6 +551,32 @@ describe('detectText — broken images in source comments', () => {
 
     expect(detectText(source, 'hero.astro').filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
   });
+
+  test('ignores preprocessor line comments in component style blocks', () => {
+    const source = [
+      '<style lang="scss">',
+      '// font-family: Inter',
+      '.hero { color: red; }',
+      '</style>',
+    ].join('\n');
+
+    for (const filePath of ['hero.astro', 'hero.vue', 'hero.svelte']) {
+      expect(detectText(source, filePath).filter(r => r.antipattern === 'overused-font')).toHaveLength(0);
+    }
+  });
+
+  test('still detects live font-family after a style-block line comment', () => {
+    const source = [
+      '<style lang="scss">',
+      '// skip this',
+      '.hero { font-family: Inter; }',
+      '</style>',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.vue').filter(r => r.antipattern === 'overused-font');
+    expect(findings).toHaveLength(1);
+    expect(findings[0].line).toBe(3);
+  });
 });
 
 describe('detectText — CSS borders', () => {

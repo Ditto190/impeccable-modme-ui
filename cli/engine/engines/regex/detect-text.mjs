@@ -261,17 +261,34 @@ function blankHtmlComments(text) {
   return text.replace(/<!--[\s\S]*?-->/g, comment => comment.replace(/[^\n]/g, ' '));
 }
 
+function blankCssLineCommentsInStyleBlocks(text) {
+  const re = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+  let output = '';
+  let lastIndex = 0;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const inner = match[1];
+    const openLength = match[0].length - inner.length - '</style>'.length;
+    output += text.slice(lastIndex, match.index);
+    output += match[0].slice(0, openLength);
+    output += blankCssLineComments(inner);
+    output += match[0].slice(openLength + inner.length);
+    lastIndex = re.lastIndex;
+  }
+  return output + text.slice(lastIndex);
+}
+
 function blankHtmlAndCssCommentsOutsideScripts(text) {
   const re = /<script\b[^>]*>[\s\S]*?<\/script>/gi;
   let output = '';
   let lastIndex = 0;
   let match;
   while ((match = re.exec(text)) !== null) {
-    output += stripCssComments(blankHtmlComments(text.slice(lastIndex, match.index)));
+    output += blankCssLineCommentsInStyleBlocks(stripCssComments(blankHtmlComments(text.slice(lastIndex, match.index))));
     output += match[0];
     lastIndex = re.lastIndex;
   }
-  return output + stripCssComments(blankHtmlComments(text.slice(lastIndex)));
+  return output + blankCssLineCommentsInStyleBlocks(stripCssComments(blankHtmlComments(text.slice(lastIndex))));
 }
 
 function blankCssLineComments(text) {
@@ -1194,7 +1211,7 @@ function detectText(content, filePath, options = {}) {
     }, () => extractStyleBlocks(content, ext))
     : extractStyleBlocks(content, ext);
   for (const block of styleBlocks) {
-    const blockContent = stripCssComments(block.content);
+    const blockContent = blankCssLineComments(stripCssComments(block.content));
     const blockLines = blockContent.split('\n');
     findings.push(...runRegexMatchers(blockLines, filePath, block.startLine - 1, true, {
       profile,
