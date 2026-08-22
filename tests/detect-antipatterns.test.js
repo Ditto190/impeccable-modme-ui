@@ -495,6 +495,62 @@ describe('detectText — broken images in source comments', () => {
     expect(broken).toHaveLength(1);
     expect(broken[0].line).toBe(6);
   });
+
+  test('does not treat comment markers inside script strings as markup comments', () => {
+    const htmlDelimiters = [
+      '<script>const open = "<!--";</script>',
+      '<img>',
+      '<script>const close = "-->";</script>',
+    ].join('\n');
+    const cssDelimiters = [
+      '<script>const open = "/*";</script>',
+      '<img>',
+      '<script>const close = "*/";</script>',
+    ].join('\n');
+
+    for (const filePath of ['hero.astro', 'hero.vue', 'hero.svelte']) {
+      expect(detectText(htmlDelimiters, filePath).filter(r => r.antipattern === 'broken-image')).toHaveLength(1);
+      expect(detectText(cssDelimiters, filePath).filter(r => r.antipattern === 'broken-image')).toHaveLength(1);
+    }
+  });
+
+  test('ignores preprocessor line comments in stylesheets', () => {
+    const source = '// font-family: Inter\n.hero { color: red; }';
+
+    for (const filePath of ['hero.scss', 'hero.sass', 'hero.less']) {
+      expect(detectText(source, filePath).filter(r => r.antipattern === 'overused-font')).toHaveLength(0);
+    }
+  });
+
+  test('still detects live font-family after a preprocessor line comment', () => {
+    const source = '// skip this\n.hero { font-family: Inter; }';
+
+    const findings = detectText(source, 'hero.scss').filter(r => r.antipattern === 'overused-font');
+    expect(findings).toHaveLength(1);
+    expect(findings[0].line).toBe(2);
+  });
+
+  test('does not blank https URLs in SCSS', () => {
+    const source = '.hero { background: url(https://example.com/i.png); }\n.hero { font-family: Inter; }';
+
+    const findings = detectText(source, 'hero.scss').filter(r => r.antipattern === 'overused-font');
+    expect(findings).toHaveLength(1);
+    expect(findings[0].line).toBe(2);
+  });
+
+  test('ignores frontmatter comments after a --- line inside a template literal', () => {
+    const source = [
+      '---',
+      'const md = `',
+      '---',
+      '`;',
+      '// <img src="" alt="Comment-only image" />',
+      '---',
+      '<div>ok</div>',
+    ].join('\n');
+
+    expect(detectText(source, 'hero.astro').filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
 });
 
 describe('detectText — CSS borders', () => {

@@ -261,20 +261,115 @@ function blankHtmlComments(text) {
   return text.replace(/<!--[\s\S]*?-->/g, comment => comment.replace(/[^\n]/g, ' '));
 }
 
+function blankHtmlAndCssCommentsOutsideScripts(text) {
+  const re = /<script\b[^>]*>[\s\S]*?<\/script>/gi;
+  let output = '';
+  let lastIndex = 0;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    output += stripCssComments(blankHtmlComments(text.slice(lastIndex, match.index)));
+    output += match[0];
+    lastIndex = re.lastIndex;
+  }
+  return output + stripCssComments(blankHtmlComments(text.slice(lastIndex)));
+}
+
+function blankCssLineComments(text) {
+  let output = '';
+  let state = 'code';
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (state === 'line') {
+      if (char === '\n') {
+        output += '\n';
+        state = 'code';
+      } else {
+        output += ' ';
+      }
+      continue;
+    }
+    if (state === 'single' || state === 'double') {
+      output += char;
+      if (char === '\\' && next) {
+        output += next;
+        i++;
+      } else if ((state === 'single' && char === "'") || (state === 'double' && char === '"')) {
+        state = 'code';
+      }
+      continue;
+    }
+    const prev = output.length ? output[output.length - 1] : '';
+    if (char === '/' && next === '/' && prev !== ':' && prev !== '(' && prev !== '\\') {
+      output += '  ';
+      i++;
+      state = 'line';
+      continue;
+    }
+    if (char === "'") state = 'single';
+    else if (char === '"') state = 'double';
+    output += char;
+  }
+  return output;
+}
+
+function findAstroFrontmatterClose(text) {
+  if (!text.startsWith('---')) return -1;
+  let cursor = text.indexOf('\n');
+  if (cursor === -1) return -1;
+  cursor += 1;
+  while (cursor < text.length) {
+    if (text[cursor - 1] === '\n' && text.startsWith('---', cursor)) {
+      let end = cursor + 3;
+      while (text[end] === ' ' || text[end] === '\t') end++;
+      if (end >= text.length || text[end] === '\n' || text[end] === '\r') return cursor - 1;
+    }
+    const char = text[cursor];
+    const next = text[cursor + 1];
+    if (char === "'" || char === '"') {
+      const close = findQuotedStringEnd(text, cursor, char);
+      if (close === -1) return -1;
+      cursor = close + 1;
+      continue;
+    }
+    if (char === '`') {
+      const close = findTemplateLiteralEnd(text, cursor);
+      if (close === -1) return -1;
+      cursor = close + 1;
+      continue;
+    }
+    if (char === '/' && next === '/') {
+      const lineEnd = text.indexOf('\n', cursor);
+      if (lineEnd === -1) return -1;
+      cursor = lineEnd;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      const commentEnd = text.indexOf('*/', cursor + 2);
+      if (commentEnd === -1) return -1;
+      cursor = commentEnd + 2;
+      continue;
+    }
+    cursor++;
+  }
+  return -1;
+}
+
 function blankAstroFrontmatterComments(text) {
-  if (!text.startsWith('---')) return text;
-  const close = text.indexOf('\n---', 3);
+  const close = findAstroFrontmatterClose(text);
   if (close === -1) return text;
   return stripJsComments(text.slice(0, close)) + text.slice(close);
 }
 
 function blankCommentsForMatchers(text, ext) {
   if (PAGE_ANALYZER_EXTS.has(ext)) {
-    let next = stripCssComments(blankHtmlComments(text));
-    if (ext === '.astro') next = blankAstroFrontmatterComments(next);
-    return next;
+    const withFrontmatter = ext === '.astro' ? blankAstroFrontmatterComments(text) : text;
+    return blankHtmlAndCssCommentsOutsideScripts(withFrontmatter);
   }
-  if (STYLESHEET_EXTS.has(ext)) return stripCssComments(text);
+  if (STYLESHEET_EXTS.has(ext)) {
+    const withoutBlocks = stripCssComments(text);
+    return ext === '.css' ? withoutBlocks : blankCssLineComments(withoutBlocks);
+  }
   return text;
 }
 
