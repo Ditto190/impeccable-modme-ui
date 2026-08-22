@@ -47,7 +47,7 @@
     .mix-glow p { color: #ded9cf; font-size: 16px; }
     /* issue #578 — #000 inside color-mix is an ingredient; white-ish text on
        the mixed dark green must not be scored against phantom black. */
-    .mix-hex-brand { background: linear-gradient(135deg, color-mix(in srgb, var(--mix-hex-brand) 92%, #000), color-mix(in srgb, var(--mix-hex-brand-deep) 90%, #000)); padding: 20px; }
+    .mix-hex-brand { background: linear-gradient(135deg, color-mix(in srgb, var(--mix-hex-brand) 92%, #000), color-mix(in srgb, var(--mix-hex-brand-deep) 90%, #000)); width: 400px; height: 120px; padding: 20px; }
     /* currentcolor surface: background-color paints with the element's own
        text color, which is itself a var() token here. jsdom hands both
        through verbatim, so the walk must resolve the token via the
