@@ -42,6 +42,7 @@ function shouldRunPageAnalyzers(content, filePath) {
 }
 
 const JS_SOURCE_EXTS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs']);
+const STYLESHEET_EXTS = new Set(['.css', '.scss', '.sass', '.less']);
 const REGEX_PREFIX_KEYWORDS = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw', 'typeof', 'void', 'yield']);
 const BLOCK_BRACE_PREFIX_KEYWORDS = new Set(['do', 'else', 'finally', 'try']);
 
@@ -254,6 +255,27 @@ function stripJsComments(content, options = {}) {
 
 function stripCssComments(content) {
   return content.replace(/\/\*[\s\S]*?\*\//g, comment => comment.replace(/[^\n]/g, ' '));
+}
+
+function blankHtmlComments(text) {
+  return text.replace(/<!--[\s\S]*?-->/g, comment => comment.replace(/[^\n]/g, ' '));
+}
+
+function blankAstroFrontmatterComments(text) {
+  if (!text.startsWith('---')) return text;
+  const close = text.indexOf('\n---', 3);
+  if (close === -1) return text;
+  return stripJsComments(text.slice(0, close)) + text.slice(close);
+}
+
+function blankCommentsForMatchers(text, ext) {
+  if (PAGE_ANALYZER_EXTS.has(ext)) {
+    let next = stripCssComments(blankHtmlComments(text));
+    if (ext === '.astro') next = blankAstroFrontmatterComments(next);
+    return next;
+  }
+  if (STYLESHEET_EXTS.has(ext)) return stripCssComments(text);
+  return text;
 }
 
 function firstOverusedGoogleFont(text) {
@@ -1028,14 +1050,13 @@ function detectText(content, filePath, options = {}) {
   const ext = extFromFilePath(filePath);
   const commentStrippedSource = JS_SOURCE_EXTS.has(ext) ? stripJsComments(content, {
     jsx: ext === '.js' || ext === '.jsx' || ext === '.tsx',
-  }) : content;
+  }) : blankCommentsForMatchers(content, ext);
   const source = stripCssInJsComments(commentStrippedSource, ext);
   const lines = source.split('\n');
 
   // Run regex matchers on the full file content (catches Tailwind classes, inline styles)
   // Enable block context for CSS files where related properties span multiple lines
-  const cssLike = new Set(['.css', '.scss', '.sass', '.less']);
-  findings.push(...runRegexMatchers(lines, filePath, 0, cssLike.has(ext) || null, {
+  findings.push(...runRegexMatchers(lines, filePath, 0, STYLESHEET_EXTS.has(ext) || null, {
     profile,
     phase: 'source',
   }));
@@ -1050,7 +1071,7 @@ function detectText(content, filePath, options = {}) {
     scanCssTextForPseudoStripe(text).map(hit =>
       finding(hit.id, filePath, hit.snippet, lineOffset + text.slice(0, hit.index).split('\n').length));
 
-  if (cssLike.has(ext)) {
+  if (STYLESHEET_EXTS.has(ext)) {
     findings.push(...scanInsetStripeCss(content, filePath));
     findings.push(...pseudoStripeFindings(content, 0));
   }
@@ -1078,7 +1099,8 @@ function detectText(content, filePath, options = {}) {
     }, () => extractStyleBlocks(content, ext))
     : extractStyleBlocks(content, ext);
   for (const block of styleBlocks) {
-    const blockLines = block.content.split('\n');
+    const blockContent = stripCssComments(block.content);
+    const blockLines = blockContent.split('\n');
     findings.push(...runRegexMatchers(blockLines, filePath, block.startLine - 1, true, {
       profile,
       phase: 'style-block',
@@ -1089,8 +1111,8 @@ function detectText(content, filePath, options = {}) {
     // 1-based, so the offset is startLine - 2; startLine - 1 double-counted and
     // reported every selector one line low. runRegexMatchers keeps startLine - 1
     // because it indexes its split lines from zero.
-    findings.push(...scanInsetStripeCss(block.content, filePath, block.startLine - 2));
-    findings.push(...pseudoStripeFindings(block.content, block.startLine - 2));
+    findings.push(...scanInsetStripeCss(blockContent, filePath, block.startLine - 2));
+    findings.push(...pseudoStripeFindings(blockContent, block.startLine - 2));
   }
 
   // Extract and scan CSS-in-JS template literals

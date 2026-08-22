@@ -382,6 +382,119 @@ describe('detectText — broken images in source comments', () => {
 
     expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
   });
+
+  test('ignores img tags in Astro style block comments', () => {
+    const source = [
+      '---',
+      'const title = "Hero";',
+      '---',
+      '<style>',
+      '  /*',
+      '   * Example markup: <img src="">',
+      '   */',
+      '  .hero { color: red; }',
+      '</style>',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('ignores img tags in Astro HTML comments', () => {
+    const source = [
+      '---',
+      'const title = "Hero";',
+      '---',
+      '<!-- <img src="" alt="Comment-only image" /> -->',
+      '<img src="/logo.png" alt="Logo" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('ignores img tags in Astro frontmatter line comments', () => {
+    const source = [
+      '---',
+      '// <img src="" alt="Comment-only image" />',
+      'const site = "https://example.com";',
+      '---',
+      '<img src="/logo.png" alt="Logo" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('ignores img tags in CSS block comments', () => {
+    const source = [
+      '/*',
+      ' * Example markup: <img src="">',
+      ' */',
+      '.hero { color: red; }',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.css');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('still detects real img tags after an HTML comment in Astro', () => {
+    const source = [
+      '---',
+      'const title = "Hero";',
+      '---',
+      '<!-- decorative only -->',
+      '<img src="" alt="Empty source" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    const broken = findings.filter(r => r.antipattern === 'broken-image');
+    expect(broken).toHaveLength(1);
+    expect(broken[0].line).toBe(5);
+  });
+
+  test('does not blank https URLs in Astro frontmatter', () => {
+    const source = [
+      '---',
+      'const site = "https://example.com/logo.png";',
+      '---',
+      '<img src="" alt="Empty source" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(1);
+  });
+
+  test('keeps same-line img visible after a bare https URL in Astro markup', () => {
+    const source = '<p>https://example.com <img src="" alt="Empty source" /></p>';
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(1);
+  });
+
+  test('preserves line numbers after comment blanking in Astro', () => {
+    const source = [
+      '---',
+      'const title = "Hero";',
+      '---',
+      '<!-- <img src="" alt="Comment-only image" /> -->',
+      '<p>Intro copy</p>',
+      '<img src="" alt="Empty source" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    const broken = findings.filter(r => r.antipattern === 'broken-image');
+    expect(broken).toHaveLength(1);
+    expect(broken[0].line).toBe(6);
+  });
 });
 
 describe('detectText — CSS borders', () => {
