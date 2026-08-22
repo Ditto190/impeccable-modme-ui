@@ -294,6 +294,7 @@ function blankHtmlAndCssCommentsOutsideScripts(text) {
 function blankCssLineComments(text) {
   let output = '';
   let state = 'code';
+  let urlDepth = 0;
   for (let i = 0; i < text.length; i++) {
     const char = text[i];
     const next = text[i + 1];
@@ -317,7 +318,7 @@ function blankCssLineComments(text) {
       continue;
     }
     const prev = output.length ? output[output.length - 1] : '';
-    if (char === '/' && next === '/' && prev !== ':' && prev !== '(' && prev !== '\\') {
+    if (char === '/' && next === '/' && urlDepth === 0 && prev !== ':' && prev !== '(' && prev !== '\\') {
       output += '  ';
       i++;
       state = 'line';
@@ -325,6 +326,12 @@ function blankCssLineComments(text) {
     }
     if (char === "'") state = 'single';
     else if (char === '"') state = 'double';
+    if (char === '(') {
+      const behind = output.replace(/\s+$/, '');
+      if (urlDepth > 0 || /url$/i.test(behind)) urlDepth++;
+    } else if (char === ')' && urlDepth) {
+      urlDepth--;
+    }
     output += char;
   }
   return output;
@@ -366,6 +373,13 @@ function findAstroFrontmatterClose(text) {
       if (commentEnd === -1) return -1;
       cursor = commentEnd + 2;
       continue;
+    }
+    if (char === '/' && next !== '/' && next !== '*') {
+      const close = findRegexLiteralEnd(text, cursor);
+      if (close !== -1) {
+        cursor = close + 1;
+        continue;
+      }
     }
     cursor++;
   }

@@ -577,6 +577,33 @@ describe('detectText — broken images in source comments', () => {
     expect(findings).toHaveLength(1);
     expect(findings[0].line).toBe(3);
   });
+
+  test('ignores frontmatter comments after a regex literal that contains quotes', () => {
+    const source = [
+      '---',
+      'const re = /["\']/;',
+      '// <img src="" alt="Comment-only image" />',
+      '---',
+      '<div>ok</div>',
+    ].join('\n');
+
+    expect(detectText(source, 'hero.astro').filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('keeps live font-family after a protocol-relative URL in SCSS', () => {
+    const sources = [
+      '.hero { background: url( //cdn.example.com/i.png); font-family: Inter; }',
+      '.hero { background: url(#{$prefix}//cdn.example.com/i.png); font-family: Inter; }',
+    ];
+
+    for (const source of sources) {
+      expect(detectText(source, 'hero.scss').filter(r => r.antipattern === 'overused-font')).toHaveLength(1);
+    }
+    expect(detectText(
+      '.hero { background: url(@{prefix}//cdn.example.com/i.png); font-family: Inter; }',
+      'hero.less',
+    ).filter(r => r.antipattern === 'overused-font')).toHaveLength(1);
+  });
 });
 
 describe('detectText — CSS borders', () => {
