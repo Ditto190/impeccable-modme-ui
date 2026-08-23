@@ -2748,7 +2748,7 @@ function checkElementAIPaletteDOM(el) {
   }
 
   // Check for neon text (vivid cyan/purple color on dark background)
-  const textColor = parseRgb(style.color);
+  const textColor = parseRgb(style.color) || parseAnyColor(style.color);
   if (textColor && hasChroma(textColor, 80)) {
     const hue = getHue(textColor);
     const isAIPalette = (hue >= 160 && hue <= 200) || (hue >= 260 && hue <= 310);
