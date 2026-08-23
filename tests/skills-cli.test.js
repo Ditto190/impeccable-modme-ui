@@ -108,6 +108,12 @@ function createFakeUniversalBundle(root, providers = ['.claude', '.agents', '.cu
       hooks: { PostToolUse: [{ matcher: 'apply_patch', hooks: [{ type: 'command', command: 'node ".codex/skills/impeccable/scripts/hook.mjs"' }] }] },
     }, null, 2));
   }
+  if (providers.includes('.grok')) {
+    mkdirSync(join(bundleRoot, '.grok', 'hooks'), { recursive: true });
+    writeFileSync(join(bundleRoot, '.grok', 'hooks', 'impeccable.json'), JSON.stringify({
+      hooks: { PostToolUse: [{ matcher: 'Edit|Write|MultiEdit', hooks: [{ type: 'command', command: 'node ".grok/skills/impeccable/scripts/hook.mjs"' }] }] },
+    }, null, 2));
+  }
   // Native subagent definitions, mirroring the build's provider agents output.
   if (providers.includes('.github')) {
     mkdirSync(join(bundleRoot, '.github', 'agents'), { recursive: true });
@@ -1125,21 +1131,24 @@ describe('skills install/update: local universal bundle e2e', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'imp-test-scope-user-hooks-'));
     const home = mkdtempSync(join(tmpdir(), 'imp-home-scope-user-hooks-'));
     execSync('git init', { cwd: tmp });
-    const bundleRoot = createFakeUniversalBundle(tmp, ['.claude', '.agents', '.cursor']);
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.claude', '.agents', '.cursor', '.grok']);
 
-    const output = run('skills install -y --providers=claude,codex,cursor --scope=global', {
+    const output = run('skills install -y --providers=claude,codex,cursor,grok --scope=global', {
       cwd: tmp,
       env: { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot },
     });
 
-    expect(output).toContain('Installed impeccable into: .claude, .agents, .cursor (global)');
-    for (const provider of ['.claude', '.agents', '.cursor']) {
+    expect(output).toContain('Installed impeccable into: .claude, .agents, .cursor, .grok (global)');
+    for (const provider of ['.claude', '.agents', '.cursor', '.grok']) {
       expect(existsSync(join(home, provider, 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
       expect(existsSync(join(tmp, provider, 'skills', 'impeccable', 'SKILL.md'))).toBe(false);
     }
     expect(readFileSync(join(tmp, '.claude', 'settings.local.json'), 'utf8')).toContain(join(home, '.claude', 'skills', 'impeccable', 'scripts', 'hook.mjs'));
     expect(readFileSync(join(tmp, '.codex', 'hooks.json'), 'utf8')).toContain(join(home, '.agents', 'skills', 'impeccable', 'scripts', 'hook.mjs'));
     expect(readFileSync(join(tmp, '.cursor', 'hooks.json'), 'utf8')).toContain(join(home, '.cursor', 'skills', 'impeccable', 'scripts', 'hook-before-edit.mjs'));
+    const grokHooks = readFileSync(join(tmp, '.grok', 'hooks', 'impeccable.json'), 'utf8');
+    expect(grokHooks).toContain(join(home, '.grok', 'skills', 'impeccable', 'scripts', 'hook.mjs'));
+    expect(grokHooks).not.toContain('".grok/skills/impeccable/scripts/hook.mjs"');
 
     rmSync(tmp, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
