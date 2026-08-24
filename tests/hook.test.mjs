@@ -2798,7 +2798,6 @@ describe('resolveHarness() / normalizeHookEvent()', () => {
     }, '/fallback', 'grok');
     assert.equal(normalized.session_id, 'g1');
     assert.equal(normalized.cwd, '/proj');
-    assert.equal(normalized.hook_event_name, 'PostToolUse');
     assert.equal(normalized.tool_name, 'search_replace');
     assert.equal(normalized.tool_input.file_path, '/proj/src/styles.css');
     assert.deepEqual(resolveTargetFiles(normalized, '/proj'), ['/proj/src/styles.css']);
@@ -4126,6 +4125,36 @@ describe('runStopHook()', () => {
     const again = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
     assert.equal(again.audit.emitted, true);
     assert.match(again.stdout, /dark-glow/, 'a finding fixed then reintroduced must fire at Stop again');
+  });
+
+  it('a Stop detector failure leaves the remembered set alone', async () => {
+    // A throw yields an empty scan; recording that as truth would wipe the
+    // remembered keys and make the next successful Stop re-emit everything.
+    const sid = 'grok-stop-throw';
+    const file = write('src/Card.tsx', 'noop');
+    let fail = false;
+    const scan = () => {
+      if (fail) throw new Error('detector crashed');
+      return [finding('dark-glow', 5)];
+    };
+    const det = { detectText: scan, detectHtml: scan };
+
+    await runHook({ stdinJson: JSON.stringify(grokEditEvent(file, sid)), env: {}, cwd, detector: det });
+    const first = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.match(first.stdout, /dark-glow/);
+    const remembered = readCache(cwd).sessions[sid].files[file].findings;
+    assert.equal(remembered.length, 1);
+
+    fail = true;
+    const broken = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(broken.stdout, '');
+    assert.equal(broken.audit.skipped, 'stop-clean');
+    assert.deepEqual(readCache(cwd).sessions[sid].files[file].findings, remembered);
+
+    fail = false;
+    const recovered = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(recovered.stdout, '', 'an unchanged finding must stay deduped after a detector failure');
+    assert.equal(recovered.audit.skipped, 'stop-clean');
   });
 
   it('Stop remembers the live scan, not only newly emitted findings', async () => {

@@ -1280,15 +1280,9 @@ function looksLikeGrokEnvelope(event) {
   return typeof event.toolName === 'string' && event.toolInput !== undefined;
 }
 
-// Grok Build 1.0.5 (captured 2026-08-24) uses snake_case event names in
-// camelCase fields: hookEventName "post_tool_use" / "stop". Map onto the
-// internal Claude names the rest of the hook already keys on.
-const GROK_HOOK_EVENTS = {
-  post_tool_use: 'PostToolUse',
-  pre_tool_use: 'PreToolUse',
-  stop: 'Stop',
-};
-
+// Stop arrives as Claude's `hook_event_name: "Stop"` or Grok Build's
+// `hookEventName: "stop"`. hook.mjs routes on the raw stdin, before any
+// normalize, so both casings must match here.
 export function isStopEvent(event) {
   if (!event || typeof event !== 'object') return false;
   const name = event.hook_event_name || event.hookEventName;
@@ -1386,23 +1380,19 @@ function normalizeGitHubEvent(event, projectCwd) {
   };
 }
 
-function grokProjectCwd(event, projectCwd) {
-  if (typeof event.cwd === 'string' && event.cwd) return event.cwd;
-  if (typeof event.workspaceRoot === 'string' && event.workspaceRoot) {
-    return event.workspaceRoot.replace(/\/+$/, '') || event.workspaceRoot;
-  }
-  return envProjectDir(projectCwd) || projectCwd;
-}
-
+// Grok Build 1.0.5 (captured 2026-08-24) sends camelCase `toolName` /
+// `toolInput` / `sessionId` / `stopHookActive`, plus `cwd` alongside a
+// trailing-slashed `workspaceRoot` (every consumer path.resolve()s, so no
+// stripping here). Only the fields the hook reads are copied; the event
+// name stays camelCase because routing already happened on the raw stdin
+// (isStopEvent) and nothing downstream reads `hook_event_name`.
 function normalizeGrokEvent(event, projectCwd) {
-  const cwd = grokProjectCwd(event, projectCwd);
+  const cwd = event.cwd || event.workspaceRoot || envProjectDir(projectCwd) || projectCwd;
   const sessionId = event.sessionId || event.session_id || 'unknown';
-  const toolInput = event.toolInput && typeof event.toolInput === 'object' && !Array.isArray(event.toolInput)
-    ? { ...event.toolInput }
+  const rawInput = event.toolInput ?? event.tool_input;
+  const toolInput = rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)
+    ? { ...rawInput }
     : {};
-  const mappedName = typeof event.hookEventName === 'string'
-    ? (GROK_HOOK_EVENTS[event.hookEventName] || event.hookEventName)
-    : undefined;
   const out = {
     ...event,
     cwd,
@@ -1410,7 +1400,6 @@ function normalizeGrokEvent(event, projectCwd) {
     tool_name: event.toolName || event.tool_name || null,
     tool_input: toolInput,
   };
-  if (mappedName) out.hook_event_name = mappedName;
   if (event.stopHookActive !== undefined && event.stop_hook_active === undefined) {
     out.stop_hook_active = event.stopHookActive;
   }
