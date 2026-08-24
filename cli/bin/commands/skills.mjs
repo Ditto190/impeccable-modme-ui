@@ -1402,7 +1402,7 @@ function hookScriptPathForProvider(skillRoot, provider) {
   if (provider === '.cursor') {
     return join(skillRoot, provider, 'skills', 'impeccable', 'scripts', 'hook-before-edit.mjs');
   }
-  if (provider === '.claude' || provider === '.agents') {
+  if (provider === '.claude' || provider === '.agents' || provider === '.grok') {
     return join(skillRoot, provider, 'skills', 'impeccable', 'scripts', 'hook.mjs');
   }
   return null;
@@ -1478,8 +1478,8 @@ function guardHookCommand(quotedPath, provider) {
 // entries additionally get a `commandWindows` sibling for cmd.exe.
 function rewriteHookCommandsForSkillRoot(value, provider, { skillRoot, absolute }) {
   const hookScript = hookScriptPathForProvider(skillRoot, provider);
-  // Providers we don't own a `node "PATH"` command hook for (.github, .grok)
-  // carry their own portable command forms; leave them untouched.
+  // Providers we don't own a `node "PATH"` command hook for (.github) carry
+  // their own portable command forms; leave them untouched.
   if (!hookScript) return value;
 
   // Project-scope installs derive the provider's own project-relative path
