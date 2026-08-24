@@ -1366,9 +1366,30 @@ describe('writeAuditLog()', () => {
 });
 
 describe('payload()', () => {
-  it('produces hookSpecificOutput for Claude/Codex', () => {
+  it('produces hookSpecificOutput for Claude', () => {
     const obj = JSON.parse(payload('hello'));
     assert.equal(obj.hookSpecificOutput.hookEventName, 'PostToolUse');
+    assert.equal(obj.hookSpecificOutput.additionalContext, 'hello');
+  });
+
+  it('keeps Codex PostToolUse on the Claude-compatible context channel', () => {
+    const obj = JSON.parse(payload('hello', 'PostToolUse', 'codex'));
+    assert.equal(obj.hookSpecificOutput.hookEventName, 'PostToolUse');
+    assert.equal(obj.hookSpecificOutput.additionalContext, 'hello');
+  });
+
+  it('produces a blocking decision for Codex Stop', () => {
+    const obj = JSON.parse(payload('hello', 'Stop', 'codex'));
+    assert.deepEqual(obj, { decision: 'block', reason: 'hello' });
+  });
+
+  it('emits nothing for a Codex Stop with no findings text', () => {
+    assert.equal(payload('', 'Stop', 'codex'), '');
+  });
+
+  it('keeps Claude Stop on the additional-context channel', () => {
+    const obj = JSON.parse(payload('hello', 'Stop', 'claude'));
+    assert.equal(obj.hookSpecificOutput.hookEventName, 'Stop');
     assert.equal(obj.hookSpecificOutput.additionalContext, 'hello');
   });
 
@@ -2739,8 +2760,18 @@ describe('resolveTargetFiles()', () => {
 describe('resolveHarness() / normalizeHookEvent()', () => {
   it('routes explicit env and Cursor conversation_id to cursor harness', () => {
     assert.equal(resolveHarness({ IMPECCABLE_HOOK_HARNESS: 'cursor' }), 'cursor');
+    assert.equal(resolveHarness({ IMPECCABLE_HOOK_HARNESS: 'codex' }), 'codex');
     assert.equal(resolveHarness({}, { conversation_id: 'c1' }), 'cursor');
+    assert.equal(resolveHarness({}, { turn_id: 'turn-1' }), 'codex');
     assert.equal(resolveHarness({}), 'claude');
+  });
+
+  it('prefers explicit harness and Cursor detection over the Codex turn_id', () => {
+    assert.equal(resolveHarness({ IMPECCABLE_HOOK_HARNESS: 'claude' }, { turn_id: 'turn-1' }), 'claude');
+    assert.equal(resolveHarness({ IMPECCABLE_HOOK_HARNESS: 'grok' }, { turn_id: 'turn-1' }), 'grok');
+    assert.equal(resolveHarness({}, { conversation_id: 'c1', turn_id: 'turn-1' }), 'cursor');
+    assert.equal(resolveHarness({}, { turn_id: '' }), 'claude');
+    assert.equal(resolveHarness({}, { turn_id: 42 }), 'claude');
   });
 
   it('maps Cursor postToolUse Write path into file_path + cwd', () => {
@@ -3884,6 +3915,51 @@ describe('runStopHook()', () => {
     assert.match(out.hookSpecificOutput.additionalContext, /side-tab/);
     assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /dark-glow/);
     assert.equal(stop.emission.kind, 'stop-deep-pass');
+  });
+
+  it('emits Codex Stop findings as a blocking decision', async () => {
+    const sid = 'stop-codex';
+    write('package.json', '{}');
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([finding('marketing-buzzword', 3)]);
+    const editEventCodex = { ...editEvent(file, sid), turn_id: 'turn-1' };
+    const stopEventCodex = { ...stopEvent(sid), turn_id: 'turn-1' };
+
+    const edit = await runHook({ stdinJson: JSON.stringify(editEventCodex), env: {}, cwd, detector: det });
+    assert.equal(edit.audit.harness, 'codex');
+    assert.equal(edit.audit.deferred, 1);
+    const editOut = JSON.parse(edit.stdout);
+    assert.ok(editOut.hookSpecificOutput, 'Codex per-edit output stays on the PostToolUse context channel');
+    assert.equal(editOut.decision, undefined);
+
+    const stop = await runStopHook({ stdinJson: JSON.stringify(stopEventCodex), env: {}, cwd, detector: det });
+    assert.equal(stop.exitCode, 0);
+    assert.equal(stop.audit.harness, 'codex');
+    assert.equal(stop.audit.emitted, true, JSON.stringify(stop.audit));
+    const out = JSON.parse(stop.stdout);
+    assert.equal(out.decision, 'block');
+    assert.match(out.reason, /marketing-buzzword/);
+    assert.ok(out.reason.trim().length > 0, 'Codex ignores a block whose reason trims empty');
+    assert.equal(out.hookSpecificOutput, undefined);
+  });
+
+  it('skips the Codex Stop re-fire after a block instead of blocking again', async () => {
+    const sid = 'stop-codex-refire';
+    write('package.json', '{}');
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([finding('marketing-buzzword', 3)]);
+
+    await runHook({
+      stdinJson: JSON.stringify({ ...editEvent(file, sid), turn_id: 'turn-1' }),
+      env: {},
+      cwd,
+      detector: det,
+    });
+    const refire = { ...stopEvent(sid), turn_id: 'turn-1', stop_hook_active: true };
+    const stop = await runStopHook({ stdinJson: JSON.stringify(refire), env: {}, cwd, detector: det });
+    assert.equal(stop.exitCode, 0);
+    assert.equal(stop.stdout, '');
+    assert.equal(stop.audit.skipped, 'stop-hook-active');
   });
 
   it('keeps a policy footer when the grouped Stop render is clamped to the minimum budget', async () => {
