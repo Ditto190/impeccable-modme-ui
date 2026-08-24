@@ -71,7 +71,9 @@ const NODE_MAJOR_FLOOR = 22;
 //   Claude Code / Codex: `systemMessage` on stdout is shown to the user -> notice
 //   Cursor: preToolUse output is permission-shaped and its `user_message`
 //     renders only on DENY, so warning would block the edit    -> probe only
-//   Grok Build: PostToolUse/Stop stdout is ignored outright    -> probe only
+//   Grok Build: PostToolUse stdout is ignored; Stop additionalContext
+//     reaches the model, but the node-version notice has no systemMessage
+//     channel on this harness                                 -> probe only
 //   Copilot: output contract unconfirmed; do not guess a shape -> probe only
 //
 // The clamp avoids `<` and `>` deliberately: Volta's Windows shims run through

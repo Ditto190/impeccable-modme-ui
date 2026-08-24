@@ -816,9 +816,9 @@ export function splitFindingsByTier(findings) {
 }
 
 // Whether the per-edit pass for this harness should defer non-immediate
-// findings to a Stop deep pass. Only Claude Code and Codex dispatch our Stop
-// hook; Cursor and GitHub Copilot have no deep pass wired, so deferring for
-// them would silently drop the non-immediate rules entirely.
+// findings to a Stop deep pass. Claude Code, Codex, and Grok Build dispatch
+// our Stop hook; Cursor and GitHub Copilot have no deep pass wired, so
+// deferring for them would silently drop the non-immediate rules entirely.
 export function perEditTieringActive(config, harness) {
   if (harness === 'cursor' || harness === 'github') return false;
   return (config?.perEditRules || DEFAULT_CONFIG.perEditRules) !== 'all';
@@ -1251,9 +1251,14 @@ export function resolveHarness(env = {}, event = null) {
   const explicit = env?.IMPECCABLE_HOOK_HARNESS;
   if (explicit === 'cursor') return 'cursor';
   if (explicit === 'github') return 'github';
+  if (explicit === 'grok') return 'grok';
   if (explicit === 'claude' || explicit === 'codex') return 'claude';
-  // GitHub Copilot's postToolUse event uses camelCase `toolName`/`toolArgs` and
-  // has no `tool_name`/`tool_input`. That shape is the discriminator.
+  // Grok Build sends camelCase `toolName`/`toolInput`/`hookEventName` and no
+  // snake_case pair. GitHub Copilot sends camelCase `toolName`/`toolArgs`.
+  // Check Grok first: the old GitHub heuristic (`toolName` and no
+  // `tool_input`) also matches Grok, which is how live PostToolUse was
+  // classified as Copilot and then skipped with no-file-path (#646).
+  if (looksLikeGrokEnvelope(event)) return 'grok';
   if (event && typeof event === 'object'
     && (typeof event.toolName === 'string' || event.toolArgs !== undefined)
     && event.tool_name === undefined && event.tool_input === undefined) {
@@ -1261,6 +1266,33 @@ export function resolveHarness(env = {}, event = null) {
   }
   if (typeof event?.conversation_id === 'string' && event.conversation_id) return 'cursor';
   return 'claude';
+}
+
+function looksLikeGrokEnvelope(event) {
+  if (!event || typeof event !== 'object') return false;
+  if (event.hook_event_name !== undefined
+    || event.tool_name !== undefined
+    || event.tool_input !== undefined) {
+    return false;
+  }
+  if (event.toolArgs !== undefined) return false;
+  if (typeof event.hookEventName === 'string') return true;
+  return typeof event.toolName === 'string' && event.toolInput !== undefined;
+}
+
+// Grok Build 1.0.5 (captured 2026-08-24) uses snake_case event names in
+// camelCase fields: hookEventName "post_tool_use" / "stop". Map onto the
+// internal Claude names the rest of the hook already keys on.
+const GROK_HOOK_EVENTS = {
+  post_tool_use: 'PostToolUse',
+  pre_tool_use: 'PreToolUse',
+  stop: 'Stop',
+};
+
+export function isStopEvent(event) {
+  if (!event || typeof event !== 'object') return false;
+  const name = event.hook_event_name || event.hookEventName;
+  return typeof name === 'string' && name.toLowerCase() === 'stop';
 }
 
 // GitHub Copilot's postToolUse payload is
@@ -1354,9 +1386,41 @@ function normalizeGitHubEvent(event, projectCwd) {
   };
 }
 
+function grokProjectCwd(event, projectCwd) {
+  if (typeof event.cwd === 'string' && event.cwd) return event.cwd;
+  if (typeof event.workspaceRoot === 'string' && event.workspaceRoot) {
+    return event.workspaceRoot.replace(/\/+$/, '') || event.workspaceRoot;
+  }
+  return envProjectDir(projectCwd) || projectCwd;
+}
+
+function normalizeGrokEvent(event, projectCwd) {
+  const cwd = grokProjectCwd(event, projectCwd);
+  const sessionId = event.sessionId || event.session_id || 'unknown';
+  const toolInput = event.toolInput && typeof event.toolInput === 'object' && !Array.isArray(event.toolInput)
+    ? { ...event.toolInput }
+    : {};
+  const mappedName = typeof event.hookEventName === 'string'
+    ? (GROK_HOOK_EVENTS[event.hookEventName] || event.hookEventName)
+    : undefined;
+  const out = {
+    ...event,
+    cwd,
+    session_id: sessionId,
+    tool_name: event.toolName || event.tool_name || null,
+    tool_input: toolInput,
+  };
+  if (mappedName) out.hook_event_name = mappedName;
+  if (event.stopHookActive !== undefined && event.stop_hook_active === undefined) {
+    out.stop_hook_active = event.stopHookActive;
+  }
+  return out;
+}
+
 export function normalizeHookEvent(event, projectCwd, harness = 'claude') {
   if (!event || typeof event !== 'object') return event;
   if (harness === 'github') return normalizeGitHubEvent(event, projectCwd);
+  if (harness === 'grok') return normalizeGrokEvent(event, projectCwd);
   if (harness !== 'cursor') return event;
 
   const cwd = event.cwd
@@ -1959,7 +2023,15 @@ export async function runHook({ stdinJson, env = {}, cwd = process.cwd(), now = 
       // findings stop being remembered and a reintroduced one reads as fresh.
       // Only the immediate tier is remembered: a deferred finding the per-edit
       // pass never reported must still read as fresh to the Stop deep pass.
-      rememberFindings(cache, sessionId, filePath, immediate);
+      //
+      // Grok ignores PostToolUse stdout, so Stop is the user-visible pass.
+      // Remembering here would dedupe those findings out of Stop. Touch the
+      // file so Stop has it, and leave the finding list empty.
+      if (harness === 'grok') {
+        touchFile(cache, sessionId, filePath);
+      } else {
+        rememberFindings(cache, sessionId, filePath, immediate);
+      }
       cacheDirty = true;
 
       if (fresh.length > 0) {
@@ -2191,22 +2263,32 @@ export async function runStopHook({ stdinJson, env = {}, cwd = process.cwd(), no
       return result({ skipped: 'stdin-empty', durationMs: Date.now() - started });
     }
 
+    const harness = resolveHarness(env, event);
+    audit.harness = harness;
+    event = normalizeHookEvent(event, cwd, harness);
+
     // Claude Code's Stop-hook contract: `stop_hook_active` is true when this
     // hook is being re-invoked only because a prior invocation kept the turn
     // alive (here, via hookSpecificOutput.additionalContext). Re-scanning and
     // re-blocking now would loop until Claude Code's consecutive-block cap
     // force-ends the turn (issue #400). The prior fire already surfaced the
     // findings; whether to act on them is the agent's call. Exit fast with no
-    // output before any scan. Only Claude Code sends this field; other
-    // harnesses omit it, so the strict `=== true` is a no-op for them. This
-    // guard makes the loop impossible regardless of the finding cache key's
-    // line-number sensitivity (out of scope here; see findingCacheKey).
+    // output before any scan. Claude sends `stop_hook_active`; Grok sends
+    // `stopHookActive`, copied onto the snake_case field above. The strict
+    // `=== true` is a no-op when the field is absent. This guard makes the
+    // loop impossible regardless of the finding cache key's line-number
+    // sensitivity (out of scope here; see findingCacheKey).
     if (event.stop_hook_active === true) {
       return result({ skipped: 'stop-hook-active', durationMs: Date.now() - started });
     }
 
-    const harness = resolveHarness(env, event);
-    audit.harness = harness;
+    // Grok fires Stop twice: `end_turn` (the gate that can inject
+    // additionalContext) then an observe-only `shutdown`. A second deep
+    // pass would re-emit the same findings. Claude omits `reason`; only
+    // skip when Grok named a reason that is not end_turn.
+    if (harness === 'grok' && typeof event.reason === 'string' && event.reason !== 'end_turn') {
+      return result({ skipped: 'stop-reason', reason: event.reason, durationMs: Date.now() - started });
+    }
 
     // A Stop event carries no file, so the session cwd is the project.
     // Umbrella-dir launches keyed their per-edit cache to the edited file's
