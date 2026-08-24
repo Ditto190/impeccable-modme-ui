@@ -45,6 +45,7 @@ import {
   resolveTargetFiles,
   resolveHarness,
   normalizeHookEvent,
+  isStopEvent,
   expandScanTargets,
   parseStaticStyleImports,
   coLocatedStylesheets,
@@ -1493,6 +1494,32 @@ rounded:
     assert.equal(out.hookSpecificOutput, undefined);
   });
 
+  it('handles a Grok Build search_replace event and does not classify it as github (#646)', async () => {
+    const file = writeFixture('src/Card.tsx', 'noop');
+    const det = fakeDetector([finding('gradient-text', 1, { name: 'Gradient text' })]);
+    const grokEvent = {
+      hookEventName: 'post_tool_use',
+      sessionId: 'grok-1',
+      cwd,
+      workspaceRoot: `${cwd}/`,
+      toolName: 'search_replace',
+      toolInput: { file_path: file, old_string: 'a', new_string: 'b' },
+      toolResult: { type: 'SearchReplace' },
+    };
+
+    const r = await runHook({ stdinJson: JSON.stringify(grokEvent), env: {}, cwd, detector: det });
+    assert.equal(r.exitCode, 0);
+    assert.equal(r.audit.harness, 'grok');
+    assert.notEqual(r.audit.harness, 'github');
+    assert.equal(r.audit.emitted, true);
+    assert.equal(r.audit.skipped, undefined);
+    const out = JSON.parse(r.stdout);
+    assert.match(out.hookSpecificOutput.additionalContext, /gradient-text/);
+    const cache = readCache(cwd);
+    assert.ok(cache.sessions['grok-1'].files[file], 'PostToolUse must mark the file for Stop');
+    assert.deepEqual(cache.sessions['grok-1'].files[file].findings || [], []);
+  });
+
   it('handles a GitHub Copilot apply_patch event end-to-end (interactive/cloud path)', async () => {
     // The real bug the live test caught: interactive Copilot edits via
     // apply_patch (raw patch string in toolArgs), which the matcher and runtime
@@ -2736,6 +2763,46 @@ describe('resolveHarness() / normalizeHookEvent()', () => {
     assert.equal(resolveHarness({}, { tool_name: 'Edit', tool_input: { file_path: 'a.tsx' } }), 'claude');
   });
 
+  it('routes a Grok Build envelope (toolName/toolInput, no toolArgs) to grok, not github (#646)', () => {
+    const post = {
+      hookEventName: 'post_tool_use',
+      sessionId: 's1',
+      cwd: '/proj',
+      toolName: 'search_replace',
+      toolInput: { file_path: '/proj/src/styles.css' },
+    };
+    const stop = {
+      hookEventName: 'stop',
+      sessionId: 's1',
+      cwd: '/proj',
+      reason: 'end_turn',
+      stopHookActive: false,
+    };
+    assert.equal(resolveHarness({}, post), 'grok');
+    assert.equal(resolveHarness({}, stop), 'grok');
+    assert.equal(resolveHarness({ IMPECCABLE_HOOK_HARNESS: 'grok' }), 'grok');
+    assert.equal(isStopEvent(stop), true);
+    assert.equal(isStopEvent({ hook_event_name: 'Stop' }), true);
+    assert.equal(isStopEvent(post), false);
+  });
+
+  it('normalizes a Grok search_replace event onto tool_input.file_path + session_id', () => {
+    const normalized = normalizeHookEvent({
+      hookEventName: 'post_tool_use',
+      sessionId: 'g1',
+      cwd: '/proj',
+      workspaceRoot: '/proj/',
+      toolName: 'search_replace',
+      toolInput: { file_path: '/proj/src/styles.css', old_string: 'a', new_string: 'b' },
+      toolResult: { type: 'SearchReplace' },
+    }, '/fallback', 'grok');
+    assert.equal(normalized.session_id, 'g1');
+    assert.equal(normalized.cwd, '/proj');
+    assert.equal(normalized.tool_name, 'search_replace');
+    assert.equal(normalized.tool_input.file_path, '/proj/src/styles.css');
+    assert.deepEqual(resolveTargetFiles(normalized, '/proj'), ['/proj/src/styles.css']);
+  });
+
   it('normalizes a GitHub edit event: JSON-string toolArgs.path -> tool_input.file_path', () => {
     const normalized = normalizeHookEvent({
       sessionId: 's1',
@@ -3679,6 +3746,7 @@ describe('runHook() — per-edit tiering', () => {
     assert.equal(perEditTieringActive({ perEditRules: 'all' }, 'claude'), false);
     assert.equal(perEditTieringActive({ perEditRules: 'immediate' }, 'github'), false);
     assert.equal(perEditTieringActive({ perEditRules: 'immediate' }, 'cursor'), false);
+    assert.equal(perEditTieringActive({ perEditRules: 'immediate' }, 'grok'), true);
     assert.equal(perEditTieringActive({}, 'claude'), true);
   });
 
@@ -3979,5 +4047,192 @@ describe('runStopHook()', () => {
     });
     assert.equal(reentrant.audit.reentrant, true);
     assert.equal(reentrant.stdout, '');
+  });
+
+  function grokEditEvent(file, sessionId) {
+    return {
+      hookEventName: 'post_tool_use',
+      sessionId,
+      cwd,
+      workspaceRoot: `${cwd}/`,
+      toolName: 'search_replace',
+      toolInput: { file_path: file, old_string: 'a', new_string: 'b' },
+      toolResult: { type: 'SearchReplace' },
+    };
+  }
+
+  function grokStopEvent(sessionId, reason = 'end_turn') {
+    return {
+      hookEventName: 'stop',
+      sessionId,
+      cwd,
+      workspaceRoot: `${cwd}/`,
+      reason,
+      stopHookActive: false,
+    };
+  }
+
+  it('Grok Stop end_turn runs the deep pass over files warmed by camelCase PostToolUse (#646)', async () => {
+    const sid = 'grok-stop-sid';
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([
+      finding('dark-glow', 5),
+      finding('marketing-buzzword', 3),
+    ]);
+
+    const edit = await runHook({ stdinJson: JSON.stringify(grokEditEvent(file, sid)), env: {}, cwd, detector: det });
+    assert.equal(edit.audit.harness, 'grok');
+    assert.match(edit.stdout, /dark-glow/);
+    assert.doesNotMatch(edit.stdout, /marketing-buzzword/);
+
+    const stop = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(stop.exitCode, 0);
+    assert.equal(stop.audit.harness, 'grok');
+    assert.equal(stop.audit.session, sid);
+    assert.equal(stop.audit.emitted, true);
+    const out = JSON.parse(stop.stdout);
+    assert.equal(out.hookSpecificOutput.hookEventName, 'Stop');
+    // Grok discarded the per-edit stdout, so Stop must still carry the
+    // immediate-tier finding as well as the deferred remainder.
+    assert.match(out.hookSpecificOutput.additionalContext, /dark-glow/);
+    assert.match(out.hookSpecificOutput.additionalContext, /marketing-buzzword/);
+  });
+
+  it('Grok Stop re-emits a finding that was fixed then reintroduced', async () => {
+    // Grok PostToolUse only touches the file. Stop is the cache writer.
+    // A clean Stop must replace the remembered set with the empty scan so
+    // the same finding is not deduped away when it comes back.
+    const sid = 'grok-stop-reintro';
+    const file = write('src/Card.tsx', 'noop');
+    let current = [finding('dark-glow', 5)];
+    const det = {
+      set(next) { current = next; },
+      detectText: () => current.slice(),
+      detectHtml: () => current.slice(),
+    };
+
+    await runHook({ stdinJson: JSON.stringify(grokEditEvent(file, sid)), env: {}, cwd, detector: det });
+    const first = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.match(first.stdout, /dark-glow/);
+
+    det.set([]);
+    const clean = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(clean.stdout, '');
+    assert.equal(clean.audit.skipped, 'stop-clean');
+    assert.deepEqual(readCache(cwd).sessions[sid].files[file].findings, []);
+
+    det.set([finding('dark-glow', 5)]);
+    const again = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(again.audit.emitted, true);
+    assert.match(again.stdout, /dark-glow/, 'a finding fixed then reintroduced must fire at Stop again');
+  });
+
+  it('a Stop detector failure leaves the remembered set alone', async () => {
+    // A throw yields an empty scan; recording that as truth would wipe the
+    // remembered keys and make the next successful Stop re-emit everything.
+    const sid = 'grok-stop-throw';
+    const file = write('src/Card.tsx', 'noop');
+    let fail = false;
+    const scan = () => {
+      if (fail) throw new Error('detector crashed');
+      return [finding('dark-glow', 5)];
+    };
+    const det = { detectText: scan, detectHtml: scan };
+
+    await runHook({ stdinJson: JSON.stringify(grokEditEvent(file, sid)), env: {}, cwd, detector: det });
+    const first = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.match(first.stdout, /dark-glow/);
+    const remembered = readCache(cwd).sessions[sid].files[file].findings;
+    assert.equal(remembered.length, 1);
+
+    fail = true;
+    const broken = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(broken.stdout, '');
+    assert.equal(broken.audit.skipped, 'stop-clean');
+    assert.deepEqual(readCache(cwd).sessions[sid].files[file].findings, remembered);
+
+    fail = false;
+    const recovered = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(recovered.stdout, '', 'an unchanged finding must stay deduped after a detector failure');
+    assert.equal(recovered.audit.skipped, 'stop-clean');
+  });
+
+  it('Stop remembers the live scan, not only newly emitted findings', async () => {
+    // Per-edit already remembered dark-glow. Stop then emits the deferred
+    // remainder. The cache must keep both keys so a second Stop stays silent
+    // instead of re-firing the immediate-tier finding.
+    const sid = 'stop-sync-full-set';
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([
+      finding('dark-glow', 5),
+      finding('marketing-buzzword', 3),
+    ]);
+
+    await runHook({ stdinJson: JSON.stringify(editEvent(file, sid)), env: {}, cwd, detector: det });
+    const first = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
+    assert.match(first.stdout, /marketing-buzzword/);
+    assert.doesNotMatch(first.stdout, /dark-glow/);
+
+    const second = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(second.stdout, '');
+    assert.equal(second.audit.skipped, 'stop-clean');
+  });
+
+  it('Grok Stop shutdown is observe-only and does not emit a second deep pass (#646)', async () => {
+    const sid = 'grok-shutdown';
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([finding('dark-glow', 5)]);
+    await runHook({ stdinJson: JSON.stringify(grokEditEvent(file, sid)), env: {}, cwd, detector: det });
+
+    const stop = await runStopHook({
+      stdinJson: JSON.stringify(grokStopEvent(sid, 'shutdown')),
+      env: {}, cwd, detector: det,
+    });
+    assert.equal(stop.exitCode, 0);
+    assert.equal(stop.stdout, '');
+    assert.equal(stop.audit.skipped, 'stop-reason');
+    assert.equal(stop.audit.reason, 'shutdown');
+  });
+
+  it('Grok stopHookActive:true exits silent after camelCase normalize (#646)', async () => {
+    const sid = 'grok-active';
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([finding('marketing-buzzword', 3)]);
+    await runHook({ stdinJson: JSON.stringify(grokEditEvent(file, sid)), env: {}, cwd, detector: det });
+
+    const active = { ...grokStopEvent(sid), stopHookActive: true };
+    const stop = await runStopHook({ stdinJson: JSON.stringify(active), env: {}, cwd, detector: det });
+    assert.equal(stop.exitCode, 0);
+    assert.equal(stop.stdout, '');
+    assert.equal(stop.audit.skipped, 'stop-hook-active');
+  });
+
+  it('hook.mjs routes Grok camelCase stop stdin into runStopHook (#646)', async () => {
+    const sid = 'grok-script-stop';
+    const file = write('src/hero.css', [
+      '.hero {',
+      '  background: linear-gradient(#f00, #00f);',
+      '  -webkit-background-clip: text;',
+      '  color: transparent;',
+      '}',
+      '',
+    ].join('\n'));
+
+    const edit = await runHook({ stdinJson: JSON.stringify(grokEditEvent(file, sid)), env: {}, cwd });
+    assert.equal(edit.audit.harness, 'grok');
+    assert.equal(edit.audit.emitted, true);
+
+    const env = { ...process.env };
+    delete env.IMPECCABLE_HOOK_DEPTH;
+    delete env.CLAUDE_HOOK_DEPTH;
+    const out = execFileSync(process.execPath, [path.resolve('skill/scripts/hook.mjs')], {
+      cwd,
+      input: JSON.stringify(grokStopEvent(sid)),
+      env,
+      encoding: 'utf-8',
+    });
+    const payload = JSON.parse(out);
+    assert.equal(payload.hookSpecificOutput.hookEventName, 'Stop');
+    assert.match(payload.hookSpecificOutput.additionalContext, /gradient-text/);
   });
 });
