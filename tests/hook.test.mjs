@@ -4099,6 +4099,56 @@ describe('runStopHook()', () => {
     assert.match(out.hookSpecificOutput.additionalContext, /marketing-buzzword/);
   });
 
+  it('Grok Stop re-emits a finding that was fixed then reintroduced', async () => {
+    // Grok PostToolUse only touches the file. Stop is the cache writer.
+    // A clean Stop must replace the remembered set with the empty scan so
+    // the same finding is not deduped away when it comes back.
+    const sid = 'grok-stop-reintro';
+    const file = write('src/Card.tsx', 'noop');
+    let current = [finding('dark-glow', 5)];
+    const det = {
+      set(next) { current = next; },
+      detectText: () => current.slice(),
+      detectHtml: () => current.slice(),
+    };
+
+    await runHook({ stdinJson: JSON.stringify(grokEditEvent(file, sid)), env: {}, cwd, detector: det });
+    const first = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.match(first.stdout, /dark-glow/);
+
+    det.set([]);
+    const clean = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(clean.stdout, '');
+    assert.equal(clean.audit.skipped, 'stop-clean');
+    assert.deepEqual(readCache(cwd).sessions[sid].files[file].findings, []);
+
+    det.set([finding('dark-glow', 5)]);
+    const again = await runStopHook({ stdinJson: JSON.stringify(grokStopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(again.audit.emitted, true);
+    assert.match(again.stdout, /dark-glow/, 'a finding fixed then reintroduced must fire at Stop again');
+  });
+
+  it('Stop remembers the live scan, not only newly emitted findings', async () => {
+    // Per-edit already remembered dark-glow. Stop then emits the deferred
+    // remainder. The cache must keep both keys so a second Stop stays silent
+    // instead of re-firing the immediate-tier finding.
+    const sid = 'stop-sync-full-set';
+    const file = write('src/Card.tsx', 'noop');
+    const det = fakeDetector([
+      finding('dark-glow', 5),
+      finding('marketing-buzzword', 3),
+    ]);
+
+    await runHook({ stdinJson: JSON.stringify(editEvent(file, sid)), env: {}, cwd, detector: det });
+    const first = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
+    assert.match(first.stdout, /marketing-buzzword/);
+    assert.doesNotMatch(first.stdout, /dark-glow/);
+
+    const second = await runStopHook({ stdinJson: JSON.stringify(stopEvent(sid)), env: {}, cwd, detector: det });
+    assert.equal(second.stdout, '');
+    assert.equal(second.audit.skipped, 'stop-clean');
+  });
+
   it('Grok Stop shutdown is observe-only and does not emit a second deep pass (#646)', async () => {
     const sid = 'grok-shutdown';
     const file = write('src/Card.tsx', 'noop');

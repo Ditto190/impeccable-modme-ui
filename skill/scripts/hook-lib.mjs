@@ -2323,6 +2323,7 @@ export async function runStopHook({ stdinJson, env = {}, cwd = process.cwd(), no
 
     const freshGroups = [];
     let scanned = 0;
+    let cacheDirty = false;
     for (const filePath of touched) {
       if (scanned >= STOP_MAX_FILES) break;
       if (hasPathTraversal(filePath) || SENSITIVE_PATH.test(filePath)) continue;
@@ -2343,29 +2344,39 @@ export async function runStopHook({ stdinJson, env = {}, cwd = process.cwd(), no
       try { content = fs.readFileSync(filePath, 'utf-8'); } catch { continue; }
 
       let findings;
+      let detectorThrew = false;
       const useHtmlEngine = configuredExt
         ? configuredExt.engine === 'html'
         : (ext === '.html' || ext === '.htm');
 
       if (useHtmlEngine && typeof det.detectHtml === 'function') {
-        try { findings = await det.detectHtml(filePath, scanOptions); } catch { findings = []; }
+        try { findings = await det.detectHtml(filePath, scanOptions); } catch { findings = []; detectorThrew = true; }
       } else {
-        try { findings = await det.detectText(content, filePath, scanOptions); } catch { findings = []; }
+        try { findings = await det.detectText(content, filePath, scanOptions); } catch { findings = []; detectorThrew = true; }
       }
+
+      // A detector failure tells us nothing about the file. Leave whatever
+      // was remembered alone rather than recording an empty scan as truth.
+      if (detectorThrew) continue;
 
       // Full rule set: no tier split here. Config/inline ignores still apply,
       // and the session dedupe drops everything the per-edit pass (or an
       // earlier Stop pass) already surfaced.
       const filtered = filterFindings(findings || [], content, ext, config);
       const fresh = dedupeAgainstCache(filtered, cache, sessionId, filePath);
+      // Sync to the live scan, including empty. Remembering only `fresh`
+      // (or skipping the write on a clean Stop) left stale keys in place, so
+      // a finding that was fixed and later reintroduced never fired again.
+      rememberFindings(cache, sessionId, filePath, filtered);
+      cacheDirty = true;
       if (fresh.length > 0) {
-        rememberFindings(cache, sessionId, filePath, fresh);
         freshGroups.push({ filePath, findings: fresh });
       }
     }
     audit.scannedFiles = scanned;
 
     if (freshGroups.length === 0) {
+      if (cacheDirty) persistCache(projectCwd, cache);
       return result({ emitted: false, skipped: 'stop-clean', durationMs: Date.now() - started });
     }
 
@@ -2382,8 +2393,8 @@ export async function runStopHook({ stdinJson, env = {}, cwd = process.cwd(), no
     );
     commitFooterShown(cache, sessionId, text);
 
-    // Fresh findings earn the cache write so the next Stop fire is silent
-    // unless new issues appear; the notice flags ride along.
+    // Persist the live finding set so the next Stop fire is silent unless
+    // new issues appear; the notice flags ride along.
     persistCache(projectCwd, cache);
     return {
       exitCode: 0,
