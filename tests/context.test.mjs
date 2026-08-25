@@ -1060,6 +1060,27 @@ describe('context.mjs CLI', () => {
     assert.match(res.stdout, /detect\.mjs --json <changed targets>/);
   });
 
+  it('drains stdout before exit when the parent pipe is paused', async () => {
+    const MARKER = 'END_MARKER_573';
+    write('PRODUCT.md', `# Acme\n\n${'x'.repeat(256 * 1024)}\n\n${MARKER}\n`);
+    const child = spawn(process.execPath, [SCRIPT_PATH], {
+      cwd: scratch,
+      env: { ...process.env, IMPECCABLE_NO_UPDATE_CHECK: '1', IMPECCABLE_NO_STALENESS_CHECK: '1' },
+    });
+    let stdout = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stdout.pause();
+    const resume = setTimeout(() => child.stdout.resume(), 100);
+    const status = await new Promise((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', resolve);
+    });
+    clearTimeout(resume);
+    assert.equal(status, 0);
+    assert.match(stdout, /END_MARKER_573/);
+    assert.match(stdout, /RESOLVED_CONTEXT:/);
+  });
+
   // The build-path preference rides the unified config beside hook and
   // detector settings. The local file wins because whether a machine can
   // generate images is a property of that machine, not of the committed
