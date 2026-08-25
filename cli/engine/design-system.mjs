@@ -586,10 +586,13 @@ function designSystemStartDir(targetPath, cwd = process.cwd()) {
 //   - A directory carrying a DESIGN.md (directly or in a fallback dir) IS the
 //     design root — that's where the rules live.
 //   - A directory carrying a project marker (.git / package.json / .impeccable)
-//     but no DESIGN.md is a project BOUNDARY. When that boundary is a monorepo
-//     workspace (owned by a workspace-declaring root above it, recognized the
-//     same way context.mjs does), the workspace inherits the monorepo root's
-//     DESIGN.md; a nested separate repository (.git with no workspace
+//     but no DESIGN.md is a project BOUNDARY. A nested package.json inherits
+//     the ancestor DESIGN.md only when that ancestor's workspace declarations
+//     include the path (negations win). Marker-only roots (turbo/nx/lerna/pnpm
+//     with no globs) still own apps/<name> and packages/<name>. A stray nested
+//     package that matches no glob does not inherit. This is detect's
+//     contamination contract, not skill-context's repoRoot fallback for
+//     excluded paths. A nested separate repository (.git with no workspace
 //     declaration) still inherits nothing (issue #570).
 //   - Reaching the home directory / filesystem root with neither means no
 //     design system at all — never process.cwd()'s.
@@ -643,6 +646,76 @@ function isMonorepoRoot(dir) {
   });
 }
 
+function monorepoOwnsPath(root, boundaryDir) {
+  const rel = path.relative(root, boundaryDir);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false;
+  const relSegments = rel.split(path.sep).filter(Boolean);
+
+  function normalizeWorkspacePattern(pattern) {
+    return String(pattern || '')
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+      .replace(/^\.\//, '')
+      .replace(/\/+$/, '');
+  }
+
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function segmentMatches(patternSegment, relSegment) {
+    if (patternSegment === '*') return true;
+    if (!patternSegment.includes('*')) return patternSegment === relSegment;
+    const re = new RegExp(`^${escapeRegExp(patternSegment).replace(/\\\*/g, '[^/]*')}$`);
+    return re.test(relSegment);
+  }
+
+  function matchGlobSegments(patternSegments, relSegments) {
+    function rec(pi, ri) {
+      if (pi === patternSegments.length) return ri === relSegments.length;
+      if (patternSegments[pi] === '**') {
+        if (pi === patternSegments.length - 1) return true;
+        for (let k = ri; k <= relSegments.length; k++) {
+          if (rec(pi + 1, k)) return true;
+        }
+        return false;
+      }
+      if (ri >= relSegments.length) return false;
+      if (!segmentMatches(patternSegments[pi], relSegments[ri])) return false;
+      return rec(pi + 1, ri + 1);
+    }
+    return rec(0, 0);
+  }
+
+  // allowPrefix: negations like !packages/excluded must also cover nested dirs
+  // under that path. Positive globs are exact (npm `*` is direct children only).
+  function matches(pattern, { allowPrefix = false } = {}) {
+    const patternSegments = normalizeWorkspacePattern(pattern).split('/').filter(Boolean);
+    if (!patternSegments.length) return false;
+    if (patternSegments.includes('**')) return matchGlobSegments(patternSegments, relSegments);
+    if (allowPrefix) {
+      if (relSegments.length < patternSegments.length) return false;
+    } else if (relSegments.length !== patternSegments.length) {
+      return false;
+    }
+    for (let i = 0; i < patternSegments.length; i++) {
+      if (!segmentMatches(patternSegments[i], relSegments[i])) return false;
+    }
+    return true;
+  }
+
+  const patterns = readWorkspacePatterns(root)
+    .map(normalizeWorkspacePattern)
+    .filter(Boolean);
+  if (patterns.some((pattern) => pattern.startsWith('!') && matches(pattern.slice(1), { allowPrefix: true }))) {
+    return false;
+  }
+  const positive = patterns.filter((pattern) => !pattern.startsWith('!'));
+  if (positive.some((pattern) => matches(pattern))) return true;
+  if (positive.length) return false;
+  return relSegments.length >= 2 && MONOREPO_FALLBACK_PROJECT_DIRS.includes(relSegments[0]);
+}
+
 // Both forms of the home directory. The walk compares path strings, and a
 // symlinked home (e.g. /home -> /var/home) never string-matches the physical
 // paths a cwd-resolved target produces, which would let the post-boundary walk
@@ -664,13 +737,17 @@ export function findDesignRoot(startDir) {
     if (!boundary && resolveDesignMdPath(dir)) return { dir, hasDesign: true };
     if (boundary) {
       // Past the boundary the walk only looks for the monorepo root that owns
-      // the workspace. Monorepo-root before .git, same order as context.mjs:
-      // a workspace root carrying its own .git is still recognized, while a
-      // .git that declares no workspaces is a separate repository and stops
-      // the walk with nothing inherited. The home directory is never an
+      // the workspace path (workspace globs including negations, or marker-only
+      // apps/packages fallback). Monorepo-root before .git, same order as
+      // context.mjs: a workspace root carrying its own .git is still recognized,
+      // while a .git that declares no workspaces is a separate repository and
+      // stops the walk with nothing inherited. The home directory is never an
       // owning root, same as context.mjs's findMonorepoRoot, which stops at
       // homeDir before its monorepo check.
-      if (!homeDirs.has(dir) && isMonorepoRoot(dir)) return { dir, hasDesign: !!resolveDesignMdPath(dir) };
+      if (!homeDirs.has(dir) && isMonorepoRoot(dir)) {
+        if (monorepoOwnsPath(dir, boundary.dir)) return { dir, hasDesign: !!resolveDesignMdPath(dir) };
+        return boundary;
+      }
       if (fs.existsSync(path.join(dir, '.git'))) return boundary;
     } else if (PROJECT_ROOT_MARKERS.some((marker) => fs.existsSync(path.join(dir, marker)))) {
       boundary = { dir, hasDesign: false };
