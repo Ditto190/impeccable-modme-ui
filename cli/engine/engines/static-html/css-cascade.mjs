@@ -964,13 +964,14 @@ function buildStaticWindow(staticDoc) {
   };
 }
 
-const warnedMissingStylesheets = new Set();
-
 function resolveLinkedCssPath(fileDir, href) {
   const stripped = href.split(/[?#]/)[0];
   const rootRelative = stripped.startsWith('/') && !stripped.startsWith('//');
   if (!rootRelative) return path.resolve(fileDir, stripped);
-  const rel = stripped.replace(/^\/+/, '');
+  // Drop "." and reject ".." so /../outside.css cannot walk out of dir.
+  const segments = stripped.replace(/^\/+/, '').split(/[/\\]/).filter(p => p && p !== '.');
+  if (segments.some(p => p === '..')) return path.join(fileDir, segments.filter(p => p !== '..').join(path.sep));
+  const rel = segments.join(path.sep);
   let dir = fileDir;
   for (;;) {
     const parent = path.dirname(dir);
@@ -990,6 +991,7 @@ function resolveLinkedCssPath(fileDir, href) {
 
 function collectStaticCssText(root, fileDir, profile, filePath, modules) {
   const styleTexts = [];
+  const warnedMissingStylesheets = new Set();
   for (const styleEl of modules.selectAll('style', root.children || [])) {
     styleTexts.push(modules.domutils.textContent(styleEl));
   }
