@@ -84,11 +84,13 @@ function createFakeUniversalBundle(root, providers = ['.claude', '.agents', '.cu
     writeFileSync(join(skillDir, 'scripts', 'context.mjs'), 'console.log("local bundle context");\n');
   }
   if (providers.includes('.claude')) {
-    mkdirSync(join(bundleRoot, '.claude'), { recursive: true });
+    mkdirSync(join(bundleRoot, '.claude', 'agents'), { recursive: true });
     writeFileSync(join(bundleRoot, '.claude', 'settings.json'), JSON.stringify({
       description: 'fresh claude hook',
       hooks: { PostToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'node ".claude/skills/impeccable/scripts/hook.mjs"' }] }] },
     }, null, 2));
+    writeFileSync(join(bundleRoot, '.claude', 'agents', 'impeccable-finish-reviewer.md'),
+      '---\nname: impeccable-finish-reviewer\ndescription: Reviews a finished build.\n---\nClaude reviewer body.\n');
   }
   if (providers.includes('.cursor')) {
     mkdirSync(join(bundleRoot, '.cursor'), { recursive: true });
@@ -104,6 +106,12 @@ function createFakeUniversalBundle(root, providers = ['.claude', '.agents', '.cu
     // the installer must rewrite this command to `.agents/skills` (see below).
     writeFileSync(join(bundleRoot, '.codex', 'hooks.json'), JSON.stringify({
       hooks: { PostToolUse: [{ matcher: 'apply_patch', hooks: [{ type: 'command', command: 'node ".codex/skills/impeccable/scripts/hook.mjs"' }] }] },
+    }, null, 2));
+  }
+  if (providers.includes('.grok')) {
+    mkdirSync(join(bundleRoot, '.grok', 'hooks'), { recursive: true });
+    writeFileSync(join(bundleRoot, '.grok', 'hooks', 'impeccable.json'), JSON.stringify({
+      hooks: { PostToolUse: [{ matcher: 'Edit|Write|MultiEdit', hooks: [{ type: 'command', command: 'node ".grok/skills/impeccable/scripts/hook.mjs"' }] }] },
     }, null, 2));
   }
   // Native subagent definitions, mirroring the build's provider agents output.
@@ -228,7 +236,51 @@ describe('copyProviderSkills: symlink handling', () => {
   });
 });
 
-describe('copyProviderAgents: Copilot and Cursor subagents', () => {
+describe('copyProviderAgents: Claude, Copilot, and Cursor subagents', () => {
+  test('Claude project and user scopes use .claude/agents, with project copies taking precedence', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-claude-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-claude-home-'));
+    const bundle = createFakeUniversalBundle(tmp, ['.claude']);
+    mkdirSync(join(home, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(home, '.claude', 'agents', 'impeccable-finish-reviewer.md'), 'stale copy\n');
+
+    const projectResults = copyProviderAgents(bundle, tmp, ['.claude'], { scope: 'project', home });
+    const userResults = copyProviderAgents(bundle, home, ['.claude'], { scope: 'user' });
+
+    expect(projectResults).toHaveLength(1);
+    expect(projectResults[0].shadowed).toEqual([]);
+    expect(userResults).toHaveLength(1);
+    expect(readFileSync(join(tmp, '.claude', 'agents', 'impeccable-finish-reviewer.md'), 'utf8'))
+      .toContain('Claude reviewer body.');
+    expect(readFileSync(join(home, '.claude', 'agents', 'impeccable-finish-reviewer.md'), 'utf8'))
+      .toContain('Claude reviewer body.');
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('Claude install and update backfill bundled agents beside an unchanged skill', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-claude-install-'));
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-claude-install-home-'));
+    execSync('git init', { cwd: tmp });
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.claude']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    const agentPath = join(tmp, '.claude', 'agents', 'impeccable-finish-reviewer.md');
+
+    const installOutput = run('skills install -y --no-hooks --providers=claude', { cwd: tmp, env });
+    expect(installOutput).toContain('Installed Claude Code agents into:');
+    expect(existsSync(agentPath)).toBe(true);
+
+    rmSync(agentPath);
+    const updateOutput = run('skills update -y --no-hooks', { cwd: tmp, env });
+    expect(updateOutput).toContain('Updated');
+    expect(updateOutput).toContain('Installed Claude Code agents into:');
+    expect(existsSync(agentPath)).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
+
   test('project scope places agents at .github/agents/ and .cursor/agents/', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-project-'));
     const bundle = createFakeUniversalBundle(tmp, ['.github', '.cursor']);
@@ -261,6 +313,46 @@ describe('copyProviderAgents: Copilot and Cursor subagents', () => {
     rmSync(tmp, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   });
+
+  test('skills check accepts current Copilot user agents in a home-rooted checkout', () => {
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-check-home-'));
+    execSync('git init', { cwd: home });
+    const bundleRoot = createFakeUniversalBundle(home, ['.github']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+
+    run('skills install -y --scope=global --no-hooks --providers=github', { cwd: home, env });
+    expect(existsSync(join(home, '.copilot', 'agents', 'impeccable-finish-reviewer.agent.md'))).toBe(true);
+    expect(existsSync(join(home, '.github', 'agents'))).toBe(false);
+
+    const output = run('skills check', { cwd: home, env });
+    expect(output).toContain('Skills are up to date');
+    expect(output).not.toContain('Updates available');
+
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
+
+  test('inferred home-rooted updates refresh stale or missing Copilot user agents', () => {
+    const home = mkdtempSync(join(tmpdir(), 'imp-agents-update-home-'));
+    execSync('git init', { cwd: home });
+    const bundleRoot = createFakeUniversalBundle(home, ['.github']);
+    const env = { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot };
+    const userAgent = join(home, '.copilot', 'agents', 'impeccable-finish-reviewer.agent.md');
+    const projectAgent = join(home, '.github', 'agents', 'impeccable-finish-reviewer.agent.md');
+
+    run('skills install -y --scope=global --no-hooks --providers=github', { cwd: home, env });
+    writeFileSync(userAgent, 'stale copy\n');
+
+    run('skills update -y --no-hooks', { cwd: home, env });
+    expect(readFileSync(userAgent, 'utf8')).toContain('Copilot reviewer body.');
+    expect(existsSync(projectAgent)).toBe(false);
+
+    rmSync(userAgent);
+    run('skills update -y --no-hooks', { cwd: home, env });
+    expect(readFileSync(userAgent, 'utf8')).toContain('Copilot reviewer body.');
+    expect(existsSync(projectAgent)).toBe(false);
+
+    rmSync(home, { recursive: true, force: true });
+  }, 20000);
 
   test('project scope reports user-level Copilot agents that shadow the installed ones; Cursor never does (project wins there)', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'imp-agents-shadow-'));
@@ -1039,21 +1131,24 @@ describe('skills install/update: local universal bundle e2e', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'imp-test-scope-user-hooks-'));
     const home = mkdtempSync(join(tmpdir(), 'imp-home-scope-user-hooks-'));
     execSync('git init', { cwd: tmp });
-    const bundleRoot = createFakeUniversalBundle(tmp, ['.claude', '.agents', '.cursor']);
+    const bundleRoot = createFakeUniversalBundle(tmp, ['.claude', '.agents', '.cursor', '.grok']);
 
-    const output = run('skills install -y --providers=claude,codex,cursor --scope=global', {
+    const output = run('skills install -y --providers=claude,codex,cursor,grok --scope=global', {
       cwd: tmp,
       env: { ...process.env, HOME: home, IMPECCABLE_BUNDLE_PATH: bundleRoot },
     });
 
-    expect(output).toContain('Installed impeccable into: .claude, .agents, .cursor (global)');
-    for (const provider of ['.claude', '.agents', '.cursor']) {
+    expect(output).toContain('Installed impeccable into: .claude, .agents, .cursor, .grok (global)');
+    for (const provider of ['.claude', '.agents', '.cursor', '.grok']) {
       expect(existsSync(join(home, provider, 'skills', 'impeccable', 'SKILL.md'))).toBe(true);
       expect(existsSync(join(tmp, provider, 'skills', 'impeccable', 'SKILL.md'))).toBe(false);
     }
     expect(readFileSync(join(tmp, '.claude', 'settings.local.json'), 'utf8')).toContain(join(home, '.claude', 'skills', 'impeccable', 'scripts', 'hook.mjs'));
     expect(readFileSync(join(tmp, '.codex', 'hooks.json'), 'utf8')).toContain(join(home, '.agents', 'skills', 'impeccable', 'scripts', 'hook.mjs'));
     expect(readFileSync(join(tmp, '.cursor', 'hooks.json'), 'utf8')).toContain(join(home, '.cursor', 'skills', 'impeccable', 'scripts', 'hook-before-edit.mjs'));
+    const grokHooks = readFileSync(join(tmp, '.grok', 'hooks', 'impeccable.json'), 'utf8');
+    expect(grokHooks).toContain(join(home, '.grok', 'skills', 'impeccable', 'scripts', 'hook.mjs'));
+    expect(grokHooks).not.toContain('".grok/skills/impeccable/scripts/hook.mjs"');
 
     rmSync(tmp, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
@@ -1648,6 +1743,35 @@ describe('hook manifest merge helpers', () => {
       'node third-party.mjs',
       'node .cursor/skills/impeccable/scripts/hook-before-edit.mjs',
     ]);
+  });
+
+  test('mergeHookManifests replaces legacy Windows-path Claude hooks (#604)', () => {
+    const legacyPath = 'C:\\Users\\alice\\.claude\\skills\\impeccable\\scripts\\hook.mjs';
+    const legacyCommand = `[ ! -f "${legacyPath}" ] || node "${legacyPath}"`;
+    const freshCommand = `node -e "guard" "${legacyPath}"`;
+    const merged = mergeHookManifests(
+      {
+        hooks: {
+          PostToolUse: [{ matcher: 'Edit|Write|MultiEdit', hooks: [
+            { type: 'command', command: legacyCommand },
+          ] }],
+          Stop: [{ hooks: [{ type: 'command', command: legacyCommand }] }],
+        },
+      },
+      {
+        hooks: {
+          PostToolUse: [{ matcher: 'Edit|Write|MultiEdit', hooks: [
+            { type: 'command', command: freshCommand },
+          ] }],
+          Stop: [{ hooks: [{ type: 'command', command: freshCommand }] }],
+        },
+      },
+    );
+
+    expect(merged.hooks.PostToolUse).toHaveLength(1);
+    expect(merged.hooks.Stop).toHaveLength(1);
+    expect(merged.hooks.PostToolUse[0].hooks[0].command).toBe(freshCommand);
+    expect(merged.hooks.Stop[0].hooks[0].command).toBe(freshCommand);
   });
 });
 

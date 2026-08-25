@@ -113,6 +113,8 @@ npx impeccable update
 
 Codex users should open `/hooks` after install or update and approve the project hook when prompted. Codex tracks trust by hook definition, so updates that change `.codex/hooks.json` can require approval again. Grok Build users need project folder trust (`/hooks-trust` or launch with `--trust`) before `.grok/hooks/` scripts run.
 
+See [Allow the hook in your harness](https://impeccable.style/docs/hooks#allow-the-hook-in-your-harness) for harness-specific trust and verification steps.
+
 ### Option 2: Git Submodule
 
 For teams that want to keep Impeccable vendored and updated through Git, add this repo as a submodule and link the compiled provider build into your harness folders:
@@ -346,7 +348,7 @@ If an ephemeral file (a screenshot, `config.local.json`) was committed before yo
 
 ## Design hook
 
-On Claude Code, GitHub Copilot, Codex, Cursor, and Grok Build, `npx impeccable install` and `npx impeccable update` install a provider-native hook manifest along with the skill payload. The hook runs the Impeccable design detector on direct UI file edits and surfaces findings back into the agent flow. Claude Code, GitHub Copilot, Codex, and Grok Build surface findings after the edit (and run a deeper pass on Stop where supported). Cursor blocks bad proposed writes before they land.
+On Claude Code, GitHub Copilot, Codex, Cursor, and Grok Build, `npx impeccable install` and `npx impeccable update` install a provider-native hook manifest along with the skill payload. The hook runs the Impeccable design detector on direct UI file edits and surfaces findings back into the agent flow. Claude Code, GitHub Copilot, and Codex surface findings after the edit (and run a deeper pass on Stop where supported). Grok Build scans after the edit to warm Stop, then surfaces on Stop; PostToolUse stdout never reaches the model. Cursor blocks bad proposed writes before they land.
 
 Installed hook surfaces:
 
@@ -354,6 +356,7 @@ Installed hook surfaces:
 - GitHub Copilot: `.github/hooks/impeccable.json` (committed, shared by the Copilot CLI and the cloud agent) runs `.github/skills/impeccable/scripts/hook.mjs`. The Copilot CLI activates it once the file is on the repository's default branch and the folder is trusted.
 - Cursor: `.cursor/hooks.json` runs `.cursor/skills/impeccable/scripts/hook-before-edit.mjs`.
 - Codex: `.codex/hooks.json` runs `.agents/skills/impeccable/scripts/hook.mjs`.
+- Grok Build: `.grok/hooks/impeccable.json` runs `.grok/skills/impeccable/scripts/hook.mjs`. Requires `/hooks-trust` or `--trust`. Findings reach the model on Stop, not after each edit.
 
 The installer preserves unrelated hook entries and settings. If a hook manifest is malformed, install/update aborts by default; rerun with `--force` to back up the malformed file as `.bak` and replace it.
 

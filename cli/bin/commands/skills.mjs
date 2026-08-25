@@ -699,7 +699,7 @@ function deduplicateProviders(root, providers, scope) {
  * SKILL.md, so script-only fixes and removed files are detected.
  * Returns true if every bundle skill matches the local copy.
  */
-function isUpToDate(root, providers, bundleDir, scope) {
+function isUpToDate(root, providers, bundleDir, scope, agentScope = scope) {
   const unique = deduplicateProviders(root, providers, scope);
   if (unique.length === 0) return false;
 
@@ -724,6 +724,8 @@ function isUpToDate(root, providers, bundleDir, scope) {
         if (bundleHash !== localHash) return false;
       }
     }
+
+    if (!providerAgentsUpToDate(bundleDir, root, provider, agentScope)) return false;
   }
   return true;
 }
@@ -745,7 +747,8 @@ async function check() {
   console.log('Checking for updates...\n');
   try {
     const bundleDir = await downloadAndExtractBundle();
-    const upToDate = isUpToDate(root, providers, bundleDir);
+    const agentScope = isHomeDir(root) ? 'user' : undefined;
+    const upToDate = isUpToDate(root, providers, bundleDir, undefined, agentScope);
     rmSync(bundleDir, { recursive: true, force: true });
 
     if (upToDate) {
@@ -1251,7 +1254,9 @@ function copyProviderSkills(bundleDir, root, targets, { scope } = {}) {
 }
 
 // Native subagent definitions that ship in the bundle next to a provider's
-// skills. GitHub Copilot's live at `.github/agents/impeccable-*.agent.md`:
+// skills. Claude Code's live at `.claude/agents/impeccable-*.md`; project
+// agents take precedence over user agents. GitHub Copilot's live at
+// `.github/agents/impeccable-*.agent.md`:
 // project installs commit them at `<repo>/.github/agents/`, user-level
 // installs go to `~/.copilot/agents/` (Copilot's user-scope dir, NOT
 // `~/.github/`). On a name conflict Copilot lets the user-level file shadow
@@ -1261,6 +1266,11 @@ function copyProviderSkills(bundleDir, root, targets, { scope } = {}) {
 // `~/.cursor/agents/`; project agents take precedence there, so no shadow
 // warning is needed.
 const PROVIDER_AGENT_ARTIFACTS = {
+  '.claude': {
+    ext: '.md',
+    userDir: home => join(home, '.claude', 'agents'),
+    userShadowsProject: false,
+  },
   '.github': {
     ext: '.agent.md',
     userDir: home => join(home, '.copilot', 'agents'),
@@ -1272,6 +1282,23 @@ const PROVIDER_AGENT_ARTIFACTS = {
     userShadowsProject: false,
   },
 };
+
+function providerAgentsUpToDate(bundleDir, root, provider, scope) {
+  const artifact = PROVIDER_AGENT_ARTIFACTS[provider];
+  if (!artifact) return true;
+  const srcDir = join(bundleDir, provider, 'agents');
+  if (!existsSync(srcDir)) return true;
+
+  const destDir = scope === 'user'
+    ? artifact.userDir(root)
+    : join(root, provider, 'agents');
+  const agentFiles = readdirSync(srcDir).filter(name => name.endsWith(artifact.ext));
+  return agentFiles.every(name => {
+    const localPath = join(destDir, name);
+    return existsSync(localPath)
+      && hashSkillFile(join(srcDir, name)) === hashSkillFile(localPath);
+  });
+}
 
 function copyProviderAgents(bundleDir, root, providers, { scope, home = homedir() } = {}) {
   const targets = Array.isArray(providers) ? providers : [providers];
@@ -1375,7 +1402,7 @@ function hookScriptPathForProvider(skillRoot, provider) {
   if (provider === '.cursor') {
     return join(skillRoot, provider, 'skills', 'impeccable', 'scripts', 'hook-before-edit.mjs');
   }
-  if (provider === '.claude' || provider === '.agents') {
+  if (provider === '.claude' || provider === '.agents' || provider === '.grok') {
     return join(skillRoot, provider, 'skills', 'impeccable', 'scripts', 'hook.mjs');
   }
   return null;
@@ -1451,8 +1478,8 @@ function guardHookCommand(quotedPath, provider) {
 // entries additionally get a `commandWindows` sibling for cmd.exe.
 function rewriteHookCommandsForSkillRoot(value, provider, { skillRoot, absolute }) {
   const hookScript = hookScriptPathForProvider(skillRoot, provider);
-  // Providers we don't own a `node "PATH"` command hook for (.github, .grok)
-  // carry their own portable command forms; leave them untouched.
+  // Providers we don't own a `node "PATH"` command hook for (.github) carry
+  // their own portable command forms; leave them untouched.
   if (!hookScript) return value;
 
   // Project-scope installs derive the provider's own project-relative path
@@ -1534,7 +1561,8 @@ function hookInstalledForProvider(root, provider) {
 
 function valueHasImpeccableHookMarker(value) {
   if (typeof value === 'string') {
-    return IMPECCABLE_HOOK_COMMAND_MARKERS.some(marker => value.includes(marker));
+    const normalized = value.replace(/\\/g, '/');
+    return IMPECCABLE_HOOK_COMMAND_MARKERS.some(marker => normalized.includes(marker));
   }
   if (Array.isArray(value)) return value.some(valueHasImpeccableHookMarker);
   if (value && typeof value === 'object') {
@@ -2072,7 +2100,9 @@ function resolveUpdateTarget({ projectRoot, home, explicitScope }) {
   const homeRooted = isHomeDir(projectRoot);
   if (homeRooted && !explicitScope) {
     const providers = findInstalledProviders(home);
-    return providers.length ? { root: home, scope: undefined, providers, scopeLabel: 'user level' } : null;
+    return providers.length
+      ? { root: home, scope: undefined, agentScope: 'user', providers, scopeLabel: 'user level' }
+      : null;
   }
 
   const projectProviders = homeRooted ? [] : findImpeccableProviders(projectRoot, 'project');
@@ -2203,7 +2233,7 @@ async function update(flags = []) {
       : { root: projectRoot, scope: 'project', providers: target.projectProviders, scopeLabel: 'this project' };
   }
 
-  const { root, scope } = target;
+  const { root, scope, agentScope = scope } = target;
   console.log(`Updating the ${target.scopeLabel} install: ${formatPathForDisplay(root)} (${target.providers.join(', ')})`);
   const providers = target.providers;
   const linkedProviders = findLinkedProviders(root, providers, scope);
@@ -2227,7 +2257,7 @@ async function update(flags = []) {
   }
 
   // Compare local vs remote -- skip if already up to date
-  if (isUpToDate(root, copyProviders, tmpDir, scope)) {
+  if (isUpToDate(root, copyProviders, tmpDir, scope, agentScope)) {
     try {
       const wantHooks = installHooks && await decideHookInstall(root, copyProviders, { yes });
       const hookTargets = wantHooks ? copyProviderHooks(tmpDir, root, copyProviders, { force }) : [];
@@ -2263,7 +2293,7 @@ async function update(flags = []) {
     if (migrated > 0) console.log('Migrated a prefixed install back to /impeccable (the i- prefix is no longer used).');
 
     const updated = refreshProviderSkills(tmpDir, root, copyProviders, scope);
-    reportProviderAgents(copyProviderAgents(tmpDir, root, copyProviders, { scope }));
+    reportProviderAgents(copyProviderAgents(tmpDir, root, copyProviders, { scope: agentScope }));
     const wantHooks = installHooks && await decideHookInstall(root, providers, { yes });
     const hookTargets = wantHooks ? copyProviderHooks(tmpDir, root, providers, { force }) : [];
 

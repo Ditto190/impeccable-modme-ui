@@ -3,7 +3,7 @@
 Source of truth for what each AI coding harness supports in terms of agent skills.
 Used to inform provider configs in `scripts/lib/transformers/providers.js`.
 
-Last verified: 2026-04-28 (subagent landscape spot-checked 2026-06-28; Mistral Vibe row verified 2026-07-16; Grok Build row verified 2026-07-21)
+Last verified: 2026-04-28 (subagent landscape spot-checked 2026-06-28; Mistral Vibe row verified 2026-07-16; Grok Build skills row verified 2026-07-21; Grok Build hook stdin captured 2026-08-24)
 
 > This file is point-in-time. Capabilities move fast; verify live before relying
 > on any "only X supports Y" claim. Notably, the subagent table below lists
@@ -73,7 +73,7 @@ Notes:
 | Claude Code | Yes (`PostToolUse`) | No | `.claude/settings.json` | Project-local settings entry installed by `npx impeccable skills install/update`. Runs `.claude/skills/impeccable/scripts/hook.mjs`. |
 | Codex CLI | Yes (`PostToolUse`) | No | `.codex/hooks.json` | Project-local manifest installed with the `.agents/skills/impeccable` payload. Runs `.agents/skills/impeccable/scripts/hook.mjs` from the git root. Requires normal `/hooks` trust approval. |
 | Cursor | Yes (`preToolUse`) | No | `.cursor/hooks.json` | Project-level manifest installed with `.cursor/skills/impeccable`. Runs `hook-before-edit.mjs` to block bad proposed writes before they land. Reloads on save; restart Cursor if hooks do not pick up. |
-| Grok Build | Yes (`PostToolUse`) | No | `.grok/hooks/impeccable.json` | Project-local manifest installed with `.grok/skills/impeccable`. Claude-compatible matchers (`Edit\|Write\|MultiEdit`) alias to Grok tools. Also runs a Stop deep pass. Requires `/hooks-trust` or `--trust`. Plugin installs use `plugin/hooks/hooks.json` with `${CLAUDE_PLUGIN_ROOT}` (aliased to `GROK_PLUGIN_ROOT`). |
+| Grok Build | Yes (`PostToolUse`) | No | `.grok/hooks/impeccable.json` | Project-local manifest installed with `.grok/skills/impeccable`. Claude-compatible matchers (`Edit\|Write\|MultiEdit`) alias to Grok `search_replace`. PostToolUse runs the scan and warms the session cache; Grok ignores that stdout. Stop `additionalContext` is the user-visible pass. Ignore Grok's observe-only Stop with `reason: "shutdown"`. Requires `/hooks-trust` or `--trust`. Plugin installs use `plugin/hooks/hooks.json` with `${CLAUDE_PLUGIN_ROOT}` (aliased to `GROK_PLUGIN_ROOT`). |
 | All other harnesses | No | No | n/a | No documented hook surface today. Skill and commands still ship. |
 
 ## Skill Directory Structure

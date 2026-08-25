@@ -10,6 +10,10 @@ import {
   buildImportGraph, resolveImport,
   detectFrameworkConfig, isPortListening, FRAMEWORK_CONFIGS,
 } from '../cli/engine/detect-antipatterns.mjs';
+import * as htmlparser2 from 'htmlparser2';
+import * as cssSelect from 'css-select';
+import * as domutils from 'domutils';
+import { StaticDocument } from '../cli/engine/engines/static-html/css-cascade.mjs';
 import { filterByScopes } from '../cli/engine/registry/antipatterns.mjs';
 import {
   checkColors,
@@ -377,6 +381,228 @@ describe('detectText — broken images in source comments', () => {
     const findings = detectText(source, 'gallery.jsx');
 
     expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('ignores img tags in Astro style block comments', () => {
+    const source = [
+      '---',
+      'const title = "Hero";',
+      '---',
+      '<style>',
+      '  /*',
+      '   * Example markup: <img src="">',
+      '   */',
+      '  .hero { color: red; }',
+      '</style>',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('ignores img tags in Astro HTML comments', () => {
+    const source = [
+      '---',
+      'const title = "Hero";',
+      '---',
+      '<!-- <img src="" alt="Comment-only image" /> -->',
+      '<img src="/logo.png" alt="Logo" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('ignores img tags in Astro frontmatter line comments', () => {
+    const source = [
+      '---',
+      '// <img src="" alt="Comment-only image" />',
+      'const site = "https://example.com";',
+      '---',
+      '<img src="/logo.png" alt="Logo" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('ignores img tags in CSS block comments', () => {
+    const source = [
+      '/*',
+      ' * Example markup: <img src="">',
+      ' */',
+      '.hero { color: red; }',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.css');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('still detects real img tags after an HTML comment in Astro', () => {
+    const source = [
+      '---',
+      'const title = "Hero";',
+      '---',
+      '<!-- decorative only -->',
+      '<img src="" alt="Empty source" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    const broken = findings.filter(r => r.antipattern === 'broken-image');
+    expect(broken).toHaveLength(1);
+    expect(broken[0].line).toBe(5);
+  });
+
+  test('does not blank https URLs in Astro frontmatter', () => {
+    const source = [
+      '---',
+      'const site = "https://example.com/logo.png";',
+      '---',
+      '<img src="" alt="Empty source" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(1);
+  });
+
+  test('keeps same-line img visible after a bare https URL in Astro markup', () => {
+    const source = '<p>https://example.com <img src="" alt="Empty source" /></p>';
+
+    const findings = detectText(source, 'hero.astro');
+
+    expect(findings.filter(r => r.antipattern === 'broken-image')).toHaveLength(1);
+  });
+
+  test('preserves line numbers after comment blanking in Astro', () => {
+    const source = [
+      '---',
+      'const title = "Hero";',
+      '---',
+      '<!-- <img src="" alt="Comment-only image" /> -->',
+      '<p>Intro copy</p>',
+      '<img src="" alt="Empty source" />',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.astro');
+
+    const broken = findings.filter(r => r.antipattern === 'broken-image');
+    expect(broken).toHaveLength(1);
+    expect(broken[0].line).toBe(6);
+  });
+
+  test('does not treat comment markers inside script strings as markup comments', () => {
+    const htmlDelimiters = [
+      '<script>const open = "<!--";</script>',
+      '<img>',
+      '<script>const close = "-->";</script>',
+    ].join('\n');
+    const cssDelimiters = [
+      '<script>const open = "/*";</script>',
+      '<img>',
+      '<script>const close = "*/";</script>',
+    ].join('\n');
+
+    for (const filePath of ['hero.astro', 'hero.vue', 'hero.svelte']) {
+      expect(detectText(htmlDelimiters, filePath).filter(r => r.antipattern === 'broken-image')).toHaveLength(1);
+      expect(detectText(cssDelimiters, filePath).filter(r => r.antipattern === 'broken-image')).toHaveLength(1);
+    }
+  });
+
+  test('ignores preprocessor line comments in stylesheets', () => {
+    const source = '// font-family: Inter\n.hero { color: red; }';
+
+    for (const filePath of ['hero.scss', 'hero.sass', 'hero.less']) {
+      expect(detectText(source, filePath).filter(r => r.antipattern === 'overused-font')).toHaveLength(0);
+    }
+  });
+
+  test('still detects live font-family after a preprocessor line comment', () => {
+    const source = '// skip this\n.hero { font-family: Inter; }';
+
+    const findings = detectText(source, 'hero.scss').filter(r => r.antipattern === 'overused-font');
+    expect(findings).toHaveLength(1);
+    expect(findings[0].line).toBe(2);
+  });
+
+  test('does not blank https URLs in SCSS', () => {
+    const source = '.hero { background: url(https://example.com/i.png); }\n.hero { font-family: Inter; }';
+
+    const findings = detectText(source, 'hero.scss').filter(r => r.antipattern === 'overused-font');
+    expect(findings).toHaveLength(1);
+    expect(findings[0].line).toBe(2);
+  });
+
+  test('ignores frontmatter comments after a --- line inside a template literal', () => {
+    const source = [
+      '---',
+      'const md = `',
+      '---',
+      '`;',
+      '// <img src="" alt="Comment-only image" />',
+      '---',
+      '<div>ok</div>',
+    ].join('\n');
+
+    expect(detectText(source, 'hero.astro').filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('ignores preprocessor line comments in component style blocks', () => {
+    const source = [
+      '<style lang="scss">',
+      '// font-family: Inter',
+      '.hero { color: red; }',
+      '</style>',
+    ].join('\n');
+
+    for (const filePath of ['hero.astro', 'hero.vue', 'hero.svelte']) {
+      expect(detectText(source, filePath).filter(r => r.antipattern === 'overused-font')).toHaveLength(0);
+    }
+  });
+
+  test('still detects live font-family after a style-block line comment', () => {
+    const source = [
+      '<style lang="scss">',
+      '// skip this',
+      '.hero { font-family: Inter; }',
+      '</style>',
+    ].join('\n');
+
+    const findings = detectText(source, 'hero.vue').filter(r => r.antipattern === 'overused-font');
+    expect(findings).toHaveLength(1);
+    expect(findings[0].line).toBe(3);
+  });
+
+  test('ignores frontmatter comments after a regex literal that contains quotes', () => {
+    const source = [
+      '---',
+      'const re = /["\']/;',
+      '// <img src="" alt="Comment-only image" />',
+      '---',
+      '<div>ok</div>',
+    ].join('\n');
+
+    expect(detectText(source, 'hero.astro').filter(r => r.antipattern === 'broken-image')).toHaveLength(0);
+  });
+
+  test('keeps live font-family after a protocol-relative URL in SCSS', () => {
+    const sources = [
+      '.hero { background: url( //cdn.example.com/i.png); font-family: Inter; }',
+      '.hero { background: url(#{$prefix}//cdn.example.com/i.png); font-family: Inter; }',
+    ];
+
+    for (const source of sources) {
+      expect(detectText(source, 'hero.scss').filter(r => r.antipattern === 'overused-font')).toHaveLength(1);
+    }
+    expect(detectText(
+      '.hero { background: url(@{prefix}//cdn.example.com/i.png); font-family: Inter; }',
+      'hero.less',
+    ).filter(r => r.antipattern === 'overused-font')).toHaveLength(1);
   });
 });
 
@@ -1236,6 +1462,46 @@ describe('detectHtml — static HTML/CSS engine', () => {
   });
 });
 
+describe('StaticDocument.closest — compiled selector cache', () => {
+  test('compiles each selector once per document', () => {
+    let compileCount = 0;
+    const compile = (sel) => {
+      compileCount++;
+      return cssSelect.compile(sel);
+    };
+    const root = htmlparser2.parseDocument(
+      '<html><body><div class="target-ancestor">' +
+      '<div><div><div><div><div><div><div><div><div><span>deep</span></div></div></div></div></div></div></div></div></div>' +
+      '</div><div><div><div><div><div><div><div><div><div><span>deep2</span></div></div></div></div></div></div></div></div></div></div></body></html>',
+    );
+    const doc = new StaticDocument(root, {
+      selectAll: cssSelect.selectAll,
+      selectOne: cssSelect.selectOne,
+      compile,
+      domutils,
+    });
+    const deep = doc.querySelectorAll('span')[0];
+    const deep2 = doc.querySelectorAll('span')[1];
+    expect(deep.closest('.target-ancestor').node.attribs.class).toBe('target-ancestor');
+    deep.closest('.target-ancestor');
+    deep2.closest('.target-ancestor');
+    expect(compileCount).toBe(1);
+  });
+
+  test('invalid selector returns null on repeat calls', () => {
+    const root = htmlparser2.parseDocument('<html><body><p>x</p></body></html>');
+    const doc = new StaticDocument(root, {
+      selectAll: cssSelect.selectAll,
+      selectOne: cssSelect.selectOne,
+      compile: cssSelect.compile,
+      domutils,
+    });
+    const p = doc.querySelector('p');
+    expect(p.closest('p:has-invalid(')).toBeNull();
+    expect(p.closest('p:has-invalid(')).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Side-tab as absolutely-positioned pseudo-element stripe
 // ---------------------------------------------------------------------------
@@ -1555,6 +1821,32 @@ describe('hover contrast + color-mix', () => {
     expect(stops).toHaveLength(2);
   });
 
+  test('parseGradientColors resolves color-mix stops without leaking nested hex', () => {
+    const stops = parseGradientColors('linear-gradient(135deg, color-mix(in srgb, #2d5a4a 92%, #000), color-mix(in srgb, #1a3d32 90%, #000))');
+    expect(stops).toHaveLength(2);
+    expect(stops[0]).toEqual({ r: 41, g: 83, b: 68, a: 1 });
+    expect(stops[1]).toEqual({ r: 23, g: 55, b: 45, a: 1 });
+  });
+
+  test('parseGradientColors does not leak nested hex when color-mix has var()', () => {
+    const stops = parseGradientColors('linear-gradient(135deg, color-mix(in srgb, var(--brand) 92%, #000), color-mix(in srgb, var(--brand-deep) 90%, #000))');
+    expect(stops).toEqual([]);
+  });
+
+  test('parseGradientColors still collects sibling bare hex stops beside color-mix', () => {
+    const stops = parseGradientColors('linear-gradient(color-mix(in srgb, #2d5a4a 92%, #000), #ffffff)');
+    expect(stops).toHaveLength(2);
+    expect(stops[0]).toEqual({ r: 41, g: 83, b: 68, a: 1 });
+    expect(stops[1]).toEqual({ r: 255, g: 255, b: 255, a: 1 });
+  });
+
+  test('parseGradientColors still reads bare hex gradient stops', () => {
+    const stops = parseGradientColors('linear-gradient(#2d5a4a, #000)');
+    expect(stops).toHaveLength(2);
+    expect(stops[0]).toEqual({ r: 45, g: 90, b: 74, a: 1 });
+    expect(stops[1]).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+  });
+
   test('checkHoverContrast flags a failing hover pair on a styled control', () => {
     const f = checkHoverContrast({
       tag: 'a',
@@ -1762,16 +2054,44 @@ describe('codex-grid-background variants', () => {
     expect(grids(css)).toHaveLength(1);
   });
 
-  test('flags single-axis hairline tiled by a px pair cell', () => {
+  test('keeps single-axis hairline tiled by a px pair cell legal', () => {
     const css = `body { background: linear-gradient(90deg, rgba(23,25,24,.035) 1px, transparent 1px) 0 0 / 40px 40px, #f4f1ea; }`;
-    const f = grids(css);
-    expect(f).toHaveLength(1);
-    expect(f[0].snippet).toContain('line-field');
+    expect(grids(css)).toHaveLength(0);
   });
 
   test('keeps percent-tiled single hairlines (data-viz track rules) legal', () => {
     const css = `.span-track { background-image: linear-gradient(90deg, #303532 1px, transparent 1px); background-size: 25% 100%; }`;
     expect(grids(css)).toHaveLength(0);
+  });
+
+  test('keeps 1D dashed dot rules legal', () => {
+    const css = `.dot-rule {
+      height: 5px;
+      background-image: linear-gradient(90deg, rgba(255,255,255,.75) 5px, transparent 5px);
+      background-size: 10px 5px;
+      background-repeat: repeat-x;
+    }`;
+    expect(grids(css)).toHaveLength(0);
+  });
+
+  test('keeps 1D progress rails with dash-period px pair tiles legal', () => {
+    const css = `.progress-rail {
+      background-image: linear-gradient(90deg, #eee 1px, transparent 1px);
+      background-size: 8px 4px;
+      background-repeat: repeat-x;
+    }`;
+    expect(grids(css)).toHaveLength(0);
+  });
+
+  test('regex source engine keeps 1D dot rules legal', () => {
+    const css = `.dot-rule {
+      height: 5px;
+      background-image: linear-gradient(90deg, rgba(255,255,255,.75) 5px, transparent 5px);
+      background-size: 10px 5px;
+      background-repeat: repeat-x;
+    }`;
+    const findings = detectText(css, 'dot-rule.css');
+    expect(findings.filter(f => f.antipattern === 'codex-grid-background')).toHaveLength(0);
   });
 
   test('classic two-axis background-size form still flags', () => {

@@ -272,6 +272,31 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     );
   });
 
+  it('color: nested #000 inside color-mix must not become on #000000', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'color.html'));
+    const light = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#f7f3ea/i.test(r.snippet || '')
+    );
+    assert.equal(
+      light.length, 0,
+      `light text on the mixed green must not flag: ${light.map(r => r.snippet).join('; ')}`,
+    );
+    const leaked = f.filter(r => /#3d2418 on #000000/i.test(r.snippet || ''));
+    assert.equal(
+      leaked.length, 0,
+      `nested #000 must not become on #000000: ${leaked.map(r => r.snippet).join('; ')}`,
+    );
+    assert.ok(
+      f.some(r =>
+        r.antipattern === 'low-contrast' &&
+        /#3d2418/i.test(r.snippet || '') &&
+        /#17372d|#295344/i.test(r.snippet || '')
+      ),
+      'dark ink on the mixed stop should flag against the mix, not phantom black',
+    );
+  });
+
   it('color: white text on background-image url() ancestor is not flagged as low-contrast', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'color.html'));
     // The pass column has white text on a div with background-image: url().
@@ -1276,6 +1301,14 @@ describe('detectHtml — generated-UI tells', () => {
         `expected exactly one default ${id} finding, got ${f.filter(r => r.antipattern === id).length}`,
       );
     }
+  });
+
+  it('codex-grid-background: 1D dashed rules and px-pair line-fields stay legal', async () => {
+    const f = await detectHtml(path.join(FIXTURES, 'codex-grid-1d-pass.html'));
+    assert.equal(
+      f.filter(r => r.antipattern === 'codex-grid-background').length, 0,
+      `1D tiled hairlines must not flag, got: ${f.filter(r => r.antipattern === 'codex-grid-background').map(r => r.snippet).join('; ')}`,
+    );
   });
 
   it('gemini-tells: both flag cases surface by default and pass cases stay legal', async () => {
