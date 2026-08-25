@@ -1013,6 +1013,16 @@ async function fetchLatestSkillVersion() {
   }
 }
 
+// Destroy fetch's global undici dispatcher before process.exit(): a live
+// keep-alive socket trips a libuv assertion on Windows/Node 24 after a
+// successful boot (nodejs/node#56645, issue #573).
+async function destroyFetchDispatcher() {
+  const dispatcher = globalThis[Symbol.for('undici.globalDispatcher.1')];
+  if (dispatcher && typeof dispatcher.destroy === 'function') {
+    try { await dispatcher.destroy(); } catch { /* exit regardless */ }
+  }
+}
+
 // Two instructions used to sit in one directive: ask, and "if they agree, run
 // it". Nothing gated the second on an answer, and the same sentence said to
 // continue without waiting, so a run that could never establish agreement was
@@ -1160,6 +1170,7 @@ async function cli() {
     appendStalenessDirective(parts, ctx, cliOptions);
     if (updateDirective) parts.push(updateDirective);
     process.stdout.write(parts.join('\n\n---\n\n') + '\n');
+    await destroyFetchDispatcher();
     process.exit(0);
   }
   const parts = [`# PRODUCT.md\n\n${ctx.product.trim()}`];
@@ -1207,6 +1218,8 @@ async function cli() {
   }
   if (updateDirective) parts.push(updateDirective);
   process.stdout.write(parts.join('\n\n---\n\n') + '\n');
+  await destroyFetchDispatcher();
+  process.exit(0);
 }
 
 function parseCliOptions(args) {

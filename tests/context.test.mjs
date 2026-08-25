@@ -1588,4 +1588,39 @@ describe('context.mjs update check', () => {
     assert.equal(typeof cache.lastCheck, 'number'); // stamped so we don't re-poll every boot
     assert.equal(cache.latestVersion, undefined); // nothing learned
   });
+
+  // Targeted live-fetch boot: the Windows abort in issue #573 fired after
+  // stdout was already complete, so the contract is exit 0 with the full
+  // context still on stdout.
+  it('exits 0 after a targeted live-fetch boot writes full context', async () => {
+    const { srv, host } = await startStub({ skills: '2.0.0' });
+    try {
+      const { skillScript, project, env } = setup({}, { host });
+      fs.writeFileSync(
+        path.join(project, 'package.json'),
+        JSON.stringify({ private: true, workspaces: ['packages/*'] }),
+      );
+      const jervPi = path.join(project, 'packages', 'jerv-pi');
+      fs.mkdirSync(jervPi, { recursive: true });
+      fs.writeFileSync(path.join(jervPi, 'PRODUCT.md'), '# Jerv Pi product\n');
+
+      const result = await new Promise((resolveRun, rejectRun) => {
+        const child = spawn(process.execPath, [skillScript, '--target', 'packages/jerv-pi'], {
+          cwd: project,
+          env,
+        });
+        let stdout = '';
+        child.stdout.on('data', (chunk) => { stdout += chunk; });
+        child.on('error', rejectRun);
+        child.on('close', (status) => resolveRun({ status, stdout }));
+      });
+
+      assert.equal(result.status, 0);
+      assert.match(result.stdout, /RESOLVED_CONTEXT:/);
+      assert.match(result.stdout, /# Jerv Pi product/);
+      assert.match(result.stdout, /UPDATE_AVAILABLE/);
+    } finally {
+      srv.close();
+    }
+  });
 });
