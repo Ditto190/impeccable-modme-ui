@@ -1321,6 +1321,66 @@ describe('detectHtml — static HTML/CSS engine', () => {
     expect(findingIds(f)).toContain('side-tab');
   });
 
+  test('resolves root-relative linked stylesheets with cache-busting query', async () => {
+    await withStaticFixture({
+      'index.html': `<!DOCTYPE html><html><head>
+        <link rel="stylesheet" href="/static/app.css?v=3">
+      </head><body><div class="card">Card</div></body></html>`,
+      'static/app.css': '.card { border-left: 5px solid #3b82f6; border-radius: 4px; }',
+    }, async ({ file }) => {
+      const f = await detectHtml(file);
+      expect(findingIds(f)).toContain('side-tab');
+    });
+  });
+
+  test('resolves root-relative linked stylesheets from nested pages via ancestor walk', async () => {
+    await withStaticFixture({
+      'pages/about.html': `<!DOCTYPE html><html><head>
+        <link rel="stylesheet" href="/static/app.css">
+      </head><body><div class="card">Card</div></body></html>`,
+      'static/app.css': '.card { border-left: 5px solid #3b82f6; border-radius: 4px; }',
+    }, async ({ dir }) => {
+      const f = await detectHtml(path.join(dir, 'pages', 'about.html'));
+      expect(findingIds(f)).toContain('side-tab');
+    });
+  });
+
+  test('does not resolve root-relative sheets above the project root', async () => {
+    await withStaticFixture({
+      'project/package.json': '{}',
+      'project/index.html': `<!DOCTYPE html><html><head>
+        <link rel="stylesheet" href="/static/app.css">
+      </head><body><div class="card">Card</div></body></html>`,
+      'static/app.css': '.card { border-left: 5px solid #3b82f6; border-radius: 4px; }',
+    }, async ({ dir }) => {
+      const f = await detectHtml(path.join(dir, 'project', 'index.html'));
+      expect(findingIds(f)).not.toContain('side-tab');
+    });
+  });
+
+  test('warns when a linked stylesheet cannot be read', async () => {
+    const writes = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...args) => {
+      writes.push(String(chunk));
+      return origWrite(chunk, ...args);
+    };
+    try {
+      await withStaticFixture({
+        'index.html': `<!DOCTYPE html><html><head>
+          <link rel="stylesheet" href="/missing/app.css">
+        </head><body><div>Page</div></body></html>`,
+      }, async ({ file, dir }) => {
+        await detectHtml(file);
+        const msg = writes.join('');
+        expect(msg).toContain('could not read linked stylesheet /missing/app.css');
+        expect(msg).toContain(`resolved to ${path.join(dir, 'missing', 'app.css')}`);
+      });
+    } finally {
+      process.stderr.write = origWrite;
+    }
+  });
+
   test('gradient-text: a style="" attribute alone carries the page-level flag', async () => {
     await withStaticFixture({
       'index.html': `<!DOCTYPE html><html><head><title>t</title></head><body>
