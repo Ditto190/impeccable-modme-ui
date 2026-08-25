@@ -519,20 +519,73 @@ typography:
     fs.writeFileSync(path.join(dir, 'web/package.json'), '{"name":"web"}');
     const webPage = path.join(dir, 'web/page.html');
     fs.writeFileSync(webPage, PAGE_HTML);
+    fs.mkdirSync(path.join(dir, 'web/examples'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'web/examples/package.json'), '{"name":"examples"}');
+    const nestedPage = path.join(dir, 'web/examples/page.html');
+    fs.writeFileSync(nestedPage, PAGE_HTML);
     fs.mkdirSync(path.join(dir, 'vendor/tool'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'vendor/tool/package.json'), '{"name":"tool"}');
     const vendorPage = path.join(dir, 'vendor/tool/page.html');
     fs.writeFileSync(vendorPage, PAGE_HTML);
 
-    const findings = runDetect(dir, [webPage, vendorPage]);
+    const findings = runDetect(dir, [webPage, nestedPage, vendorPage]);
     assert.ok(
       fontFindingsFor(findings, webPage).some((f) => f.ignoreValue === 'verdana'),
       'direct-child workspace under * must inherit root DESIGN.md',
+    );
+    assert.ok(
+      fontFindingsFor(findings, nestedPage).some((f) => f.ignoreValue === 'verdana'),
+      'nested package under a * workspace child must still inherit',
     );
     assert.equal(
       fontFindingsFor(findings, vendorPage).length,
       0,
       'vendor/tool is not a direct child of * and must not inherit',
+    );
+  });
+
+  it('nested package under an included workspace inherits root DESIGN.md', () => {
+    const dir = mkTempRoot('impeccable-detect-mono-nestedws-');
+    fs.writeFileSync(path.join(dir, 'DESIGN.md'), DESIGN_MD);
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      name: 'mono',
+      workspaces: ['packages/*'],
+    }));
+    fs.mkdirSync(path.join(dir, 'packages/ui'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'packages/ui/package.json'), '{"name":"ui"}');
+    fs.mkdirSync(path.join(dir, 'packages/ui/examples'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'packages/ui/examples/package.json'), '{"name":"examples"}');
+    const page = path.join(dir, 'packages/ui/examples/page.html');
+    fs.writeFileSync(page, PAGE_HTML);
+
+    const findings = runDetect(dir, [page]);
+    assert.ok(
+      fontFindingsFor(findings, page).some((f) => f.ignoreValue === 'verdana'),
+      'packages/ui/examples must inherit as nested content of packages/*',
+    );
+    const found = findDesignRoot(path.join(dir, 'packages/ui/examples'));
+    assert.equal(found.dir, dir);
+    assert.equal(found.hasDesign, true);
+  });
+
+  it('impeccable projectRoots beat a package-manager negation of the same path', () => {
+    const dir = mkTempRoot('impeccable-detect-mono-iroots-win-');
+    fs.writeFileSync(path.join(dir, 'DESIGN.md'), DESIGN_MD);
+    fs.mkdirSync(path.join(dir, '.impeccable'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.impeccable/config.json'), '{"projectRoots":["sites/*"]}');
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      name: 'mono',
+      workspaces: ['sites/*', '!sites/docs'],
+    }));
+    fs.mkdirSync(path.join(dir, 'sites/docs'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'sites/docs/package.json'), '{"name":"docs"}');
+    const page = path.join(dir, 'sites/docs/page.html');
+    fs.writeFileSync(page, PAGE_HTML);
+
+    const findings = runDetect(dir, [page]);
+    assert.ok(
+      fontFindingsFor(findings, page).some((f) => f.ignoreValue === 'verdana'),
+      'projectRoots must govern a path they match even when workspaces exclude it',
     );
   });
 });
