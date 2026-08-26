@@ -1,4 +1,5 @@
 import { describe, test, expect, afterEach } from 'bun:test';
+import http from 'node:http';
 import { launchBrowser, detectUrl, splitScanUrl } from '../cli/engine/engines/browser/detect-url.mjs';
 
 // launchBrowser prefers the system-installed Chrome on Windows to dodge the
@@ -131,10 +132,13 @@ describe('splitScanUrl', () => {
 });
 
 function makeFakeBrowser() {
-  const calls = { authenticate: [], goto: [] };
+  const calls = { intercept: false, requestHandler: null, authenticate: [], goto: [] };
   const page = {
-    on() {},
+    on(event, handler) {
+      if (event === 'request') calls.requestHandler = handler;
+    },
     async setViewport() {},
+    async setRequestInterception() { calls.intercept = true; },
     async authenticate(creds) { calls.authenticate.push(creds); },
     async goto(url, opts) { calls.goto.push({ url, opts }); },
     async evaluate(fn) {
@@ -153,25 +157,56 @@ function makeFakeBrowser() {
   };
 }
 
+function fakeRequest(url, calls) {
+  return {
+    url: () => url,
+    headers: () => ({ accept: 'text/html' }),
+    continue(overrides) {
+      calls.continues.push({ url, overrides });
+      return Promise.resolve();
+    },
+  };
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve(`http://127.0.0.1:${server.address().port}/`);
+    });
+  });
+}
+
 describe('detectUrl credential redaction', () => {
-  test('authenticates with stripped URL and redacts findings', async () => {
+  test('scopes Authorization to the scan origin and redacts findings', async () => {
     const { calls, browser } = makeFakeBrowser();
+    calls.continues = [];
     const findings = await detectUrl('https://user:p%40ss@example.com/path', {
       browser,
       visualContrast: false,
       contentHidden: false,
     });
 
-    expect(calls.authenticate).toEqual([{ username: 'user', password: 'p@ss' }]);
+    expect(calls.authenticate).toEqual([]);
+    expect(calls.intercept).toBe(true);
+    expect(typeof calls.requestHandler).toBe('function');
     expect(calls.goto).toHaveLength(1);
     expect(calls.goto[0].url).toBe('https://example.com/path');
+
+    const expected = `Basic ${Buffer.from('user:p@ss').toString('base64')}`;
+    await calls.requestHandler(fakeRequest('https://example.com/path', calls));
+    await calls.requestHandler(fakeRequest('https://evil.example/steal', calls));
+    expect(calls.continues[0].overrides.headers.authorization).toBe(expected);
+    expect(calls.continues[1].overrides).toBeUndefined();
+
     expect(findings.length).toBeGreaterThan(0);
     for (const f of findings) {
       expect(f.file).toBe('https://example.com/path');
     }
   });
 
-  test('does not authenticate when URL has no userinfo', async () => {
+  test('does not intercept when URL has no userinfo', async () => {
     const { calls, browser } = makeFakeBrowser();
     const url = 'https://example.com/path';
     const findings = await detectUrl(url, {
@@ -181,9 +216,79 @@ describe('detectUrl credential redaction', () => {
     });
 
     expect(calls.authenticate).toEqual([]);
+    expect(calls.intercept).toBe(false);
+    expect(calls.requestHandler).toBe(null);
     expect(findings.length).toBeGreaterThan(0);
     for (const f of findings) {
       expect(f.file).toBe(url);
     }
   });
+});
+
+describe('detectUrl origin-scoped basic auth', () => {
+  test('does not send URL credentials to a cross-origin redirect that challenges', async () => {
+    const user = 'qa-scanner';
+    const pass = 'Hunter2-657-SHOULD-NOT-LEAK';
+    const expected = `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
+    const seenOnB = [];
+
+    const serverB = http.createServer((req, res) => {
+      seenOnB.push(req.headers.authorization || '');
+      res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="b"' });
+      res.end('b');
+    });
+    const urlB = await listen(serverB);
+    const serverA = http.createServer((req, res) => {
+      res.writeHead(302, { Location: urlB });
+      res.end();
+    });
+    const urlA = await listen(serverA);
+
+    try {
+      try {
+        await detectUrl(urlA.replace('http://', `http://${user}:${pass}@`), {
+          visualContrast: false,
+          contentHidden: false,
+          waitUntil: 'domcontentloaded',
+        });
+      } catch {
+        // B's 401 may fail navigation once credentials are withheld.
+      }
+      expect(seenOnB.includes(expected)).toBe(false);
+    } finally {
+      await Promise.all([
+        new Promise((resolve) => serverA.close(resolve)),
+        new Promise((resolve) => serverB.close(resolve)),
+      ]);
+    }
+  }, { timeout: 30000 });
+
+  test('still authenticates the original scan origin', async () => {
+    const user = 'qa-scanner';
+    const pass = 'Hunter2-657-SHOULD-NOT-LEAK';
+    const expected = `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
+    const seen = [];
+    const server = http.createServer((req, res) => {
+      seen.push(req.headers.authorization || '');
+      if (req.headers.authorization !== expected) {
+        res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="a"' });
+        res.end('no');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><html><body><h1>ok</h1></body></html>');
+    });
+    const origin = await listen(server);
+
+    try {
+      await detectUrl(origin.replace('http://', `http://${user}:${pass}@`), {
+        visualContrast: false,
+        contentHidden: false,
+        waitUntil: 'domcontentloaded',
+      });
+      expect(seen.includes(expected)).toBe(true);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }, { timeout: 30000 });
 });

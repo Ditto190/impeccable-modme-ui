@@ -192,6 +192,36 @@ function splitScanUrl(url) {
   return { href: parsed.href, credentials };
 }
 
+function basicAuthHeader(credentials) {
+  return `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}`;
+}
+
+// page.authenticate is page-wide: a cross-origin redirect that then 401s
+// would receive these credentials. Attach Authorization only to the scan origin.
+async function applyOriginScopedAuth(page, href, credentials) {
+  if (!credentials) return;
+  let origin = '';
+  try {
+    origin = new URL(href).origin;
+  } catch {
+    return;
+  }
+  if (!origin) return;
+  const header = basicAuthHeader(credentials);
+  await page.setRequestInterception(true);
+  page.on('request', (request) => {
+    let headers;
+    try {
+      if (new URL(request.url()).origin === origin) {
+        headers = { ...request.headers(), authorization: header };
+      }
+    } catch {
+      // invalid request URL: continue without auth
+    }
+    void request.continue(headers ? { headers } : undefined).catch(() => {});
+  });
+}
+
 async function detectUrl(rawUrl, options = {}) {
   const { href: url, credentials } = splitScanUrl(rawUrl);
   const profile = options?.profile;
@@ -269,9 +299,7 @@ async function detectUrl(rawUrl, options = {}) {
       ruleId: 'set-viewport',
       target: url,
     }, () => page.setViewport(viewport));
-    if (credentials) {
-      await page.authenticate(credentials);
-    }
+    await applyOriginScopedAuth(page, url, credentials);
     await profileStepAsync(profile, {
       engine: 'browser',
       phase: 'load',
