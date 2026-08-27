@@ -819,6 +819,28 @@ describe('hook-admin.mjs', () => {
     assert.equal(fs.existsSync(getConfigPath(cwd)), false, 'a refused ignore must not write config');
   });
 
+  it('ignore-value refuses exact values for rules that cannot extract one', () => {
+    assert.throws(
+      () => runAdmin(['ignore-value', 'cramped-padding', 'padding: 4px 8px']),
+      /cramped-padding has no extractable ignore value.*ignore-value cramped-padding "\*" --file <glob>/,
+    );
+    assert.throws(
+      () => runAdmin(['ignore-value', 'side-tab', 'Inter', '--file', 'a.css']),
+      /side-tab has no extractable ignore value.*ignore-value side-tab "\*" --file <glob>/,
+    );
+    assert.equal(fs.existsSync(getConfigPath(cwd)), false, 'a refused ignore must not write config');
+
+    const out = runAdmin(['ignore-value', 'overused-font', 'Inter']);
+    assert.match(out, /Added overused-font=inter/);
+
+    runAdmin(['ignore-value', 'cramped-padding', '*', '--file', 'index.html']);
+    const shared = JSON.parse(fs.readFileSync(getConfigPath(cwd), 'utf-8')).detector;
+    assert.equal(shared.ignoreValues.filter((e) => e.rule === 'cramped-padding').length, 1);
+    const entry = shared.ignoreValues.find((e) => e.rule === 'cramped-padding');
+    assert.equal(entry.value, '*');
+    assert.deepEqual(entry.files, ['index.html']);
+  });
+
   it('ignore-value --file requires a glob', () => {
     assert.throws(
       () => runAdmin(['ignore-value', 'side-tab', '*', '--file']),
