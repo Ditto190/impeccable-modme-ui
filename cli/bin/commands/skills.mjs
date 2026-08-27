@@ -9,11 +9,10 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync, lstatSync, unlinkSync, mkdirSync, writeFileSync, rmSync, rmdirSync, renameSync, createWriteStream, realpathSync, symlinkSync, readlinkSync, cpSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, lstatSync, unlinkSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, rmdirSync, renameSync, realpathSync, symlinkSync, readlinkSync, cpSync } from 'node:fs';
 import { join, resolve, dirname, relative, isAbsolute, sep } from 'node:path';
 import { createInterface, emitKeypressEvents } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { get } from 'node:https';
 import { createHash } from 'node:crypto';
 import { tmpdir, homedir } from 'node:os';
 import { unzipSync } from 'fflate';
@@ -622,13 +621,17 @@ async function downloadAndExtractBundle() {
   const localBundle = process.env.IMPECCABLE_BUNDLE_PATH;
   if (localBundle) return copyOrExtractLocalBundle(localBundle);
 
-  const tmpZip = join(tmpdir(), `impeccable-update-${Date.now()}.zip`);
-  const tmpDir = join(tmpdir(), `impeccable-update-${Date.now()}`);
-  await downloadFile(`${API_BASE}/api/download/bundle/universal`, tmpZip);
-  mkdirSync(tmpDir, { recursive: true });
-  await extractZip(tmpZip, tmpDir);
-  rmSync(tmpZip, { force: true });
-  return tmpDir;
+  const staging = mkdtempSync(join(tmpdir(), 'impeccable-update-'));
+  const tmpZip = join(staging, 'bundle.zip');
+  try {
+    await downloadFile(`${API_BASE}/api/download/bundle/universal`, tmpZip);
+    await extractZip(tmpZip, staging);
+    rmSync(tmpZip, { force: true });
+    return staging;
+  } catch (e) {
+    rmSync(staging, { recursive: true, force: true });
+    throw e;
+  }
 }
 
 async function copyOrExtractLocalBundle(sourceValue) {
@@ -637,16 +640,18 @@ async function copyOrExtractLocalBundle(sourceValue) {
     throw new Error(`Local bundle not found: ${source}`);
   }
 
-  const tmpDir = join(tmpdir(), `impeccable-local-bundle-${process.pid}-${Date.now()}`);
-  mkdirSync(tmpDir, { recursive: true });
-
-  if (statSync(source).isDirectory()) {
-    cpSync(source, tmpDir, { recursive: true });
-    return tmpDir;
+  const staging = mkdtempSync(join(tmpdir(), 'impeccable-local-bundle-'));
+  try {
+    if (statSync(source).isDirectory()) {
+      cpSync(source, staging, { recursive: true });
+    } else {
+      await extractZip(source, staging);
+    }
+    return staging;
+  } catch (e) {
+    rmSync(staging, { recursive: true, force: true });
+    throw e;
   }
-
-  await extractZip(source, tmpDir);
-  return tmpDir;
 }
 
 /**
@@ -2163,26 +2168,29 @@ function getModifiedSkillFiles(root, providerDirs) {
   return modified;
 }
 
-function downloadFile(url, dest) {
-  return new Promise((resolve, reject) => {
-    const file = createWriteStream(dest);
-    get(url, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        // Follow redirect
-        get(res.headers.location, (res2) => {
-          res2.pipe(file);
-          file.on('finish', () => { file.close(); resolve(); });
-        }).on('error', reject);
-        return;
-      }
-      if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode}`));
-        return;
-      }
-      res.pipe(file);
-      file.on('finish', () => { file.close(); resolve(); });
-    }).on('error', reject);
-  });
+async function downloadFile(url, dest, { fetchImpl = globalThis.fetch } = {}) {
+  let current = url;
+  let hopsLeft = 5;
+  while (true) {
+    const parsed = new URL(current);
+    if (parsed.protocol !== 'https:') {
+      throw new Error('Refusing non-HTTPS URL');
+    }
+    const res = await fetchImpl(current, { redirect: 'manual' });
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      if (!location) throw new Error(`HTTP ${res.status}`);
+      if (hopsLeft <= 0) throw new Error('Too many redirects');
+      hopsLeft -= 1;
+      current = new URL(location, current).href;
+      continue;
+    }
+    if (res.status !== 200) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    writeFileSync(dest, Buffer.from(await res.arrayBuffer()), { flag: 'wx' });
+    return;
+  }
 }
 
 async function update(flags = []) {
@@ -2332,6 +2340,8 @@ export {
   copyProviderHooks,
   copyProviderSkills,
   decideHookInstall,
+  downloadAndExtractBundle,
+  downloadFile,
   expectedHookDests,
   extractZip,
   formatInstallDetectionLines,
