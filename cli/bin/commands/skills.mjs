@@ -9,9 +9,11 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync, lstatSync, unlinkSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, rmdirSync, renameSync, realpathSync, symlinkSync, readlinkSync, cpSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, lstatSync, unlinkSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, rmdirSync, renameSync, createWriteStream, realpathSync, symlinkSync, readlinkSync, cpSync } from 'node:fs';
 import { join, resolve, dirname, relative, isAbsolute, sep } from 'node:path';
 import { createInterface, emitKeypressEvents } from 'node:readline';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { tmpdir, homedir } from 'node:os';
@@ -2188,7 +2190,13 @@ async function downloadFile(url, dest, { fetchImpl = globalThis.fetch } = {}) {
     if (res.status !== 200) {
       throw new Error(`HTTP ${res.status}`);
     }
-    writeFileSync(dest, Buffer.from(await res.arrayBuffer()), { flag: 'wx' });
+    if (!res.body) throw new Error('Empty response body');
+    try {
+      await pipeline(Readable.fromWeb(res.body), createWriteStream(dest, { flags: 'wx' }));
+    } catch (e) {
+      if (e.code !== 'EEXIST') rmSync(dest, { force: true });
+      throw e;
+    }
     return;
   }
 }
