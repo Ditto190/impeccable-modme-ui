@@ -499,7 +499,15 @@ export function heroReadings(state, spec, buildPath) {
 export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, min = HERO_MIN, outDir = path.join('.impeccable', 'review', 'diff', 'hero'), artifact = null } = {}) {
   if (!fs.existsSync(buildPath)) return { ok: false, reasons: [`no hero capture at ${buildPath}: screenshot the first viewport at the comp's own dimensions (${state.breakpoint || 'comp size'}) into that path`] };
   const specForRefs = loadSpec(specPath);
-  const unreferenced = unreferencedPlates(specForRefs, artifact || state.artifact || null);
+  // Resolve the page first: with an artifact in hand, unreferencedPlates
+  // follows its linked stylesheets exactly (wherever they live), and the
+  // bounded source walk is only the fallback for a build with no page yet.
+  let pageFile = artifact || state.artifact || null;
+  if (!pageFile || !fs.existsSync(pageFile)) {
+    if (fs.existsSync('index.html')) pageFile = 'index.html';
+    else { try { const htmls = fs.readdirSync('.').filter((f) => /\.html?$/i.test(f)); if (htmls.length === 1) pageFile = htmls[0]; } catch { /* fall back to the walk */ } }
+  }
+  const unreferenced = unreferencedPlates(specForRefs, pageFile && fs.existsSync(pageFile) ? pageFile : null);
   if (unreferenced.length) {
     return { ok: false, reasons: unreferenced.map((r) => `plate ${r.plate} (region ${r.id}) is not referenced by any source file: the page draws that region in code while the produced plate sits unused. Place the plate (an <img>, a background-image, or an inlined data URI named for it) and recapture.`) };
   }
@@ -620,13 +628,8 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   if (otherContradicted.length > Math.max(1, Math.floor(report.regions.length / 3))) reasons.push(`${otherContradicted.length} of ${report.regions.length} regions contradicted: ${otherContradicted.map((r) => r.id).join(', ')}`);
   // A CSS-drawn organic contour sitting on a raster region's box is the plate
   // replaced by code, whatever the pixels score.
-  // A start with --direction records no artifact; the page is still there.
-  // Read index.html (or the one .html at the root) so the code scans run.
-  let artifactFile = artifact || state.artifact || null;
-  if (!artifactFile || !fs.existsSync(artifactFile)) {
-    if (fs.existsSync('index.html')) artifactFile = 'index.html';
-    else { try { const htmls = fs.readdirSync('.').filter((f) => /\.html?$/i.test(f)); if (htmls.length === 1) artifactFile = htmls[0]; } catch { /* leave */ } }
-  }
+  // The page resolved above serves the code scans too.
+  const artifactFile = pageFile;
   if (artifactFile && fs.existsSync(artifactFile) && specForRefs) {
     const organic = organicClipRegions(artifactFile, specForRefs);
     for (const r of organic) reasons.push(`artifact draws an organic clip-path (${r.snippet}) inside raster region ${r.id}'s box; that region ships as its plate, never as a polygon`);
