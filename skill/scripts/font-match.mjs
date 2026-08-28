@@ -222,6 +222,11 @@ function parseCandidates(s) {
 export async function renderCandidates(candidates, text, targetCapPx, { transform = 'none' } = {}) {
   const b = await loadBrowser();
   if (!b) return null;
+  // A resolvable module whose browser binary is absent (CI, a fresh install
+  // without npx playwright install) throws at launch; that is the same
+  // situation as no module, and the catalog fallback owns it.
+  let browser;
+  try { browser = b.kind === 'playwright' ? await b.mod.chromium.launch() : await b.mod.launch({ headless: true }); } catch { return null; }
   // One stylesheet per family+weight: a combined request 400s when any one
   // family lacks the requested axis (Anton has no wght range), and a static
   // family answers only for the weights it ships.
@@ -230,7 +235,6 @@ export async function renderCandidates(candidates, text, targetCapPx, { transfor
   const results = [];
   const size0 = Math.max(12, Math.round(targetCapPx * 1.4));
   if (b.kind === 'playwright') {
-    const browser = await b.mod.chromium.launch();
     const page = await browser.newPage({ viewport: { width: 1600, height: 400 }, deviceScaleFactor: 1 });
     await page.setContent(html, { waitUntil: 'load' });
     await page.waitForTimeout(800);
@@ -264,7 +268,6 @@ export async function renderCandidates(candidates, text, targetCapPx, { transfor
     }
     await browser.close();
   } else {
-    const browser = await b.mod.launch({ headless: true });
     const page = await browser.newPage();
     await page.setViewport({ width: 1600, height: 400 });
     await page.setContent(html, { waitUntil: 'load' });
@@ -309,7 +312,8 @@ export async function renderProofSheet(compCrop, top, text, capPx, transform = '
   const links = top.map((c) => `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${encodeURIComponent(c.family).replace(/%20/g, '+')}:wght@${c.weight}&display=block">`).join('');
   const rowsHtml = top.map((c) => `<div class="row"><div class="lab">${c.family} ${c.weight} · ${c.fontSizePx}px</div><div class="s" style="font-family:'${c.family}';font-weight:${c.weight};font-size:${c.fontSizePx}px;text-transform:${transform}">${text}</div></div>`).join('');
   const html = `<!doctype html><html><head><meta charset="utf-8">${links}<style>body{margin:0;background:#fff;padding:12px;font-family:system-ui}img{display:block;max-width:100%}.lab{font:12px system-ui;color:#666;margin:10px 0 2px}.s{white-space:nowrap;line-height:1.05;color:#111}</style></head><body><div class="lab">COMP</div><img src="data:image/png;base64,${compB64}">${rowsHtml}</body></html>`;
-  const browser = await b.mod.chromium.launch();
+  let browser;
+  try { browser = await b.mod.chromium.launch(); } catch { return null; }
   const page = await browser.newPage({ viewport: { width: Math.min(1600, Math.max(600, compCrop.width + 24)), height: 200 } });
   await page.setContent(html, { waitUntil: 'load' });
   try { await page.evaluate(async () => { await document.fonts.ready; }); } catch { /* ignore */ }
