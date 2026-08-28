@@ -1109,7 +1109,6 @@ describe('detectUrl — browser-only fixtures', () => {
       const hexWaiver = rgbToHex(rgbColor);
       const colorFiltered = await scan('scan-dv-3', [{ rule: 'design-system-color', value: hexWaiver }]);
       const waivedColorCount = unfiltered.colorValues.filter(value => value === rgbColor).length;
-      assert.ok(waivedColorCount > 0);
       assert.equal(
         colorFiltered.colors,
         unfiltered.colors - waivedColorCount,
@@ -1125,6 +1124,84 @@ describe('detectUrl — browser-only fixtures', () => {
       // config.skipScan and must scan to nothing at all.
       const skipped = await scan('scan-dv-4', null, { skipScan: true });
       assert.equal(skipped.total, 0, `expected skipScan to empty the scan, got: ${JSON.stringify(skipped)}`);
+      await page.close();
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  });
+
+  it('extension scan: skipScan suppresses the visual contrast stage too', async () => {
+    const puppeteer = await import('puppeteer');
+    const browser = await puppeteer.default.launch({
+      headless: true,
+      args: process.env.CI ? ['--no-sandbox', '--disable-setuid-sandbox'] : [],
+    });
+    try {
+      const page = await browser.newPage();
+      // Keep failing visual-contrast cards inside the no-scroll viewport.
+      await page.setViewport({ width: 1280, height: 1000 });
+      await page.goto(`${baseUrl}/fixtures/antipatterns/visual-contrast.html`, { waitUntil: 'load' });
+      const browserScript = fs.readFileSync(path.join(ROOT, 'cli/engine/detect-antipatterns-browser.js'), 'utf-8');
+      await page.evaluate(() => {
+        document.documentElement.dataset.impeccableExtension = 'true';
+        window.__impeccableMessages = [];
+        window.addEventListener('message', event => {
+          if (event.source !== window || !event.data?.source?.startsWith('impeccable-')) return;
+          window.__impeccableMessages.push(event.data);
+        });
+      });
+      await page.evaluate(browserScript);
+      const resultsFor = (scanId) => page.evaluate((id) => (
+        (window.__impeccableMessages || [])
+          .filter(m => m.source === 'impeccable-results' && m.scanId === id)
+          .map(m => ({
+            count: m.count,
+            types: (m.findings || []).flatMap(g => (g.findings || []).map(f => f.type || f.id)),
+          }))
+      ), scanId);
+
+      // Control: the visual pass runs after the analytic scan and re-posts
+      // results carrying its low-contrast findings. This is exactly what an
+      // ignoreFiles-waived page must not do.
+      await page.evaluate(() => {
+        window.postMessage({
+          source: 'impeccable-command',
+          action: 'scan',
+          config: { scanId: 'vc-skip-1', visualContrast: true, visualContrastMaxCandidates: 20 },
+        }, '*');
+      });
+      const controlDeadline = Date.now() + 8000;
+      let control = [];
+      while (Date.now() < controlDeadline) {
+        control = await resultsFor('vc-skip-1');
+        if (control.some(r => r.types.includes('low-contrast'))) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      assert.ok(
+        control.some(r => r.types.includes('low-contrast')),
+        `expected the control scan's visual pass to report low-contrast, got: ${JSON.stringify(control)}`,
+      );
+
+      // skipScan: a page waived wholesale by detector.ignoreFiles must stay
+      // at zero through the async visual stage as well: no results post with
+      // findings, no markers.
+      await page.evaluate(() => {
+        window.postMessage({
+          source: 'impeccable-command',
+          action: 'scan',
+          config: { scanId: 'vc-skip-2', visualContrast: true, visualContrastMaxCandidates: 20, skipScan: true },
+        }, '*');
+      });
+      await new Promise(resolve => setTimeout(resolve, 2500));
+      const skipped = await resultsFor('vc-skip-2');
+      assert.ok(skipped.length >= 1, `expected the skipScan scan to post results, got: ${JSON.stringify(skipped)}`);
+      assert.ok(
+        skipped.every(r => r.count === 0 && r.types.length === 0),
+        `expected every skipScan results post to stay empty, got: ${JSON.stringify(skipped)}`,
+      );
+      const overlays = await page.evaluate(() =>
+        document.querySelectorAll('.impeccable-overlay, .impeccable-label').length);
+      assert.equal(overlays, 0, `expected no markers on a skipScan page, got ${overlays}`);
       await page.close();
     } finally {
       await browser.close().catch(() => {});

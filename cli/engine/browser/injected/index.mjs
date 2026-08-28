@@ -1472,13 +1472,17 @@ if (IS_BROWSER) {
     return findings;
   }
 
+  // A page matched by detector.ignoreFiles is waived wholesale: every scan
+  // stage answers empty so the badge and toast read zero. Mirrors
+  // shouldIgnoreDetectionFile in cli/lib/impeccable-config.mjs; the live
+  // overlay resolves the globs per page (live-browser-ignores.js) and
+  // forwards the verdict as config.skipScan.
+  function skipScanActive() {
+    return EXTENSION_MODE && window.__IMPECCABLE_CONFIG__?.skipScan === true;
+  }
+
   function collectBrowserFindings() {
-    // A page matched by detector.ignoreFiles is waived wholesale: answer the
-    // scan with the empty shape so the badge and toast read zero. Mirrors
-    // shouldIgnoreDetectionFile in cli/lib/impeccable-config.mjs; the live
-    // overlay resolves the globs per page (live-browser-ignores.js) and
-    // forwards the verdict as config.skipScan.
-    if (EXTENSION_MODE && window.__IMPECCABLE_CONFIG__?.skipScan === true) {
+    if (skipScanActive()) {
       return { groupMap: new Map(), allFindings: [], pageLevelFindings: [] };
     }
     const groupMap = new Map();
@@ -2013,6 +2017,12 @@ if (IS_BROWSER) {
 
   async function collectBrowserFindingsAsync(options = {}, runtime = {}) {
     const collected = collectBrowserFindings();
+    // The visual pass walks the DOM on its own; on a skipScan page it would
+    // repopulate the emptied scan, so it is skipped with everything else.
+    if (skipScanActive()) {
+      lastVisualContrastAnalyses = [];
+      return { ...collected, allFindings: [], visualContrastAnalyses: [] };
+    }
     await addVisualContrastFindings(collected.groupMap, options, runtime);
     return {
       ...collected,
@@ -2066,7 +2076,7 @@ if (IS_BROWSER) {
     const generation = scanGeneration;
     const collected = collectBrowserFindings();
     const allFindings = renderBrowserFindings(collected, options);
-    if (shouldRunVisualContrast(options)) {
+    if (!skipScanActive() && shouldRunVisualContrast(options)) {
       addVisualContrastFindings(collected.groupMap, options, { decorate: true, generation })
         .then(() => {
           if (generation === scanGeneration) postSerializedFindings(collected.groupMap, options);
