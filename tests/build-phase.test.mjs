@@ -485,6 +485,9 @@ describe('unreferencedPlates', () => {
       fs.writeFileSync(path.join(d, 'index.html'), `<link rel="stylesheet" href="a/b/c/e/f/g/h/styles/deep.css"><main class="hero"></main>`);
       fs.writeFileSync(path.join(d, 'assets', 'hero.css'), '.hero { background: red; }');
       assert.deepEqual(unreferencedPlates(spec, path.join(d, 'index.html')), [], 'a stylesheet linked by the artifact counts wherever it lives');
+      // a root-relative href resolves against the project, not the drive root
+      fs.writeFileSync(path.join(d, 'index.html'), `<link rel="stylesheet" href="/a/b/c/e/f/g/h/styles/deep.css"><main class="hero"></main>`);
+      assert.deepEqual(unreferencedPlates(spec, path.join(d, 'index.html')), [], 'a root-relative stylesheet href counts');
       fs.writeFileSync(path.join(deep, 'deep.css'), '.hero { background: red; }');
       assert.equal(unreferencedPlates(spec, null).length, 1, 'an unreferenced plate is still named');
       assert.equal(unreferencedPlates(spec, path.join(d, 'index.html')).length, 1, 'and with the artifact set too');

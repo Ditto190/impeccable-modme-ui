@@ -355,7 +355,12 @@ export function unreferencedPlates(spec, artifact = null) {
         const href = m[1];
         if (/^(https?:|data:|\/\/)/i.test(href)) continue;
         if (!/rel=["']?stylesheet/i.test(m[0]) && !/\.css(\?|$)/i.test(href)) continue;
-        linked.push(path.resolve(path.dirname(artifact), href.split('?')[0]));
+        const clean = href.split('?')[0];
+        // a root-relative href serves from the project root, not the drive
+        // root: try the working directory and the artifact's own directory
+        // (unreadable candidates are skipped by the corpus loop)
+        if (clean.startsWith('/')) { linked.push(path.join(process.cwd(), clean), path.join(path.dirname(artifact), clean)); }
+        else linked.push(path.resolve(path.dirname(artifact), clean));
       }
     } catch { /* the artifact still counts */ }
   }
