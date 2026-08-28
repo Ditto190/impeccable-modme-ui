@@ -334,7 +334,7 @@ describe('serve-question', () => {
     // Beat well past the 3s timeout: the timer must not fire under a live page.
     const beatUntil = Date.now() + 5500;
     while (Date.now() < beatUntil) {
-      await fetch(`${url}heartbeat`, { method: 'POST' });
+      await fetch(`${url}heartbeat?key=life`, { method: 'POST' });
       await new Promise((r) => setTimeout(r, 400));
     }
     const alive = await fetch(url);
@@ -419,7 +419,7 @@ describe('serve-question', () => {
     // One beat, then silence: the idle grace must still reclaim the daemon.
     // Before the fix, the whole lifetime check sat inside timeoutSec > 0 and
     // a closed tab leaked this daemon forever.
-    await fetch(`${url}heartbeat`, { method: 'POST' });
+    await fetch(`${url}heartbeat?key=zero`, { method: 'POST' });
     const deadline = Date.now() + 12000;
     let gone = false;
     while (Date.now() < deadline && !gone) {
@@ -444,8 +444,8 @@ describe('serve-question', () => {
     const url = started.out.match(/QUESTION URL: (\S+)/)?.[1];
     assert.ok(url, started.out);
     try {
-      await fetch(`${url}heartbeat`, { method: 'POST' });
-      await fetch(`${url}answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
+      await fetch(`${url}heartbeat?key=latehand`, { method: 'POST' });
+      await fetch(`${url}answer?key=latehand`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
       // Go silent like a stalled page until just before the 3s idle
       // deadline, then deliver: the daemon used to exit before the page's
       // watch could claim the hand, orphaning a delivery --update had
@@ -490,7 +490,7 @@ describe('serve-question', () => {
       // serving decision has to live here: once a re-roll answer is collected
       // and no replacement has landed, GET / re-enters the bounded shuffle
       // wait instead of re-serving the answered cards.
-      await fetch(`${url}answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
+      await fetch(`${url}answer?key=refresh`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
       const waitingPage = await (await fetch(url)).text();
       assert.ok(waitingPage.includes('awaitNextRound(false,'), 'a refresh mid re-roll re-enters the shuffle wait');
       const nextPath = path.join(dir, 'next.json');
@@ -520,7 +520,7 @@ describe('serve-question', () => {
     const url = started.out.match(/QUESTION URL: (\S+)/)?.[1];
     assert.ok(url, started.out);
     try {
-      await fetch(`${url}answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
+      await fetch(`${url}answer?key=deadline`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
       const fresh = await (await fetch(url)).text();
       const budget = Number(fresh.match(/awaitNextRound\(false, (\d+)\);/)?.[1]);
       assert.ok(budget > 0 && budget <= 3000, `the waiting page carries the remaining allowance, got ${budget}`);
@@ -529,7 +529,7 @@ describe('serve-question', () => {
       // click-time disable can race a second click, so the server keeps the
       // first stamp instead of renewing the allowance.
       await new Promise((r) => setTimeout(r, 1200));
-      await fetch(`${url}answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
+      await fetch(`${url}answer?key=deadline`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
       const restamped = Number((await (await fetch(url)).text()).match(/awaitNextRound\(false, (\d+)\);/)?.[1]);
       assert.ok(restamped > 0 && restamped < 2500, `a duplicate re-roll does not renew the allowance, got ${restamped}`);
       await new Promise((r) => setTimeout(r, 3500));
@@ -565,7 +565,7 @@ describe('serve-question', () => {
       // A bad file that reaches the disk anyway must not trap the page:
       // GET / discards it, so /next-status stops reporting a hand that can
       // never render and the bounded wait resumes instead of reload-looping.
-      await fetch(`${url}answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
+      await fetch(`${url}answer?key=badhand`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
       writeFileSync(path.join(dir, '.impeccable', 'questions', 'badhand.next.json'), JSON.stringify({ title: 'No options' }));
       const page = await (await fetch(url)).text();
       assert.ok(page.includes('awaitNextRound(false,'), 'the round stays in the wait');
@@ -591,7 +591,7 @@ describe('serve-question', () => {
     const url = started.out.match(/QUESTION URL: (\S+)/)?.[1];
     assert.ok(url, started.out);
     try {
-      await fetch(`${url}answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
+      await fetch(`${url}answer?key=silent`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
       const collected = await run(['--wait', '--key', 'silent', '--poll', '2']);
       assert.equal(collected.code, 0, collected.out);
       // The stalled page went silent by design: fake a beat older than the
@@ -644,7 +644,7 @@ describe('serve-question', () => {
     const url = started.out.match(/QUESTION URL: (\S+)/)?.[1];
     assert.ok(url, started.out);
     try {
-      await fetch(`${url}answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
+      await fetch(`${url}answer?key=claimgap`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ optionId: 'reroll', steer: '' }) });
       const collected = await run(['--wait', '--key', 'claimgap', '--poll', '2']);
       assert.equal(collected.code, 0, collected.out);
       const statePath = path.join(dir, '.impeccable', 'questions', 'claimgap.state.json');

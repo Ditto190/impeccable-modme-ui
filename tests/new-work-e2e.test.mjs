@@ -843,7 +843,7 @@ describe('new-work-e2e: serve-question decision page', () => {
       // the server keeps its real clock, so its own idle grace never fires.
       await page.clock.install();
       let beats = 0;
-      page.on('request', (r) => { if (r.url().endsWith('/heartbeat')) beats += 1; });
+      page.on('request', (r) => { if (new URL(r.url()).pathname === '/heartbeat') beats += 1; });
       await page.goto(url, { waitUntil: 'load' });
       // Playwright actionability waits on rAF, which the fake clock owns, so
       // dispatch the click directly.
