@@ -342,9 +342,24 @@ export function unreferencedPlates(spec, artifact = null) {
   const plates = (spec?.regions || []).filter((r) => r.medium === 'raster' && r.plate);
   if (!plates.length) return [];
   // The artifact narrows nothing: a plate may be referenced only from a
-  // stylesheet the artifact links (assets/hero.css), so the source walk runs
-  // either way and the artifact is simply guaranteed a seat in the corpus.
-  const files = [...new Set([...(artifact && fs.existsSync(artifact) ? [artifact] : []), ...sourceFiles()])];
+  // stylesheet the artifact links, so the source walk runs either way, the
+  // artifact keeps a seat in the corpus, and the stylesheets it links are
+  // added by name (resolved against the artifact's own directory), which
+  // covers a stylesheet outside the walk's root, depth, or file limit.
+  const linked = [];
+  if (artifact && fs.existsSync(artifact)) {
+    linked.push(artifact);
+    try {
+      const html = fs.readFileSync(artifact, 'utf8');
+      for (const m of html.matchAll(/<link\b[^>]*href=["']([^"']+)["'][^>]*>/gi)) {
+        const href = m[1];
+        if (/^(https?:|data:|\/\/)/i.test(href)) continue;
+        if (!/rel=["']?stylesheet/i.test(m[0]) && !/\.css(\?|$)/i.test(href)) continue;
+        linked.push(path.resolve(path.dirname(artifact), href.split('?')[0]));
+      }
+    } catch { /* the artifact still counts */ }
+  }
+  const files = [...new Set([...linked, ...sourceFiles()])];
   let corpus = '';
   for (const f of files) { try { corpus += fs.readFileSync(f, 'utf8') + '\n'; } catch { /* skip */ } }
   const missing = [];

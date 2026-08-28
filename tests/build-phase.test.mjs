@@ -478,7 +478,14 @@ describe('unreferencedPlates', () => {
       // an explicit artifact does not bypass the stylesheet walk
       fs.writeFileSync(path.join(d, 'index.html'), '<link rel="stylesheet" href="assets/hero.css"><main class="hero"></main>');
       assert.deepEqual(unreferencedPlates(spec, path.join(d, 'index.html')), [], 'the linked stylesheet still counts with --artifact set');
+      // a linked stylesheet beyond the walk's reach (deep path) still counts
+      const deep = path.join(d, 'a', 'b', 'c', 'e', 'f', 'g', 'h', 'styles');
+      fs.mkdirSync(deep, { recursive: true });
+      fs.writeFileSync(path.join(deep, 'deep.css'), ".hero { background-image: url('hero-plate.png'); }");
+      fs.writeFileSync(path.join(d, 'index.html'), `<link rel="stylesheet" href="a/b/c/e/f/g/h/styles/deep.css"><main class="hero"></main>`);
       fs.writeFileSync(path.join(d, 'assets', 'hero.css'), '.hero { background: red; }');
+      assert.deepEqual(unreferencedPlates(spec, path.join(d, 'index.html')), [], 'a stylesheet linked by the artifact counts wherever it lives');
+      fs.writeFileSync(path.join(deep, 'deep.css'), '.hero { background: red; }');
       assert.equal(unreferencedPlates(spec, null).length, 1, 'an unreferenced plate is still named');
       assert.equal(unreferencedPlates(spec, path.join(d, 'index.html')).length, 1, 'and with the artifact set too');
     } finally { process.chdir(prev); fs.rmSync(d, { recursive: true, force: true }); }
