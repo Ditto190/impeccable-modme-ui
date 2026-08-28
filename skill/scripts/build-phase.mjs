@@ -299,7 +299,12 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
       // upscaled past the size floor: the comp's grain, its neighbours'
       // edges, and its resolution ship as the artwork. Crops are never
       // plates; the crop is the reference the plate is generated from.
-      if (!isTexture) {
+      // A fake-mode plate (offline pipelines, eval fixtures) IS the crop by
+      // design and says so in its tEXt; the identity refusal is for models
+      // shipping the comp's pixels as artwork, not for the deterministic
+      // stand-in.
+      const isFake = img.text && img.text['impeccable:fake'] === '1';
+      if (!isTexture && !isFake) {
         const raw = crop(comp, r.px.x, r.px.y, r.px.w, r.px.h);
         const same = structureScore(raw, resize(img, raw.width, raw.height));
         if (same >= 0.95) reasons.push(`plate ${file} is the comp crop of region ${r.id} (structure ${(same * 100).toFixed(0)}% against the raw region, a resample of the same pixels): a crop of the comp is never a plate; generate the plate from the crop as reference (generate-image.mjs --plate ${r.id})`);

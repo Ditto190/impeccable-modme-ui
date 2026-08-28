@@ -248,7 +248,7 @@ if (plateId) {
   plateCtx = { spec, specPath, region, ref, refPath, out, size, prompt, comp, encodePng, resize, chroma: wantsChroma ? chromaColor : null };
   if (process.env.IMPECCABLE_IMAGE_GEN_FAKE) {
     const up = resize(ref, ref.width * 2, ref.height * 2);
-    fs.writeFileSync(out, encodePng(up, { text: { 'impeccable:prompt': prompt } }));
+    fs.writeFileSync(out, encodePng(up, { text: { 'impeccable:prompt': prompt, 'impeccable:fake': '1' } }));
     fs.writeFileSync(`${out}.json`, JSON.stringify({ prompt, createdAt: new Date().toISOString(), tool: 'generate-image.mjs', model: 'fake', plate: region.id, refs: [refPath] }, null, 2));
     console.log(`PLATE: ${out} (${up.width}x${up.height}, fake 2x crop of region ${region.id}, $0.00, no API call)`);
     process.exit(0);
@@ -296,7 +296,8 @@ async function keyChroma(file, keyHex) {
       const m = (r + b) / 2; img.data[i + 1] = Math.round(g * a + m * (1 - a));
     }
   }
-  fs.writeFileSync(file, encodePng(img));
+  // keep the tEXt chunks (the embedded prompt written before keying)
+  fs.writeFileSync(file, encodePng(img, { text: img.text && Object.keys(img.text).length ? img.text : null }));
   return keyed / (img.data.length / 4);
 }
 

@@ -2733,8 +2733,9 @@ function scanCssTextForOrganicClipPath(styleText) {
     const kind = m[1].toLowerCase();
     const body = m[2];
     if (kind === 'path') {
-      // curves (C, S, Q, T, A) drawing a contour, not a rectilinear M/L/Z outline
-      const curves = (body.match(/[CSQTA]/g) || []).length;
+      // curves (C, S, Q, T, A, absolute or relative) drawing a contour, not a
+      // rectilinear M/L/Z outline; letters in path data are only commands
+      const curves = (body.match(/[CSQTA]/gi) || []).length;
       if (curves < 3) continue;
       findings.push({ id: 'organic-clip-path', snippet: `clip-path: path() with ${curves} curve segments`, selector: enclosingCssSelector(styleText, m.index) || undefined });
       continue;
@@ -2780,11 +2781,21 @@ function scanCssTextForBuriedRaster(styleText) {
     const firstUrl = value.search(/url\(/i);
     const gradients = [...value.matchAll(/(?:linear|radial|conic)-gradient\([^()]*(?:\([^()]*\)[^()]*)*\)/gi)].filter((gm) => gm.index < firstUrl).map((gm) => gm[0]);
     let opaqueWash = false;
+    // an alpha token normalized to 0..1: '0.8' -> 0.8, '80%' -> 0.8
+    const alphaOf = (a) => { if (a == null) return 1; const v = parseFloat(a); return String(a).trim().endsWith('%') ? v / 100 : v; };
     for (const g of gradients) {
-      const alphas = [...g.matchAll(/rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(?:,\s*([\d.]+))?\s*\)|hsla?\([^)]*?(?:,\s*([\d.]+%?))?\s*\)/gi)].map((a) => a[1] ?? a[2]);
-      const hexOrNamed = /#[0-9a-f]{3,8}\b|\b(?:white|black|ivory|beige|linen|snow|cream)\b/i.test(g.replace(/rgba?\([^)]*\)|hsla?\([^)]*\)/gi, ''));
-      if (!alphas.length && hexOrNamed) { opaqueWash = true; break; }
-      if (alphas.length && alphas.every((a) => a == null || parseFloat(a) >= 0.9)) { opaqueWash = true; break; }
+      const alphas = [...g.matchAll(/rgba?\(\s*[\d.]+%?\s*,?\s*[\d.]+%?\s*,?\s*[\d.]+%?\s*(?:[,/]\s*([\d.]+%?))?\s*\)|hsla?\([^)]*?(?:[,/]\s*([\d.]+%?))?\s*\)/gi)].map((a) => alphaOf(a[1] ?? a[2]));
+      const stripped = g.replace(/rgba?\([^)]*\)|hsla?\([^)]*\)/gi, '');
+      // hex stops: 4- and 8-digit forms carry their own alpha
+      for (const h of stripped.matchAll(/#([0-9a-f]{3,8})\b/gi)) {
+        const hex = h[1];
+        if (hex.length === 4) alphas.push(parseInt(hex[3] + hex[3], 16) / 255);
+        else if (hex.length === 8) alphas.push(parseInt(hex.slice(6), 16) / 255);
+        else alphas.push(1);
+      }
+      const named = /\b(?:white|black|ivory|beige|linen|snow|cream)\b/i.test(stripped);
+      if (named) alphas.push(1);
+      if (alphas.length && alphas.every((a) => !Number.isFinite(a) || a >= 0.9)) { opaqueWash = true; break; }
     }
     if (!opaqueWash) continue;
     findings.push({ id: 'buried-raster', snippet: `raster under a near-opaque gradient wash: ${value.trim().slice(0, 90)}`, selector: enclosingCssSelector(styleText, m.index) || undefined });
@@ -4442,6 +4453,16 @@ function checkQuality(opts) {
   // opacity never reaches the screen: the produced material ships as a
   // compliance token. The CSS-text scan catches the stylesheet form; this
   // catches computed opacity on the element itself (both engines).
+  // Skip browser extension injected elements BEFORE any finding is pushed
+  // (a low-opacity raster those hosts inject used to be recorded and then
+  // returned by this very skip). Read the id via getAttribute whenever
+  // `el.id` is not a string: on a <form> (and other [LegacyOverrideBuiltIns]
+  // hosts) a named control like <input name="id"> shadows the builtin `id`
+  // getter and returns the control element, whose `.startsWith` is undefined
+  // and throws (issue #407 — every Shopify product form ships an
+  // <input name="id">).
+  const elId = typeof el.id === 'string' ? el.id : (el.getAttribute?.('id') || '');
+  if (elId.startsWith('claude-') || elId.startsWith('cic-')) return findings;
   {
     const op = parseFloat(style.opacity);
     if (Number.isFinite(op) && op < 0.15 && op >= 0) {
@@ -4452,14 +4473,6 @@ function checkQuality(opts) {
       }
     }
   }
-  // Skip browser extension injected elements. Read the id via getAttribute
-  // whenever `el.id` is not a string: on a <form> (and other
-  // [LegacyOverrideBuiltIns] hosts) a named control like <input name="id">
-  // shadows the builtin `id` getter and returns the control element, whose
-  // `.startsWith` is undefined and throws (issue #407 — every Shopify product
-  // form ships an <input name="id">).
-  const elId = typeof el.id === 'string' ? el.id : (el.getAttribute?.('id') || '');
-  if (elId.startsWith('claude-') || elId.startsWith('cic-')) return findings;
 
   // --- Line length too long --- (browser-only: needs rect.width)
   if (rect && hasDirectText && QUALITY_TEXT_TAGS.has(tag) && rect.width > 0 && textLen > lineMax) {
