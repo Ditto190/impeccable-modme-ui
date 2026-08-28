@@ -509,7 +509,7 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   }
   const unreferenced = unreferencedPlates(specForRefs, pageFile && fs.existsSync(pageFile) ? pageFile : null);
   if (unreferenced.length) {
-    return { ok: false, reasons: unreferenced.map((r) => `plate ${r.plate} (region ${r.id}) is not referenced by any source file: the page draws that region in code while the produced plate sits unused. Place the plate (an <img>, a background-image, or an inlined data URI named for it) and recapture.`) };
+    return { ok: false, reasons: unreferenced.map((r) => `plate ${r.plate} (region ${r.id}) is not referenced by any source file this scan can see: the page draws that region in code while the produced plate sits unused. Place the plate (an <img>, a background-image, or an inlined data URI named for it) and recapture. If the plate IS referenced from a file the scan missed (your page is not index.html, or the reference lives in a stylesheet outside the project walk), re-run with --artifact <your page>: its linked stylesheets are followed exactly.`) };
   }
   const script = path.join(HERE, 'comp-diff.mjs');
   const args = [script, '--comp', state.comp, '--build', buildPath, '--out-dir', outDir, '--label', 'hero', '--json'];
