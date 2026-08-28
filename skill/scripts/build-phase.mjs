@@ -481,6 +481,7 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   let report;
   try { report = JSON.parse(res.stdout); } catch { return { ok: false, reasons: ['comp-diff produced no report'] }; }
   const reasons = [];
+  const advisories = [];
   // The capture must be the comp's own frame: a 1440-wide capture of a
   // 1536x1024 comp is a different composition before anything is compared.
   const [cw, ch] = String(report.compSize || '').split('x').map(Number);
@@ -489,7 +490,14 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     const compAspect = cw / ch, buildAspect = bw / bh;
     if (bw < cw * 0.9 || Math.abs(buildAspect - compAspect) / compAspect > 0.08) reasons.push(`hero capture is ${bw}x${bh}; the comp is ${cw}x${ch}. Capture the first viewport at the comp's own dimensions (viewport ${cw}x${ch}, not full page) into ${buildPath}.`);
   }
-  if (report.overall < min) reasons.push(`hero overall ${(report.overall * 100).toFixed(1)}% < ${(min * 100).toFixed(0)}% (structure ${(report.scores.structure * 100).toFixed(0)}%, color ${(report.scores.color * 100).toFixed(0)}%, detail ${(report.scores.detail * 100).toFixed(0)}%)`);
+  // Above the fidelity bar, the numeric readings advise instead of block
+  // (Paul's calibration: builds at 68-73+ with colour and spacing nits were
+  // passes; a 90% build sat open behind three ink colours and a cost cap
+  // ended two 76-79% runs mid-loop). Hard vetoes stay unconditional: a
+  // missing region, a contradicted plate or text block, an SVG illustration,
+  // a clipped plate, invented ink are the wrong page at any score.
+  const aboveBar = report.overall >= min;
+  if (!aboveBar) reasons.push(`hero overall ${(report.overall * 100).toFixed(1)}% < ${(min * 100).toFixed(0)}% (structure ${(report.scores.structure * 100).toFixed(0)}%, color ${(report.scores.color * 100).toFixed(0)}%, detail ${(report.scores.detail * 100).toFixed(0)}%)`);
   if (report.scores.colorIntersection != null && report.scores.colorIntersection < 0.2) reasons.push(`the palette is not the comp's (color intersection ${(report.scores.colorIntersection * 100).toFixed(0)}%): comp ${(report.palette.comp || []).slice(0, 3).map((c) => c.hex).join(' ')} vs build ${(report.palette.build || []).slice(0, 3).map((c) => c.hex).join(' ')}. Use the spec's sampled palette values, not a rendition of them.`);
   // A texture band that shares its box with a text/control region carries
   // that region's ink in the comp crop; when the overlapping ink regions are
@@ -536,7 +544,7 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   }
   const missingAfter = missing.filter((r) => r.verdict === 'missing');
   for (const r of missingAfter) reasons.push(`region ${r.id} is missing (detail ${(r.score.detail * 100).toFixed(0)}%, structure ${(r.score.structure * 100).toFixed(0)}%): the comp shows material the build does not`);
-  for (const n of placementNotes) reasons.push(n);
+  for (const n of placementNotes) (aboveBar ? advisories : reasons).push(aboveBar ? `(advisory, above the ${(min * 100).toFixed(0)}% bar) ${n}` : n);
   const contradicted = report.regions.filter((r) => r.verdict === 'contradicted');
   // A contradicted plate, image, or text region is the wrong page whatever
   // the mean says; chrome and controls get the one-third allowance.
@@ -574,7 +582,7 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
       const dh = r.inkBox.build.h - r.inkBox.comp.h, dw = r.inkBox.build.w - r.inkBox.comp.w;
       // the build's box is only comparable when it is discrete too
       if (r.inkBox.build.w >= rw * 0.98 || r.inkBox.build.h >= rh * 0.98) continue;
-      if (Math.abs(dh) > Math.max(6, r.inkBox.comp.h * 0.15) || Math.abs(dw) > Math.max(12, r.inkBox.comp.w * 0.15)) reasons.push(`region ${r.id}: its ink sits in a ${r.inkBox.comp.w}x${r.inkBox.comp.h}px box in the comp and ${r.inkBox.build.w}x${r.inkBox.build.h}px in the build (padding, row height, or size); match the box, not only the position`);
+      if (Math.abs(dh) > Math.max(6, r.inkBox.comp.h * 0.15) || Math.abs(dw) > Math.max(12, r.inkBox.comp.w * 0.15)) (aboveBar ? advisories : reasons).push(`${aboveBar ? `(advisory, above the ${(min * 100).toFixed(0)}% bar) ` : ''}region ${r.id}: its ink sits in a ${r.inkBox.comp.w}x${r.inkBox.comp.h}px box in the comp and ${r.inkBox.build.w}x${r.inkBox.build.h}px in the build (padding, row height, or size); match the box, not only the position`);
     }
   }
   const otherContradicted = contradicted.filter((r) => !directionContradicted.includes(r));
@@ -605,7 +613,6 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   // size, weight, colour, or place; a nav bar too tall; ink where the comp
   // has none (a kicker, a divider, a second row). Each was a pin in the
   // first human review of builds the region scores had passed.
-  const advisories = [];
   let readings = null;
   try { readings = heroReadings(state, specForRefs, buildPath); } catch (e) { reasons.push(`hero readings errored (${e.message}); the region scores above stand`); }
   if (readings) {
@@ -633,8 +640,13 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     const fresh = all.filter((f) => !stale(f));
     const advisory = all.filter((f) => !fresh.includes(f));
     const kept = fresh.slice(0, 8);
-    if (kept.length) reasons.push(`READINGS, each one CSS edit (${fresh.length > kept.length ? `${kept.length} of ${fresh.length}, the rest after these` : `${kept.length}`}):`);
-    for (const f of kept) reasons.push(f);
+    if (aboveBar) {
+      if (kept.length) advisories.push(`(advisory, above the ${(min * 100).toFixed(0)}% bar; fix in the polish pass before responsive) ${kept.length} reading${kept.length === 1 ? '' : 's'}:`);
+      for (const f of kept) advisories.push(`  ${f}`);
+    } else {
+      if (kept.length) reasons.push(`READINGS, each one CSS edit (${fresh.length > kept.length ? `${kept.length} of ${fresh.length}, the rest after these` : `${kept.length}`}):`);
+      for (const f of kept) reasons.push(f);
+    }
     if (advisory.length) advisories.push(...advisory.map((f) => `(advisory, unchanged for 3+ attempts) ${f}`));
     for (const f of readings.plates || []) reasons.push(f);
     // invented ink: enough cells, or a couple of strongly inked ones (a

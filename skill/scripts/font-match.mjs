@@ -174,7 +174,22 @@ export function choiceStamped(regionId, chosen) {
 
 // ---- browser --------------------------------------------------------------
 
+/**
+ * Playwright and puppeteer write launch artifacts to os.tmpdir(). In a
+ * sandbox whose /tmp is not writable (the ninth sweep: EPERM on
+ * mkdtemp /tmp/playwright-artifacts-*), every rank silently fell back to the
+ * catalog and three of four builds set headlines at twice the comp's cap.
+ * Probe once and point TMPDIR at a workspace dir when the system one fails.
+ */
+function ensureWritableTmp() {
+  const os = require('node:os');
+  try { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'fm-')); fs.rmSync(d, { recursive: true, force: true }); return; } catch { /* not writable */ }
+  const local = path.resolve('.impeccable', 'tmp');
+  try { fs.mkdirSync(local, { recursive: true }); process.env.TMPDIR = local; process.env.TMP = local; process.env.TEMP = local; } catch { /* leave as is; launch will say why */ }
+}
+
 async function loadBrowser() {
+  ensureWritableTmp();
   // IMPECCABLE_NODE_MODULES: a node_modules dir holding playwright or
   // puppeteer, for harnesses that mount the skill somewhere its own resolution
   // roots cannot see (a sandbox root, a plugin cache). NODE_PATH works too.

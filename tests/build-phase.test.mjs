@@ -91,6 +91,17 @@ describe('comp-spec', () => {
     assert.equal(plain.regions[0].box.w, 0.4);
   });
 
+  it('persists the escape hatches into the spec and announces their use', () => {
+    const comp = makeComp();
+    const painted = { id: 'rack', kind: 'chrome', grid: 'F1:J4', note: 'an exploded diagram of the rack', codeDrawn: true };
+    const spec = measureRegions(comp, { allowUncovered: true, regions: [painted] }, 'c.png');
+    assert.equal(spec.regions[0].codeDrawn, true, 'the override survives into the spec');
+    assert.ok(spec.warnings.some((w) => /region rack: "codeDrawn": true set in the regions file/.test(w)), JSON.stringify(spec.warnings));
+    const col = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'col', kind: 'chrome', grid: 'G0:J9', note: 'right column', container: true }] }, 'c.png');
+    assert.equal(col.regions[0].container, true);
+    assert.ok(col.warnings.some((w) => /"container": true/.test(w)));
+  });
+
   it('warns when a plate box cuts through its own artwork', () => {
     // a black arch on paper, drawn wider than the region that names it
     const comp = createImage(1000, 1000, [235, 232, 220, 255]);
@@ -268,6 +279,35 @@ describe('build-phase state machine (CLI)', () => {
     res = run(PHASE_SCRIPT, ['advance'], dir);
     assert.equal(res.status, 0, res.stdout);
     assert.match(res.stdout, /ADVANCED plates -> hero/);
+  });
+
+  it('above the bar, numeric readings advise instead of block', () => {
+    const d5 = fs.mkdtempSync(path.join(os.tmpdir(), 'build-phase-bar-'));
+    const comp = makeComp();
+    fs.writeFileSync(path.join(d5, 'comp.png'), encodePng(comp));
+    fs.writeFileSync(path.join(d5, 'regions.json'), JSON.stringify({ allowUncovered: true, regions: [
+      { id: 'masthead', kind: 'chrome', grid: 'A0:J0', note: 'navy masthead bar' },
+      { id: 'headline', kind: 'text', grid: 'A1:D2', note: 'two-line block headline' },
+    ] }));
+    run(PHASE_SCRIPT, ['start', '--comp', 'comp.png', '--artifact', 'index.html'], d5);
+    run(SPEC_SCRIPT, ['--comp', 'comp.png', '--regions', 'regions.json'], d5);
+    run(FONT_SCRIPT, ['--measure', 'headline'], d5);
+    run(FONT_SCRIPT, ['--rank', 'headline', '--text', 'KEEP'], d5);
+    run(PHASE_SCRIPT, ['advance'], d5); // spec -> plates
+    run(PHASE_SCRIPT, ['advance'], d5); // plates -> hero (none owed)
+    // the build is the comp with the headline recoloured: overall stays high,
+    // the ink-colour reading fires
+    const build = { ...comp, data: new Uint8Array(comp.data) };
+    for (let y = 40; y < 160; y++) for (let x = 10; x < 260; x++) { const q = (y * comp.width + x) * 4; if (build.data[q] < 100) { build.data[q] = 170; build.data[q + 1] = 40; build.data[q + 2] = 30; } }
+    fs.mkdirSync(path.join(d5, '.impeccable', 'review'), { recursive: true });
+    fs.writeFileSync(path.join(d5, '.impeccable', 'review', 'hero-repro.png'), encodePng(build));
+    fs.writeFileSync(path.join(d5, 'index.html'), '<main>x</main>');
+    const res = run(PHASE_SCRIPT, ['advance'], d5);
+    assert.equal(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /ADVANCED hero -> sections/);
+    assert.match(res.stdout, /advisory, above the 72% bar/);
+    assert.match(res.stdout, /ink is #/);
+    fs.rmSync(d5, { recursive: true, force: true });
   });
 
   it('scaffold writes the measured layout as custom properties and a reference page', () => {

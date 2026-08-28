@@ -259,6 +259,14 @@ export function measureRegions(comp, regionsInput, compPath) {
     // filed under a code kind is a plate about to be redrawn in SVG: the
     // exploded carburetor "chrome" that the hero gate then scores missing.
     // Refuse at the spec, where the fix is one word, not at the hero.
+    // Escape hatches persist into the spec and announce themselves: a
+    // refusal overridden in regions.json used to vanish from spec.json, so
+    // the shipped spec showed a clean classification with no trace (found in
+    // the ninth sweep, where both carburetor illustrations were filed as
+    // chrome behind codeDrawn: true).
+    for (const key of ['codeDrawn', 'container', 'bleed']) {
+      if (raw[key]) warnings.push(`region ${raw.id}: "${key}": true set in the regions file${key === 'codeDrawn' ? ' (the painted-material refusal is overridden: code draws this region)' : key === 'container' ? ' (the region-size refusal is overridden: one undivided element)' : ' (the clipped-artwork refusal is overridden: the page crops it there)'}`);
+    }
     if (raw.note && !RASTER_KINDS.has(kind) && kind !== 'band' && PAINTED_NOTE.test(raw.note) && !raw.codeDrawn) {
       throw new Error(`region ${raw.id} is kind "${kind}" but its note describes painted material ("${raw.note}"). Anything drawn, photographed, or textured ships as a raster plate: set kind to plate (illustration, diagram, figure), image (photograph), or texture (ground). If the note is wrong and code really draws it (a table, a rule, a chrome bar), reword the note or set "codeDrawn": true on the region.`);
     }
@@ -304,6 +312,10 @@ export function measureRegions(comp, regionsInput, compPath) {
       kind,
       note: raw.note || null,
       grid: raw.grid || null,
+      codeDrawn: raw.codeDrawn ? true : undefined,
+      container: raw.container ? true : undefined,
+      bleed: raw.bleed ? true : undefined,
+      snap: raw.snap === false ? false : undefined,
       coverBox: coverBox ? { x: r4(coverBox.x), y: r4(coverBox.y), w: r4(coverBox.w), h: r4(coverBox.h) } : undefined,
       box: { x: r4(box.x), y: r4(box.y), w: r4(box.w), h: r4(box.h) },
       px,
