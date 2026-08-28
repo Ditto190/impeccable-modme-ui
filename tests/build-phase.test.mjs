@@ -462,3 +462,21 @@ describe('build-phase state machine (CLI)', () => {
     assert.equal(run(PHASE_SCRIPT, ['dance'], dir).status, 1);
   });
 });
+
+describe('unreferencedPlates', () => {
+  it('finds a plate referenced only from a stylesheet under assets/', async () => {
+    const { unreferencedPlates } = await import('../skill/scripts/build-phase.mjs');
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'unref-'));
+    const prev = process.cwd();
+    try {
+      process.chdir(d);
+      fs.mkdirSync(path.join(d, 'assets', 'plates'), { recursive: true });
+      fs.writeFileSync(path.join(d, 'assets', 'plates', 'hero-plate.png'), 'x');
+      fs.writeFileSync(path.join(d, 'assets', 'hero.css'), ".hero { background-image: url('./plates/hero-plate.png'); }");
+      const spec = { regions: [{ id: 'hero-art', medium: 'raster', plate: 'assets/plates/hero-plate.png' }] };
+      assert.deepEqual(unreferencedPlates(spec, null), [], 'the stylesheet under assets counts as a reference');
+      fs.writeFileSync(path.join(d, 'assets', 'hero.css'), '.hero { background: red; }');
+      assert.equal(unreferencedPlates(spec, null).length, 1, 'an unreferenced plate is still named');
+    } finally { process.chdir(prev); fs.rmSync(d, { recursive: true, force: true }); }
+  });
+});

@@ -318,7 +318,10 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
 /** Source files that could reference a plate: bounded walk, skipping deps and build output. */
 function sourceFiles(root = '.', limit = 400) {
   const out = [];
-  const skip = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', '.svelte-kit', '.impeccable', 'assets', 'coverage']);
+  // `assets` is walked: the extension filter already keeps binaries out, and
+  // a stylesheet at assets/hero.css may be the one file that references a
+  // plate (Greptile P1 on #599: the gate refused a valid build for it).
+  const skip = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', '.svelte-kit', '.impeccable', 'coverage']);
   const exts = /\.(html?|css|scss|jsx?|tsx?|svelte|vue|astro|mdx?|php|erb|hbs)$/i;
   const walk = (dir, depth) => {
     if (out.length >= limit || depth > 6) return;
