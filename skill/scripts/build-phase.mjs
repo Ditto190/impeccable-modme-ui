@@ -341,7 +341,10 @@ function sourceFiles(root = '.', limit = 400) {
 export function unreferencedPlates(spec, artifact = null) {
   const plates = (spec?.regions || []).filter((r) => r.medium === 'raster' && r.plate);
   if (!plates.length) return [];
-  const files = artifact && fs.existsSync(artifact) ? [artifact] : sourceFiles();
+  // The artifact narrows nothing: a plate may be referenced only from a
+  // stylesheet the artifact links (assets/hero.css), so the source walk runs
+  // either way and the artifact is simply guaranteed a seat in the corpus.
+  const files = [...new Set([...(artifact && fs.existsSync(artifact) ? [artifact] : []), ...sourceFiles()])];
   let corpus = '';
   for (const f of files) { try { corpus += fs.readFileSync(f, 'utf8') + '\n'; } catch { /* skip */ } }
   const missing = [];

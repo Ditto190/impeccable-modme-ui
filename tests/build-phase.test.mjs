@@ -475,8 +475,12 @@ describe('unreferencedPlates', () => {
       fs.writeFileSync(path.join(d, 'assets', 'hero.css'), ".hero { background-image: url('./plates/hero-plate.png'); }");
       const spec = { regions: [{ id: 'hero-art', medium: 'raster', plate: 'assets/plates/hero-plate.png' }] };
       assert.deepEqual(unreferencedPlates(spec, null), [], 'the stylesheet under assets counts as a reference');
+      // an explicit artifact does not bypass the stylesheet walk
+      fs.writeFileSync(path.join(d, 'index.html'), '<link rel="stylesheet" href="assets/hero.css"><main class="hero"></main>');
+      assert.deepEqual(unreferencedPlates(spec, path.join(d, 'index.html')), [], 'the linked stylesheet still counts with --artifact set');
       fs.writeFileSync(path.join(d, 'assets', 'hero.css'), '.hero { background: red; }');
       assert.equal(unreferencedPlates(spec, null).length, 1, 'an unreferenced plate is still named');
+      assert.equal(unreferencedPlates(spec, path.join(d, 'index.html')).length, 1, 'and with the artifact set too');
     } finally { process.chdir(prev); fs.rmSync(d, { recursive: true, force: true }); }
   });
 });
