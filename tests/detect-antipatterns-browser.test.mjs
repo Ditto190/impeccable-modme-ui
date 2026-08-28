@@ -1044,7 +1044,7 @@ describe('detectUrl — browser-only fixtures', () => {
         });
       });
       await page.evaluate(browserScript);
-      const scan = (scanId, disabledValues) => page.evaluate(async (config) => {
+      const scan = (scanId, disabledValues, extraConfig = {}) => page.evaluate(async (config) => {
         window.postMessage({ source: 'impeccable-command', action: 'scan', config }, '*');
         const deadline = Date.now() + 2000;
         while (
@@ -1060,11 +1060,14 @@ describe('detectUrl — browser-only fixtures', () => {
         return {
           total: flat.length,
           colors: flat.filter(finding => finding.type === 'design-system-color').length,
+          colorValues: flat
+            .filter(finding => finding.type === 'design-system-color')
+            .map(finding => finding.ignoreValue || ''),
           fonts: flat
             .filter(finding => finding.type === 'design-system-font')
             .map(finding => finding.ignoreValue || ''),
         };
-      }, { scanId, visualContrast: false, designSystem, ...(disabledValues ? { disabledValues } : {}) });
+      }, { scanId, visualContrast: false, designSystem, ...(disabledValues ? { disabledValues } : {}), ...extraConfig });
 
       const unfiltered = await scan('scan-dv-1');
       assert.ok(
@@ -1089,6 +1092,39 @@ describe('detectUrl — browser-only fixtures', () => {
         unfiltered.colors,
         `expected unrelated design-system findings to survive, got: ${JSON.stringify({ unfiltered, filtered })}`,
       );
+
+      // Color waivers match by value, not by spelling: the browser reports
+      // computed rgb(...) strings, the waiver is written as hex (mirrors
+      // ignoreValueMatches -> colorIgnoreKey in cli/lib/impeccable-config.mjs).
+      const rgbToHex = (value) => {
+        const m = String(value).match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/i);
+        if (!m) return null;
+        return `#${[m[1], m[2], m[3]].map(n => Number(n).toString(16).padStart(2, '0')).join('')}`;
+      };
+      const rgbColor = unfiltered.colorValues.find(value => rgbToHex(value));
+      assert.ok(
+        rgbColor,
+        `expected an rgb()-reported design-system-color finding, got: ${JSON.stringify(unfiltered.colorValues)}`,
+      );
+      const hexWaiver = rgbToHex(rgbColor);
+      const colorFiltered = await scan('scan-dv-3', [{ rule: 'design-system-color', value: hexWaiver }]);
+      const waivedColorCount = unfiltered.colorValues.filter(value => value === rgbColor).length;
+      assert.ok(waivedColorCount > 0);
+      assert.equal(
+        colorFiltered.colors,
+        unfiltered.colors - waivedColorCount,
+        `expected the hex waiver ${hexWaiver} to suppress the ${rgbColor} findings, got: ${JSON.stringify({ colorValues: unfiltered.colorValues, colorFiltered })}`,
+      );
+      assert.equal(
+        colorFiltered.fonts.some(value => /poppins/i.test(value)),
+        true,
+        `expected unrelated font findings to survive the color waiver, got: ${JSON.stringify(colorFiltered)}`,
+      );
+
+      // A page waived wholesale by detector.ignoreFiles arrives with
+      // config.skipScan and must scan to nothing at all.
+      const skipped = await scan('scan-dv-4', null, { skipScan: true });
+      assert.equal(skipped.total, 0, `expected skipScan to empty the scan, got: ${JSON.stringify(skipped)}`);
       await page.close();
     } finally {
       await browser.close().catch(() => {});

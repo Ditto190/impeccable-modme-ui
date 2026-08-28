@@ -21,7 +21,7 @@ function loadIgnoresApi() {
 
 const resolve = loadIgnoresApi().resolveDetectIgnores;
 
-const EMPTY = { disabledRules: [], disabledValues: [] };
+const EMPTY = { disabledRules: [], disabledValues: [], skipScan: false };
 
 describe('live-browser-ignores resolver', () => {
   it('registers a versioned API on the root', () => {
@@ -226,10 +226,106 @@ describe('live-browser-ignores resolver', () => {
     );
   });
 
+  it('resolves a URL to its one served file when pageFiles knows it', () => {
+    // PR #645 review discussion r3840011436: with src/ and public/ both
+    // served, /foo.html used to borrow identities from every root. The
+    // served page list disambiguates: this URL serves public/foo.html, so
+    // src-scoped waivers must not apply.
+    const ignores = {
+      roots: ['src/', 'public/'],
+      pageFiles: ['src/other.html', 'public/foo.html'],
+      ignoreValues: [
+        { rule: 'dark-glow', value: '*', files: ['src/foo.html'] },
+        { rule: 'gradient-text', value: '*', files: ['public/foo.html'] },
+      ],
+    };
+    const out = resolve({ ignores, pathname: '/foo.html' });
+    assert.deepEqual(out.disabledRules, ['gradient-text']);
+  });
+
+  it('keeps ambiguity conservative when served files share the URL suffix', () => {
+    const ignores = {
+      roots: ['src/', 'public/'],
+      pageFiles: ['src/foo.html', 'public/foo.html'],
+      ignoreValues: [
+        { rule: 'dark-glow', value: '*', files: ['src/foo.html'] },
+        { rule: 'gradient-text', value: '*', files: ['public/foo.html'] },
+        { rule: 'em-dash-overuse', value: '*', files: ['foo.html'] },
+      ],
+    };
+    const out = resolve({ ignores, pathname: '/foo.html' });
+    // Neither root-scoped waiver can claim the page; the bare spelling
+    // still applies whichever root serves it.
+    assert.deepEqual(out.disabledRules, ['em-dash-overuse']);
+  });
+
+  it('falls back to the common ancestor when index files collide across depths', () => {
+    // /index.html suffix-matches both served index files; the ambiguity
+    // resolves through the common ancestor, which still yields the correct
+    // shallow identity and never the deep one.
+    const ignores = {
+      roots: ['prototype/', 'prototype/library/'],
+      pageFiles: ['prototype/index.html', 'prototype/library/index.html'],
+      ignoreValues: [
+        { rule: 'dark-glow', value: '*', files: ['prototype/index.html'] },
+        { rule: 'gradient-text', value: '*', files: ['prototype/library/index.html'] },
+      ],
+    };
+    const out = resolve({ ignores, pathname: '/index.html' });
+    assert.deepEqual(out.disabledRules, ['dark-glow']);
+  });
+
+  it('skips the scan on pages named by ignoreFiles', () => {
+    const ignores = {
+      roots: ['prototype/'],
+      ignoreFiles: ['prototype/library/**'],
+      ignoreRules: ['dark-glow'],
+    };
+    const waived = resolve({ ignores, pathname: '/library/buttons.html' });
+    assert.deepEqual(waived, { disabledRules: [], disabledValues: [], skipScan: true });
+    const scanned = resolve({ ignores, pathname: '/index.html' });
+    assert.equal(scanned.skipScan, false);
+    assert.deepEqual(scanned.disabledRules, ['dark-glow']);
+  });
+
+  it('matches ignoreFiles by basename like the CLI glob matcher', () => {
+    const out = resolve({
+      ignores: { ignoreFiles: ['buttons.html'], roots: ['prototype/'] },
+      pathname: '/library/buttons.html',
+    });
+    assert.equal(out.skipScan, true);
+  });
+
+  it('treats a malformed ignoreFiles value as no waiver at all', () => {
+    const out = resolve({
+      ignores: { ignoreFiles: 'prototype/**', roots: [] },
+      pathname: '/index.html',
+    });
+    assert.equal(out.skipScan, false);
+  });
+
+  it('drops entries scoped to source paths that no route URL can match', () => {
+    // Framework apps inject into source files while scans see route URLs; a
+    // source-scoped entry must fail conservative (finding shown), never
+    // suppress by accident. Pinned so a refactor cannot flip the direction.
+    const ignores = {
+      roots: ['src/'],
+      pageFiles: ['src/routes/about/+page.svelte'],
+      ignoreValues: [
+        { rule: 'dark-glow', value: '*', files: ['src/routes/about/+page.svelte'] },
+      ],
+    };
+    const out = resolve({ ignores, pathname: '/about' });
+    assert.deepEqual(out.disabledRules, []);
+    assert.equal(out.skipScan, false);
+  });
+
   it('survives malformed roots and percent-escapes without throwing', () => {
     const out = resolve({
       ignores: {
         roots: 7,
+        pageFiles: 'not-a-list',
+        ignoreFiles: [null, 42],
         ignoreRules: ['dark-glow'],
         ignoreValues: [{ rule: 'gradient-text', value: '*', files: ['broken%.html'] }],
       },

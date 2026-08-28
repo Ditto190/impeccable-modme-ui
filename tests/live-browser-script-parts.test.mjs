@@ -56,7 +56,7 @@ describe('live browser script parts', () => {
         { name: 'project-ignores', file: 'live-browser-ignores.js', source: 'window.__IGNORES_PART__ = true;' },
         { name: 'browser-ui', file: 'live-browser.js', source: 'window.__BROWSER_PART__ = true;' },
       ],
-      projectIgnores: { ignoreRules: ['dark-glow'], ignoreValues: [], roots: ['prototype/'] },
+      projectIgnores: { ignoreRules: ['dark-glow'], ignoreValues: [], ignoreFiles: [], roots: ['prototype/'], pageFiles: ['prototype/index.html'] },
     });
 
     const tokenIndex = script.indexOf('window.__IMPECCABLE_TOKEN__');
@@ -79,7 +79,7 @@ describe('live browser script parts', () => {
     assert.ok(sessionIndex < domIndex);
     assert.ok(domIndex < ignoresIndex);
     assert.ok(ignoresIndex < browserIndex);
-    assert.match(script, /window\.__IMPECCABLE_PROJECT_IGNORES__ = \{"ignoreRules":\["dark-glow"\],"ignoreValues":\[\],"roots":\["prototype\/"\]\};/);
+    assert.match(script, /window\.__IMPECCABLE_PROJECT_IGNORES__ = \{"ignoreRules":\["dark-glow"\],"ignoreValues":\[\],"ignoreFiles":\[\],"roots":\["prototype\/"\],"pageFiles":\["prototype\/index\.html"\]\};/);
     assert.match(script, /impeccable live script part: session-state \(live-browser-session\.js\)/);
     assert.match(script, /impeccable live script part: dom-helpers \(live-browser-dom\.js\)/);
     assert.match(script, /impeccable live script part: project-ignores \(live-browser-ignores\.js\)/);
