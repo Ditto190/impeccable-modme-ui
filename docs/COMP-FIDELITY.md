@@ -253,3 +253,41 @@ After Paul's full review and his rulings (close-enough icons fine; arrows and dr
 | 07 sol 002 | 66 | 67 in one attempt, stopped | scaffold used: for the first time on sol every region sat where the comp has it (spine, headline, thread box, table, footer); the two carburetor drawings were still inline SVG, named "countable ... geometry" chrome, and the SVG ban had not run because `state.artifact` is null on a `--direction` start. Both fixed after this sample (the code scans default to `index.html`; the painted-note regex knows "geometry", "leader lines", "thumbnail"). |
 
 Four of four opus samples above Paul's pass line, two of them `match`. 07, the comp that sat at 63-70 across every earlier sweep and both models, reads 78-79 on opus with the scaffold: above Paul's borderline pass (68) by ten points, at the level of the 05 build he called "by far the best result so far". The scaffold did on sol what no reading could: the positions are right; what remains on sol is the SVG reflex, and that is now refused.
+
+## Ninth sweep (2026-08-28): sol with the artifact fix, on the rebased branch
+
+The branch was rebased onto main first (109 commits behind; main's GROUND matrix row grafted into the finish reviewer, main's two prose colour rules dropped as superseded by the measuring gates). This is the handoff's first paid check: does sol produce plates once its SVGs are refused? Four samples, n=2 per niche, $11.13, turn cap 160.
+
+| Sample | overall | hero | plates | notes |
+|---|---|---|---|---|
+| 05 sol 001 | 54 | never opened | 3 produced, 0 placed | quit with plates open; 6.7 MB of correct plates sat unused while the page drew the aperture in CSS |
+| 05 sol 002 | **71** | 0.7086 in 6 records, 0 advances | 3 produced, 2 placed | closest of the four; left two type findings unfixed across four attempts, then declared complete at 34 of 90 minutes |
+| 07 sol 001 | 63 | 0.6543 in 3 attempts | 3 produced, 3 placed | shaded technical illustrations as real rasters where sweep 8 drew wireframes |
+| 07 sol 002 | 62 | 0.6053 in 2 records, 0 advances | 1 produced, 0 placed | filed both carburetor illustrations as `chrome` with "countable ... line diagram" notes, got past comp-spec's refusal with `codeDrawn` and `container`, shipped 23 inline SVG paths |
+
+The artifact fix is confirmed in production conditions. All four packets start `--direction` with `artifact: null`, the state that silenced the ban in sweep 8, and the hero code scan now defaults to `index.html` and caught both of 07 002's illustrations by name ("artifact draws an illustration in inline SVG (rack-diagram)... 15 shapes, 227 chars of path data"). Plates moved with it: 4 of 4 samples produced real rasters, 2 of 4 placed them.
+
+The finding is not about plates. Every gate that should have fired did fire, and every sample ignored it. All four received `COMP_ROUND_OPEN` ("a detector pass is not a finish") plus explicit gate failures, and all four declared completion anyway at 40 to 72 turns with most of the budget unspent. Sol's remaining failure is compliance, not knowledge or capability, so further sol rounds are not worth buying.
+
+Two defects surfaced that belong to the skill rather than to sol. The spec gate's escape hatches hide their own use: `codeDrawn: true` and `container: true` in `regions.json` override the painted-material refusal, and neither key persists into `spec.json`, so the shipped spec shows a clean classification with no trace that a refusal was overridden. And `font-match.mjs` cannot reach a browser inside the OpenAI sandbox (`browserType.launch: EPERM` on `mkdtemp /tmp/playwright-artifacts-*`), so every sample fell back to an estimated size and rendered headlines at 186 to 247 percent of the comp's cap height, which is a large share of the structure gap the hero gate then reports.
+
+## Tenth sweep (2026-08-28): opus confirmation on the rebased branch
+
+The handoff's second paid check, and the first frontier run on the rebased tree. Four samples, n=2 per niche, turn cap 160, wall clock 90 minutes. Zero forced phases across all 32 phase records; no `--force` or `--min` in any trace.
+
+| Sample | overall | hero | plates | notes |
+|---|---|---|---|---|
+| 05 opus 001 | **90 (match)** | 0.9025 in 8 attempts, open | 4 / 4 | the highest fidelity score the program has recorded; held open by three text ink colours the gate calls "each one CSS edit" |
+| 05 opus 002 | **86 (match)** | 0.8647 in 4 attempts, **closed** | 4 / 4 | sections, motion, responsive 0.8144, review, all closed, `finish disposition: ship` |
+| 07 opus 001 | 78 | 0.7892 in 18 attempts, open | 4 / 4 | held by two contradicted text regions and one ink reading; cut off by the cost cap at turn 158 |
+| 07 opus 002 | 76 | 0.777 in 10 attempts, open | 5 / 5 | held by a plate off its box, a plate clipped left, and 11 readings; cut off by the cost cap at turn 150 |
+
+05 opus 002 walked the entire machine, comps through review, every phase closed and unforced, ending with a recorded ship. Of the twenty state files in the run corpus it is the only one past hero, and it is the first complete traversal in the program.
+
+Plate discipline was perfect: 17 raster regions specced across the four samples, 17 files on disk, 17 referenced live by the shipped pages. The inline SVG on the 07 pages is icon-sized and legitimate (12 and 11 elements, one path each, 13 to 42px: crosshair, wrench, star, paperclip, book, person, tag). Font ranking worked on this lane, zero EPERM lines, so the estimated-size drag that inflated sol's headlines is absent from this data.
+
+On the handoff's question, whether 07 clears 72 without a force, the answer is that its fidelity did and its gate did not. Both 07 samples measured above the threshold, 0.7892 and 0.777, with nothing forced, and no sample's reasons contain a "hero overall below 72%" line. `HERO_MIN` at 0.72 is one veto among many: the gate returns `ok` only when the reason list is empty (`build-phase.mjs:82` and `:651`), so a build can sit well above the fidelity floor and still be held by per-region readings. Both 07 runs were then cut off mid-loop by the harness cost guard rather than by the machinery: "Error: Claude Code process aborted by user" is `anthropic-native.ts:1288` computing `sliceCapUsd * 1.15`, $23.00 for this launch, and `:2005` aborting on it. Replaying the raw messages against the same estimator puts 07 001 across on its final turn (turn 157 at $22.90, turn 158 at $25.27 on a 364k-token cache write) and 07 002 at turn 150 ($22.95 to $23.16). The turn cap (160 against 158 and 150), the wall clock (90 minutes against 60.4 and 70.2) and the stall guard (10 minutes against idle stretches of 5.3 and 7.1) are each excluded.
+
+So 07's gate closure is unproven, not regressed. Fidelity is equal or better than sweep 8 on both niches (05 rose from 84/84 to 90/86; 07's hero readings sit at 0.789/0.777 against 0.79/0.79), plate discipline is perfect, the staged skill under each sample is byte-identical to the repo, and one sample carried a build through every phase to a ship. Settling the exact sentence takes a 07-only re-run at a realistic budget (`--slice-cap-usd 35`, roughly $50 to $70): opus costs $22 to $25 per sample on these niches, not the $15 the original estimate assumed, and `--batch-budget-usd` only blocks launching new slices rather than aborting running ones, so a four-slice launch's worst case is four times the per-slice cap.
+
+One design question falls out of this round rather than out of any defect. A build measuring 0.9025 held open by three colour edits, and a hero loop that ran 18 attempts without converging, suggest the gate's all-or-nothing pass condition and its per-region reading list interact badly with real turn and cost budgets. The gate teaches well; inside a bounded run it does not converge.
