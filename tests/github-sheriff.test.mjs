@@ -691,13 +691,19 @@ describe('github sheriff', () => {
       ],
     };
     const closePlan = evaluatePullRequest(pr(source), { now: NOW, autoCloseRegulars: true });
-    const exemptPlan = evaluatePullRequest(pr({ ...source, labels: ['do not close'] }), {
+    const exemptPlan = evaluatePullRequest(pr({ ...source, labels: ['Do Not Close'] }), {
       now: NOW,
       autoCloseRegulars: true,
+    });
+    const customExemptPlan = evaluatePullRequest(pr({ ...source, labels: ['Keep Open'] }), {
+      now: NOW,
+      autoCloseRegulars: true,
+      exemptLabels: ['keep open'],
     });
 
     assert.equal(closePlan.shouldClose, true);
     assert.equal(exemptPlan.shouldClose, false);
+    assert.equal(customExemptPlan.shouldClose, false);
   });
 
   it('keeps stale comments idempotent', () => {

@@ -50,6 +50,10 @@ const CONTRIBUTOR_POLICY_LABELS = new Set([
 ]);
 const SHERIFF_WAIT_COMMAND = /^\/sheriff\s+wait\s*$/i;
 
+function normalizeLabelName(label) {
+  return String(label || '').trim().toLowerCase();
+}
+
 const PR_QUERY = `
 query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -145,7 +149,9 @@ export function evaluatePullRequest(pr, options = {}) {
   const closeDays = Number.isFinite(options.closeDays) ? options.closeDays : 14;
   const maintainers = loginSet(options.maintainers || DEFAULT_MAINTAINERS);
   const regularContributors = loginSet(options.regularContributors || DEFAULT_REGULAR_CONTRIBUTORS);
-  const exemptLabels = new Set(options.exemptLabels || DEFAULT_EXEMPT_LABELS);
+  const exemptLabels = new Set(
+    (options.exemptLabels || DEFAULT_EXEMPT_LABELS).map(normalizeLabelName),
+  );
   const trustedMarkerAuthors = loginSet(options.trustedMarkerAuthors || DEFAULT_TRUSTED_MARKER_AUTHORS);
   const autoCloseRegulars = options.autoCloseRegulars === true;
 
@@ -266,7 +272,8 @@ export function evaluatePullRequest(pr, options = {}) {
   const warningAlreadyPosted = Boolean(warningPostedAt
     && (!contributorActionBlockerAt || !isAfter(contributorActionBlockerAt, warningPostedAt)));
   const closeAlreadyPosted = hasMarker(pr.comments, CLOSE_MARKER, trustedMarkerAuthors);
-  const exemptFromClose = [...labels].some((label) => exemptLabels.has(label));
+  const exemptFromClose = [...labels]
+    .some((label) => exemptLabels.has(normalizeLabelName(label)));
   const regularContributor = regularContributors.has(author);
   const shouldWarn = staleEligible && !warningAlreadyPosted;
   const shouldClose = contributorActionRequired
