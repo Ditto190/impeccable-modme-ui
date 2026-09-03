@@ -770,6 +770,95 @@ describe('loadContext (monorepo project context)', () => {
     assert.match(res.stdout, /MONOREPO_TARGET_REQUIRED/);
   });
 
+  it('resolves a unique workspace child by bare basename via --target', () => {
+    writeMonorepo();
+    write('apps/dashboard/PRODUCT.md', '# Dashboard product\n\n## Platform\n\nweb\n');
+    const res = spawnSync(process.execPath, [SCRIPT_PATH, '--target', 'dashboard'], {
+      cwd: scratch,
+      encoding: 'utf8',
+      env: { ...process.env, IMPECCABLE_NO_UPDATE_CHECK: '1', IMPECCABLE_NO_STALENESS_CHECK: '1' },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /# Dashboard product/);
+    assert.match(res.stdout, /"targetExists": true/);
+    assert.match(res.stdout, /"targetPath": "dashboard"/);
+    assert.doesNotMatch(res.stdout, /MONOREPO_TARGET_REQUIRED/);
+
+    const ctx = loadContext(scratch, { targetPath: 'dashboard' });
+    assert.equal(ctx.projectRoot, path.join(scratch, 'apps', 'dashboard'));
+  });
+
+  it('resolves a dotted workspace child name by bare basename via --target', () => {
+    write('package.json', JSON.stringify({
+      private: true,
+      workspaces: ['src/*'],
+    }, null, 2));
+    write('src/Cantaro.Web/PRODUCT.md', '# Cantaro Web product\n\n## Platform\n\nweb\n');
+    write('src/Cantaro.Api/package.json', JSON.stringify({ name: 'cantaro-api' }));
+    const res = spawnSync(process.execPath, [SCRIPT_PATH, '--target', 'Cantaro.Web'], {
+      cwd: scratch,
+      encoding: 'utf8',
+      env: { ...process.env, IMPECCABLE_NO_UPDATE_CHECK: '1', IMPECCABLE_NO_STALENESS_CHECK: '1' },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /# Cantaro Web product/);
+    assert.match(res.stdout, /"targetExists": true/);
+    assert.match(res.stdout, /"targetPath": "Cantaro\.Web"/);
+
+    const ctx = loadContext(scratch, { targetPath: 'Cantaro.Web' });
+    assert.equal(ctx.projectRoot, path.join(scratch, 'src', 'Cantaro.Web'));
+  });
+
+  it('does not guess when a bare basename matches multiple workspace children', () => {
+    write('package.json', JSON.stringify({
+      private: true,
+      workspaces: ['apps/*', 'packages/*'],
+    }, null, 2));
+    write('turbo.json', JSON.stringify({ tasks: {} }));
+    write('apps/web/src/App.jsx', 'export default null;\n');
+    write('packages/web/src/index.ts', 'export {};\n');
+    const res = spawnSync(process.execPath, [SCRIPT_PATH, '--target', 'web'], {
+      cwd: scratch,
+      encoding: 'utf8',
+      env: { ...process.env, IMPECCABLE_NO_UPDATE_CHECK: '1', IMPECCABLE_NO_STALENESS_CHECK: '1' },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /"targetExists": false/);
+    assert.match(res.stdout, /MONOREPO_TARGET_REQUIRED/);
+
+    const ctx = loadContext(scratch, { targetPath: 'web' });
+    assert.equal(ctx.projectRoot, scratch);
+  });
+
+  it('resolves a unique workspace child when the target was already resolved against cwd', () => {
+    writeMonorepo();
+    write('apps/dashboard/PRODUCT.md', '# Dashboard product\n');
+    const ctx = loadContext(scratch, { targetPath: path.join(scratch, 'dashboard') });
+    assert.equal(ctx.projectRoot, path.join(scratch, 'apps', 'dashboard'));
+  });
+
+  it('does not guess a nested product basename in a non-monorepo repo', () => {
+    write('packages/checkout/PRODUCT.md', '# Checkout product\n');
+    write('packages/checkout/file.ts', 'export const x = 1;\n');
+    const bare = loadContext(scratch, { targetPath: 'checkout' });
+    assert.equal(bare.isMonorepo, false);
+    assert.equal(bare.projectRoot, scratch);
+    const explicit = loadContext(scratch, { targetPath: 'packages/checkout/file.ts' });
+    assert.equal(explicit.projectRoot, path.join(scratch, 'packages', 'checkout'));
+    assert.match(explicit.product, /Checkout product/);
+  });
+
+  it('does not select a negated workspace child by basename', () => {
+    write('pnpm-workspace.yaml', 'packages:\n  - "packages/*"\n  - "!packages/internal"\n');
+    write('PRODUCT.md', '# Root product\n');
+    write('packages/ui/src/index.ts', 'export {};\n');
+    write('packages/internal/PRODUCT.md', '# Internal product\n');
+    write('packages/internal/src/index.ts', 'export {};\n');
+    const ctx = loadContext(scratch, { targetPath: 'internal' });
+    assert.equal(ctx.projectRoot, scratch);
+    assert.match(ctx.product, /Root product/);
+  });
+
   it('asks for app selection even when root PRODUCT.md is absent', () => {
     write('package.json', JSON.stringify({
       private: true,
@@ -810,6 +899,16 @@ describe('loadContext (impeccable projectRoots config)', () => {
     assert.match(ctx.product, /Root product/);
     assert.equal(ctx.designPath, path.join('docs', 'design', 'skins', 'neon-seoul', 'DESIGN.md'));
     assert.equal(ctx.productPath, 'PRODUCT.md');
+  });
+
+  it('resolves a unique projectRoots child by bare basename', () => {
+    writeSkinsConfig();
+    write('docs/design/skins/neon-seoul/DESIGN.md', '# Neon Seoul design\n');
+    write('docs/design/skins/marble/DESIGN.md', '# Marble design\n');
+    const ctx = loadContext(scratch, { targetPath: 'neon-seoul' });
+    assert.equal(ctx.projectRoot, path.join(scratch, 'docs', 'design', 'skins', 'neon-seoul'));
+    assert.match(ctx.design, /Neon Seoul design/);
+    assert.match(ctx.product, /Root product/);
   });
 
   it('resolves a config-declared child from cwd inside the folder', () => {

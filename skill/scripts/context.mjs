@@ -285,10 +285,31 @@ function resolveEnvContextDir(cwd) {
   return path.isAbsolute(trimmed) ? trimmed : path.resolve(cwd, trimmed);
 }
 
+function resolveTargetPath(cwd, targetPath) {
+  const abs = path.isAbsolute(targetPath) ? targetPath : path.resolve(cwd, targetPath);
+  if (fs.existsSync(abs)) return abs;
+  return findUniqueBareTarget(cwd, targetPath) || abs;
+}
+
+function findUniqueBareTarget(cwd, targetPath) {
+  const absCwd = path.resolve(cwd);
+  const abs = path.isAbsolute(targetPath) ? targetPath : path.resolve(absCwd, targetPath);
+  const rel = path.relative(absCwd, abs);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  const segments = rel.split(path.sep).filter(Boolean);
+  if (segments.length !== 1) return null;
+  const name = segments[0];
+  const repoRoot = findMonorepoRoot(absCwd);
+  if (!repoRoot) return null;
+  const matches = discoverTargetCandidates(repoRoot).filter((candidate) => candidate.name === name);
+  if (matches.length !== 1) return null;
+  return path.resolve(repoRoot, matches[0].path);
+}
+
 function resolveTargetDir(cwd, options = {}) {
   const targetPath = options && typeof options === 'object' ? options.targetPath : null;
   if (!targetPath || !String(targetPath).trim()) return cwd;
-  const abs = path.isAbsolute(targetPath) ? targetPath : path.resolve(cwd, targetPath);
+  const abs = resolveTargetPath(cwd, targetPath);
   try {
     const stat = fs.statSync(abs);
     return stat.isDirectory() ? abs : path.dirname(abs);
@@ -1188,13 +1209,19 @@ async function cli() {
     throw err;
   }
   const targetProvided = hasTargetOption(cliOptions);
-  const targetExists = targetProvided ? pathExistsForTarget(process.cwd(), cliOptions.targetPath) : null;
+  const resolvedTargetPath = targetProvided
+    ? resolveTargetPath(process.cwd(), cliOptions.targetPath)
+    : null;
+  const targetExists = targetProvided ? fs.existsSync(resolvedTargetPath) : null;
   const selection = resolveTargetSelection(process.cwd(), cliOptions);
   if (selection) {
     process.stdout.write(buildTargetSelectionDirective(selection) + '\n');
     process.exit(0);
   }
-  const ctx = loadContext(process.cwd(), cliOptions);
+  const ctx = loadContext(
+    process.cwd(),
+    resolvedTargetPath ? { targetPath: resolvedTargetPath } : cliOptions,
+  );
   const updateDirective = await computeUpdateDirective();
 
   if (!ctx.hasProduct) {
@@ -1306,11 +1333,6 @@ function parseCliOptions(args) {
 
 function hasTargetOption(options) {
   return !!(options && typeof options.targetPath === 'string' && options.targetPath.trim());
-}
-
-function pathExistsForTarget(cwd, targetPath) {
-  const abs = path.isAbsolute(targetPath) ? targetPath : path.resolve(cwd, targetPath);
-  return fs.existsSync(abs);
 }
 
 const HOOK_MANIFESTS_BY_PROVIDER = Object.freeze({
