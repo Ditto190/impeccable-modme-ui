@@ -189,6 +189,12 @@ Output streams:
   Human-readable findings go to stderr so stdout stays available for structured
   output. Use --json for JSON on stdout, or redirect text with 2> findings.txt.
 
+Exit status:
+  0  Scan completed with no primary findings (advisories may still be listed)
+  1  At least one requested target could not be scanned
+  2  Scan completed with primary findings
+  Operational failure takes precedence when a multi-target scan is partial.
+
 Project config:
   Respects .impeccable/config.json and .impeccable/config.local.json detector
   settings: detector.ignoreRules, detector.ignoreFiles, detector.ignoreValues,
@@ -309,6 +315,11 @@ async function detectCli() {
   if (helpMode) { printUsage(); process.exit(0); }
 
   let allFindings = [];
+  let hadOperationalFailure = false;
+  const reportLocalScanFailure = (target, error) => {
+    hadOperationalFailure = true;
+    process.stderr.write(`Error: cannot scan ${target}: ${error.message}\n`);
+  };
 
   if (!process.stdin.isTTY && targets.length === 0) {
     allFindings = await handleStdin(scanOptionsFor);
@@ -319,11 +330,22 @@ async function detectCli() {
     // browser-grade scan of a local artifact can pass file:///abs/path.html
     // instead of the bare path (which stays on the static engine).
     const urlTargetCount = paths.filter(target => URL_TARGET_RE.test(target)).length;
-    const browserDetector = urlTargetCount > 1 ? await createBrowserDetector() : null;
+    let browserDetector = null;
+    let browserSetupFailed = false;
+    if (urlTargetCount > 1) {
+      try {
+        browserDetector = await createBrowserDetector();
+      } catch (e) {
+        browserSetupFailed = true;
+        hadOperationalFailure = true;
+        process.stderr.write(`Error: ${e.message}\n`);
+      }
+    }
 
     try {
       for (const target of paths) {
         if (URL_TARGET_RE.test(target)) {
+          if (browserSetupFailed) continue;
           // A file:// URL points at a local artifact, so its design system
           // resolves from that file's project. A remote http(s) URL has no
           // local project — it gets base options (no design system), never
@@ -336,14 +358,21 @@ async function detectCli() {
               ? (url) => browserDetector.detectUrl(url, urlOptions)
               : (url) => detectUrl(url, urlOptions);
             allFindings.push(...await scanner(target));
-          } catch (e) { process.stderr.write(`Error: ${e.message}\n`); }
+          } catch (e) {
+            hadOperationalFailure = true;
+            process.stderr.write(`Error: ${e.message}\n`);
+          }
           continue;
         }
 
         const resolved = path.resolve(target);
         let stat;
         try { stat = fs.statSync(resolved); }
-        catch { process.stderr.write(`Warning: cannot access ${target}\n`); continue; }
+        catch {
+          hadOperationalFailure = true;
+          process.stderr.write(`Warning: cannot access ${target}\n`);
+          continue;
+        }
 
         if (stat.isDirectory()) {
           // Check for framework dev server config (skip in JSON/quiet modes to avoid polluting output)
@@ -372,7 +401,7 @@ async function detectCli() {
             }
           }
 
-          const files = walkDir(resolved)
+          const files = walkDir(resolved, reportLocalScanFailure)
             .filter(file => !shouldIgnoreDetectionFile(file, process.cwd(), detectionConfig));
           const htmlCount = files.filter(f => HTML_EXTENSIONS.has(path.extname(f).toLowerCase())).length;
 
@@ -388,7 +417,11 @@ async function detectCli() {
           }
 
           // Build import graph for multi-file awareness
-          const graph = buildImportGraph(files);
+          const unreadableFiles = new Set();
+          const graph = buildImportGraph(files, (file, error) => {
+            unreadableFiles.add(file);
+            reportLocalScanFailure(file, error);
+          });
           // Build reverse map: file -> set of files that import it
           const importedByMap = new Map();
           for (const [importer, imports] of graph) {
@@ -399,24 +432,33 @@ async function detectCli() {
           }
 
           for (const file of files) {
-            // Each file resolves its own project design system (cached by root),
-            // so a scan spanning sibling projects applies the right rules per file.
-            const fileOptions = scanOptionsFor(file);
-            const fileFindings = await detectLocalFile(file, fileOptions);
-            // Annotate findings with import context
-            const importers = importedByMap.get(file);
-            if (importers && importers.size > 0) {
-              const importerNames = [...importers].map(f => path.basename(f));
-              for (const f of fileFindings) {
-                f.importedBy = importerNames;
+            if (unreadableFiles.has(file)) continue;
+            try {
+              // Each file resolves its own project design system (cached by root),
+              // so a scan spanning sibling projects applies the right rules per file.
+              const fileOptions = scanOptionsFor(file);
+              const fileFindings = await detectLocalFile(file, fileOptions);
+              // Annotate findings with import context
+              const importers = importedByMap.get(file);
+              if (importers && importers.size > 0) {
+                const importerNames = [...importers].map(f => path.basename(f));
+                for (const f of fileFindings) {
+                  f.importedBy = importerNames;
+                }
               }
+              allFindings.push(...fileFindings);
+            } catch (error) {
+              reportLocalScanFailure(file, error);
             }
-            allFindings.push(...fileFindings);
           }
         } else if (stat.isFile()) {
           if (shouldIgnoreDetectionFile(resolved, process.cwd(), detectionConfig)) continue;
-          const fileOptions = scanOptionsFor(resolved);
-          allFindings.push(...await detectLocalFile(resolved, fileOptions));
+          try {
+            const fileOptions = scanOptionsFor(resolved);
+            allFindings.push(...await detectLocalFile(resolved, fileOptions));
+          } catch (error) {
+            reportLocalScanFailure(target, error);
+          }
         }
       }
     } finally {
@@ -433,6 +475,10 @@ async function detectCli() {
   // advisory-only scan still prints its notes but exits 0 (a clean pass), so
   // advisory rules never break CI or block automation.
   const { primary, advisory } = partitionAdvisory(allFindings);
+  // Exit 1 means at least one requested scan could not complete. It takes
+  // precedence over exit 2 because findings from the remaining targets do not
+  // turn a partial scan into a complete one.
+  const exitCode = hadOperationalFailure ? 1 : (primary.length > 0 ? 2 : 0);
 
   if (allFindings.length > 0) {
     if (jsonMode) process.stdout.write(formatFindings(allFindings, true) + '\n');
@@ -443,10 +489,10 @@ async function detectCli() {
       }
     }
     else process.stderr.write(formatFindings(allFindings, false) + '\n');
-    process.exit(primary.length > 0 ? 2 : 0);
+    process.exit(exitCode);
   }
   if (jsonMode) process.stdout.write('[]\n');
-  process.exit(0);
+  process.exit(exitCode);
 }
 
 export { formatFindings, handleStdin, confirm, printUsage, detectCli };
