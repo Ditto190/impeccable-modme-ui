@@ -4,8 +4,8 @@
  * Each scenario:
  *   1. Creates a temp workspace.
  *   2. Symlinks the real .claude/skills/impeccable into the workspace so
- *      scripts (context.mjs, etc.) resolve from the canonical path
- *      the skill references.
+ *      the launcher (`scripts/impeccable`) resolves from the canonical path
+ *      the skill references, and points it at an engine binary.
  *   3. Optionally writes PRODUCT.md / DESIGN.md fixtures.
  *   4. Inlines SKILL.md as the system prompt (placeholders stripped to
  *      neutral values so the same body works for all providers).
@@ -27,6 +27,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getProviderOptions } from './providers.mjs';
+import { ENGINE_MISSING_MESSAGE, findEngineBinary } from '../lib/engine-bin.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -98,10 +99,18 @@ export const SKILL_BODY = loadSkillBody();
  *   their content.
  * - `files` lets the test seed PRODUCT.md / DESIGN.md (or anything else).
  * - `skillVersion` switches from symlink to a real COPY of the skill dir and
- *   writes a `SKILL.md` carrying that version. context.mjs reads its own
- *   version from that sibling file, so this is required for any scenario that
- *   exercises the update-check path (the source dir has only SKILL.src.md).
+ *   writes a `SKILL.md` carrying that version. `impeccable context` reads its
+ *   own version from that sibling file, so this is required for any scenario
+ *   that exercises the update-check path (the source dir has only SKILL.src.md).
+ *
+ * The launcher in the staged scripts dir needs an engine binary. Every bash
+ * call the agent makes gets `IMPECCABLE_BIN` (tests/lib/engine-bin.mjs:
+ * `IMPECCABLE_BIN` or `skill/scripts/bin/<os>-<arch>/`), which the launcher
+ * honors first, so the symlink and copy modes both work without a download.
  */
+export const ENGINE_BIN = findEngineBinary();
+export { ENGINE_MISSING_MESSAGE };
+
 export function prepareWorkspace({ files = {}, skillVersion = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-skill-test-'));
   const skillDest = path.join(dir, '.claude', 'skills', 'impeccable');
@@ -145,7 +154,10 @@ function safeResolve(root, userPath) {
 
 function execBash(workspace, command, timeoutMs = 20_000, extraEnv = {}) {
   return new Promise((resolve) => {
-    const proc = spawn('bash', ['-lc', command], { cwd: workspace, env: { ...process.env, ...extraEnv } });
+    const proc = spawn('bash', ['-lc', command], {
+      cwd: workspace,
+      env: { ...process.env, ...(ENGINE_BIN ? { IMPECCABLE_BIN: ENGINE_BIN } : {}), ...extraEnv },
+    });
     let stdout = '';
     let stderr = '';
     const truncatedFlag = { val: false };
@@ -231,7 +243,7 @@ export function makeTools(workspace, extraEnv = {}, simulatedUser = {}) {
   const tools = {
     bash: tool({
       description:
-        'Run a bash command in the workspace root. Use this to invoke skill scripts (e.g. `node .claude/skills/impeccable/scripts/context.mjs`).',
+        'Run a bash command in the workspace root. Use this to invoke skill commands (e.g. `.claude/skills/impeccable/scripts/impeccable context`).',
       inputSchema: z.object({
         command: z.string().describe('The bash command to execute.'),
       }),
@@ -335,13 +347,31 @@ export function makeTools(workspace, extraEnv = {}, simulatedUser = {}) {
  * `priorMessages` lets multi-turn scenarios chain context from a previous
  * call (append the SDK's response messages between turns).
  */
-export async function runTurn({ workspace, model, userPrompt, priorMessages = [], maxSteps = 8, env = {}, simulatedUser = {} }) {
+// A single turn (generateText) can drive up to ~30 tool-use steps against a
+// frontier model; the thorough path was measured near 580s. generateText
+// takes no timeout of its own, so a provider socket that stalls mid-stream
+// keeps the fetch — and therefore the whole node process — alive indefinitely,
+// past node's own `--test-timeout` (which cancels the test but not the open
+// handle). We attach a real AbortSignal instead: on expiry the underlying
+// fetch is aborted, the socket closes, the turn throws, and the scenario
+// fails-and-continues so the sweep still produces a per-provider tally. The
+// cap sits just under the 900s per-test timeout so a genuine slow-but-correct
+// run is never killed. The timer is unref'd (it must not keep the loop alive
+// after a healthy turn) and cleared on completion.
+const TURN_TIMEOUT_MS = Number(process.env.IMPECCABLE_SKILL_BEHAVIOR_TURN_TIMEOUT_MS) || 840_000;
+export async function runTurn({ workspace, model, userPrompt, priorMessages = [], maxSteps = 8, env = {}, simulatedUser = {}, timeoutMs = TURN_TIMEOUT_MS }) {
   const { tools, trace } = makeTools(workspace, env, simulatedUser);
   const messages = [
     ...priorMessages,
     { role: 'user', content: userPrompt },
   ];
   let result;
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`LLM turn exceeded ${timeoutMs}ms; aborting the provider call`)),
+    timeoutMs,
+  );
+  if (typeof timer.unref === 'function') timer.unref();
   try {
     result = await generateText({
       model,
@@ -349,13 +379,19 @@ export async function runTurn({ workspace, model, userPrompt, priorMessages = []
       messages,
       tools,
       stopWhen: [stepCountIs(maxSteps)],
+      // Real client-side deadline on the provider call: without it a stalled
+      // stream wedges the whole sweep with no tally.
+      abortSignal: controller.signal,
       // Resolved from the model object so the 21 runTurn call sites stay
       // unchanged. Reasoning models run at the provider default otherwise,
       // which is not the tier this suite is meant to measure.
       providerOptions: getProviderOptions(model?.modelId ?? ''),
     });
   } catch (err) {
-    throw new Error(`LLM behavior turn failed before completing: ${String(err)}`, { cause: err });
+    const reason = controller.signal.aborted ? ` (aborted after ${timeoutMs}ms client-side timeout)` : '';
+    throw new Error(`LLM behavior turn failed before completing${reason}: ${String(err)}`, { cause: err });
+  } finally {
+    clearTimeout(timer);
   }
   const generatedResponseMessages = result.responseMessages ?? result.response?.messages ?? [];
   const responseMessages = [...messages, ...generatedResponseMessages];

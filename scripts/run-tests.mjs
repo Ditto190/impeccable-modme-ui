@@ -17,6 +17,13 @@ import {
 } from './lib/live-server-processes.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+
+// Global wall-clock backstop for any one command. Even with per-test timeouts
+// and client-side network deadlines in place, a wedged tool or an orphaned
+// grandchild can keep a runner alive forever; this cap guarantees the sweep
+// terminates. Per-suite `wallClockMs` overrides it; the env var overrides both.
+const DEFAULT_WALL_CLOCK_MS = Number(process.env.IMPECCABLE_TEST_WALL_CLOCK_MS) || 1_200_000;
+
 const args = process.argv.slice(2);
 
 if (args.includes('--help') || args.includes('-h')) {
@@ -34,10 +41,13 @@ if (args.includes('--cleanup')) {
 }
 
 /**
- * Suite commands run in their own process group so a Ctrl-C, a timeout, or an
- * exiting runner can take the whole tree down at once. Nothing else in this
- * file may use spawnSync: a blocked event loop cannot run the signal handlers
- * that make that guarantee, and cannot reap the child it is waiting on either.
+ * Suite commands run in their own process group, which buys two things: the
+ * wall-clock cap can SIGKILL a wedged tree whole (the runner, its per-file
+ * `node --test` workers, and any grandchildren or browsers they left open),
+ * and a Ctrl-C can end that same tree deterministically instead of orphaning
+ * it. Nothing in this file may use spawnSync: a blocked event loop cannot run
+ * the signal handlers that make either guarantee, and cannot reap the child it
+ * is waiting on either.
  */
 const shutdown = createGroupShutdown();
 
@@ -61,12 +71,16 @@ try {
   process.exit(1);
 }
 
-for (const suiteName of suites) {
-  const suite = SUITES[suiteName];
-  console.log(`\n## test:${suiteName}`);
-  console.log(suite.description);
-  for (const command of suite.commands) {
-    await runCommand(command, suiteName);
+await main();
+
+async function main() {
+  for (const suiteName of suites) {
+    const suite = SUITES[suiteName];
+    console.log(`\n## test:${suiteName}`);
+    console.log(suite.description);
+    for (const command of suite.commands) {
+      await runCommand(command, suiteName);
+    }
   }
 }
 
@@ -81,9 +95,10 @@ async function runCommand(command, suiteName) {
     [REPO_PATH_ENV]: REPO_ROOT,
     ...(command.env || {}),
   };
+  const wallClockMs = command.wallClockMs ?? DEFAULT_WALL_CLOCK_MS;
 
   if (command.runner === 'bun') {
-    await runProcess('bun', ['test', ...command.files], { env });
+    await runProcess('bun', ['test', ...command.files], { env, wallClockMs });
   } else if (command.runner === 'node') {
     // One invocation for the whole file list: node --test runs each file in
     // its own child process regardless, so isolation is unchanged, but the
@@ -95,7 +110,7 @@ async function runCommand(command, suiteName) {
     if (command.timeoutMs) nodeArgs.push(`--test-timeout=${command.timeoutMs}`);
     if (command.forceExit) nodeArgs.push('--test-force-exit');
     nodeArgs.push(...command.files);
-    await runProcess(process.execPath, nodeArgs, { env });
+    await runProcess(process.execPath, nodeArgs, { env, wallClockMs });
   } else {
     throw new Error(`Unsupported test runner "${command.runner}"`);
   }
@@ -103,12 +118,13 @@ async function runCommand(command, suiteName) {
   await assertNoLeakedServers(runId, suiteName);
 }
 
-function runProcess(cmd, args, { env }) {
+function runProcess(cmd, args, { env, wallClockMs }) {
   console.log(`$ ${formatCommand(cmd, args)}`);
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
-      // Own process group: killCurrentGroup() can then take down the runner,
-      // every test file it forked, and anything those forked, in one signal.
+      // Own process group: the wall-clock cap and the shutdown handler can
+      // then take down the runner, every test file it forked, and anything
+      // those forked, in one signal.
       detached: true,
       // stdin is deliberately not inherited. A detached child is a background
       // process group on the terminal, and a background read of the tty stops
@@ -118,22 +134,49 @@ function runProcess(cmd, args, { env }) {
     });
     // Registered before the handlers below, so `hasExited` is already set by
     // the time they run and a shutdown mid-exit does not signal a dead pid.
-    shutdown.track(trackChildExit(child));
+    const running = shutdown.track(trackChildExit(child));
+
+    let timedOut = false;
+    const timer = wallClockMs
+      ? setTimeout(() => {
+          timedOut = true;
+          console.error(
+            `\n[run-tests] wall-clock cap of ${wallClockMs}ms exceeded for "${formatCommand(cmd, args)}"; ` +
+            'killing the process group (SIGKILL).',
+          );
+          // A test blocked in a synchronous spawnSync cannot be reached by
+          // node's --test-timeout, so this is the guaranteed end of the tree.
+          // No graceful phase: the cap has already been generous.
+          try { process.kill(-running.child.pid, 'SIGKILL'); }
+          catch { try { running.child.kill('SIGKILL'); } catch { /* already gone */ } }
+        }, wallClockMs)
+      : null;
 
     child.on('error', (err) => {
+      if (timer) clearTimeout(timer);
       shutdown.release();
       console.error(err.message);
       process.exit(1);
     });
-    child.on('exit', (code) => {
+    child.on('exit', (code, signal) => {
+      if (timer) clearTimeout(timer);
       shutdown.release();
       if (shutdown.shuttingDown) return;
+      if (timedOut) {
+        // A wedged suite is one of the ways servers are left behind, so sweep
+        // before reporting rather than walking away from them.
+        assertNoLeakedServers(env[RUN_ID_ENV], null).finally(() => process.exit(1));
+        return;
+      }
+      if (signal) {
+        console.error(`[run-tests] "${formatCommand(cmd, args)}" killed by signal ${signal}`);
+        assertNoLeakedServers(env[RUN_ID_ENV], null).finally(() => process.exit(1));
+        return;
+      }
       if (code !== 0) {
         // Leaked servers are still worth reporting on a failing suite: a
         // failure before teardown is one of the ways they are left behind.
-        assertNoLeakedServers(env[RUN_ID_ENV], null).finally(() => {
-          process.exit(code ?? 1);
-        });
+        assertNoLeakedServers(env[RUN_ID_ENV], null).finally(() => process.exit(code || 1));
         return;
       }
       resolve();

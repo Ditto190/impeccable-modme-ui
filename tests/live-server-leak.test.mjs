@@ -28,6 +28,7 @@ import {
   makeRunId,
   repoMarker,
 } from '../scripts/lib/live-server-processes.mjs';
+import { ENGINE_MISSING_MESSAGE, engineTarget, findEngineBinary } from './lib/engine-bin.mjs';
 
 // The reaper is a POSIX mechanism (a detached process holding a pipe, killed by
 // signal). armLiveServerReaper() does not arm it on Windows, so the guarantee it
@@ -36,6 +37,12 @@ const WINDOWS = process.platform === 'win32';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PORT = 8591;
+// A second port so the stop guard never collides with the reaper guard.
+const STOP_PORT = 8592;
+// The server under test is the engine's `live-server` verb, not a script: this
+// guarantee has to hold for whatever binary the harness is pointed at.
+const ENGINE_BIN = findEngineBinary();
+const NO_ENGINE = ENGINE_BIN ? false : `${ENGINE_MISSING_MESSAGE} (target ${engineTarget()})`;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,10 +68,15 @@ import { armLiveServerReaper } from ${JSON.stringify(join(REPO_ROOT, 'tests/lib/
 
 armLiveServerReaper();
 
-const child = spawn(process.execPath, [
-  ${JSON.stringify(join(REPO_ROOT, 'skill/scripts/live-server.mjs'))},
-  '--port=${PORT}',
-], { detached: true, stdio: 'ignore', cwd: process.cwd() });
+// Detached, exactly the shape \`impeccable live-server --background\` uses: the
+// server is orphaned to pid 1 from birth and nothing but an explicit stop, or
+// the reaper, ever ends it.
+const child = spawn(${JSON.stringify('__BIN__')}, ['live-server', '--port=${PORT}'], {
+  detached: true,
+  stdio: 'ignore',
+  cwd: process.cwd(),
+  env: { ...process.env, IMPECCABLE_SKILL_DIR: ${JSON.stringify(join(REPO_ROOT, 'skill'))}, IMPECCABLE_SELF: ${JSON.stringify('__BIN__')} },
+});
 child.unref();
 
 // Wait until it is actually listening before reporting, so the assertion below
@@ -83,7 +95,7 @@ setInterval(() => {}, 1000);
 
 function startVictim(cwd) {
   const script = join(cwd, 'victim.mjs');
-  writeFileSync(script, VICTIM);
+  writeFileSync(script, VICTIM.replaceAll('__BIN__', ENGINE_BIN));
   const proc = spawn(process.execPath, [script], {
     cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -115,8 +127,10 @@ function startVictim(cwd) {
 }
 
 describe('live server leak guard', () => {
-  it('kills the live server when the test process is SIGKILLed', {
-    skip: WINDOWS ? 'the reaper is POSIX-only; armLiveServerReaper() does not arm it on win32' : false,
+  it('kills the engine live server when the test process is SIGKILLed', {
+    skip: WINDOWS
+      ? 'the reaper is POSIX-only; armLiveServerReaper() does not arm it on win32'
+      : NO_ENGINE,
   }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'impeccable-leak-'));
     let victim;
@@ -134,6 +148,59 @@ describe('live server leak guard', () => {
     } finally {
       if (victim?.proc && victim.proc.exitCode == null) victim.proc.kill('SIGKILL');
       if (serverPid && alive(serverPid)) killLiveServers([{ pid: serverPid, command: '' }]);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('ends the server process on stop, so the port is free again', {
+    skip: NO_ENGINE,
+  }, async () => {
+    // Node's shutdown() finished with process.exit(0). The engine's did not,
+    // and nothing set `shutting_down`, so a stopped server kept the port and
+    // kept answering while its server.json was already gone: the next
+    // `impeccable live` booted a second server elsewhere and a tab could
+    // reattach to the zombie and never hear another broadcast (issue #719).
+    const cwd = mkdtempSync(join(tmpdir(), 'impeccable-stop-'));
+    let server;
+    try {
+      writeFileSync(join(cwd, 'package.json'), '{"name":"stop-fixture"}\n');
+      server = spawn(ENGINE_BIN, ['live-server', `--port=${STOP_PORT}`], {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          IMPECCABLE_SKILL_DIR: join(REPO_ROOT, 'skill'),
+          IMPECCABLE_SELF: ENGINE_BIN,
+        },
+      });
+      const up = await waitUntil(async () => {
+        try {
+          const res = await fetch(`http://127.0.0.1:${STOP_PORT}/health`);
+          return res.ok || res.status === 401;
+        } catch { return false; }
+      }, { timeoutMs: 20_000 });
+      assert.equal(up, true, 'live server never came up');
+
+      const stop = spawn(ENGINE_BIN, ['live-server', 'stop'], {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          IMPECCABLE_SKILL_DIR: join(REPO_ROOT, 'skill'),
+          IMPECCABLE_SELF: ENGINE_BIN,
+        },
+      });
+      await new Promise((resolve) => stop.on('exit', resolve));
+
+      const gone = await waitUntil(() => !alive(server.pid), { timeoutMs: 15_000 });
+      assert.equal(gone, true, `live server pid ${server.pid} survived its own stop`);
+
+      const stillServing = await fetch(`http://127.0.0.1:${STOP_PORT}/health`)
+        .then(() => true)
+        .catch(() => false);
+      assert.equal(stillServing, false, 'stopped server is still answering on its port');
+    } finally {
+      if (server && server.exitCode == null) server.kill('SIGKILL');
       rmSync(cwd, { recursive: true, force: true });
     }
   });

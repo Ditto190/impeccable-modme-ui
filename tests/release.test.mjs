@@ -49,6 +49,10 @@ function runRelease(cwd, ...args) {
       cwd,
       encoding: 'utf-8',
       timeout: 60000,
+      // The D4 engine release-order guard would otherwise probe the network for
+      // published engine assets; these guards predate it and only exercise the
+      // version/changelog/artifact checks, so take its documented escape hatch.
+      env: { ...process.env, IMPECCABLE_SKIP_ENGINE_CHECK: '1' },
     });
     return { code: 0, stdout, stderr: '' };
   } catch (err) {
@@ -80,9 +84,21 @@ describe('release.mjs guards', () => {
 
     fs.mkdirSync(path.join(workDir, 'scripts'));
     fs.copyFileSync(RELEASE_SCRIPT, path.join(workDir, 'scripts', 'release.mjs'));
+    // release.mjs imports ./check-engine-release.mjs and ./fetch-engine.mjs
+    // (and check-engine-release.mjs imports fetch-engine.mjs), so stage them
+    // too or the dry runs fail to resolve the modules instead of exercising
+    // the guard.
+    for (const dep of ['check-engine-release.mjs', 'fetch-engine.mjs']) {
+      fs.copyFileSync(path.join(REPO_ROOT, 'scripts', dep), path.join(workDir, 'scripts', dep));
+    }
     write('.claude-plugin/plugin.json', JSON.stringify({ name: 'impeccable', version: '1.2.3' }));
     write('.claude-plugin/marketplace.json', JSON.stringify({ plugins: [{ name: 'impeccable', version: '1.2.3' }] }));
-    write('package.json', JSON.stringify({ name: 'impeccable', version: '9.9.9' }));
+    write('package.json', JSON.stringify({
+      name: 'impeccable',
+      version: '9.9.9',
+      optionalDependencies: { '@impeccable/cli-darwin-arm64': '0.1.0', '@impeccable/cli-linux-x64': '0.1.0' },
+    }));
+    write('ENGINE_VERSION', '0.1.0\n');
     write('extension/manifest.json', JSON.stringify({ version: '2.0.0' }));
     write('site/pages/changelog.astro', CHANGELOG);
     write('dist/universal.zip', 'zip');
@@ -117,6 +133,35 @@ describe('release.mjs guards', () => {
       const ref = line.split('\t')[1];
       if (ref) git(workDir, 'push', 'origin', `:${ref}`);
     }
+  });
+
+  it('dry-runs a clean engine release: tags only, CI publishes', () => {
+    const { code, stdout } = runRelease(workDir, 'engine');
+    assert.equal(code, 0, stdout);
+    assert.match(stdout, /Engine 0\.1\.0/);
+    assert.match(stdout, /2 platform package pins agree/);
+    assert.match(stdout, /\[dry-run\] git tag -a engine-v0\.1\.0/);
+    assert.match(stdout, /\[dry-run\] git push origin engine-v0\.1\.0/);
+    assert.doesNotMatch(stdout, /gh release create/);
+    assert.match(stdout, /release-engine workflow/);
+  });
+
+  it('engine: refuses when package.json platform pins disagree with ENGINE_VERSION', () => {
+    write('ENGINE_VERSION', '0.2.0\n');
+    git(workDir, 'commit', '-am', 'bump engine');
+    git(workDir, 'push', 'origin', 'main');
+    const { code, stderr } = runRelease(workDir, 'engine');
+    assert.notEqual(code, 0);
+    assert.match(stderr, /pins @impeccable\/cli-darwin-arm64@0\.1\.0.*expected 0\.2\.0/);
+  });
+
+  it('engine: refuses when the tag already exists on origin', () => {
+    git(workDir, 'tag', 'engine-v0.1.0');
+    git(workDir, 'push', 'origin', 'engine-v0.1.0');
+    git(workDir, 'tag', '-d', 'engine-v0.1.0');
+    const { code, stderr } = runRelease(workDir, 'engine');
+    assert.notEqual(code, 0);
+    assert.match(stderr, /engine-v0\.1\.0 already exists on origin/);
   });
 
   it('dry-runs a clean skill release end to end', () => {

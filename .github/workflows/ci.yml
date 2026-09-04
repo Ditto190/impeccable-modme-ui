@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       core: ${{ steps.plan.outputs.core }}
+      rust: ${{ steps.plan.outputs.rust }}
       detector: ${{ steps.plan.outputs.detector }}
       live: ${{ steps.plan.outputs.live }}
       framework: ${{ steps.plan.outputs.framework }}
@@ -92,12 +93,21 @@ jobs:
         if: needs.changes.outputs.framework == 'true'
         run: bun run test:framework
 
-      - name: Rebuild browser detector
-        if: needs.changes.outputs.detector == 'true'
-        run: bun run build:browser
-
       - name: Build
         run: bun run build
+
+      # `bun run build:extension` runs `cargo xtask bundle`: the rule core
+      # compiled to wasm plus the page JS in browser-bundle/.
+      - name: Install the pinned toolchain
+        if: needs.changes.outputs.detector == 'true'
+        run: rustup show && rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        if: needs.changes.outputs.detector == 'true'
+
+      - name: Install wasm-pack
+        if: needs.changes.outputs.detector == 'true'
+        run: cargo install wasm-pack --locked
 
       - name: Build extension
         if: needs.changes.outputs.detector == 'true'
@@ -111,17 +121,130 @@ jobs:
         run: npx --yes web-ext@10 lint --source-dir dist/extension-firefox
 
       - name: Verify generated tracked outputs
-        run: git diff --exit-code -- .agents .claude .cursor .gemini .github/skills plugin cli/engine/detect-antipatterns-browser.js extension/detector
+        # extension/detector/ is gitignored (built by `cargo xtask bundle`);
+        # it stays listed so a stray tracked copy shows up here.
+        run: git diff --exit-code -- .agents .claude .cursor .gemini .github/skills plugin extension/detector
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: impeccable-dist-node-${{ matrix.node-version }}
+          name: impeccable-build-node-${{ matrix.node-version }}
           # Ship the packaged zips, not the unpacked Firefox staging tree.
           path: |
             dist/
             !dist/extension-firefox/
           retention-days: 7
+
+  # The Rust workspace: the engine binary, the rule core, and every crate
+  # behind them. Everything builds from source with no downloads.
+  rust:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # rust-toolchain.toml names the channel; `rustup show` installs it.
+      # Never override the toolchain here.
+      - name: Install the pinned toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Test
+        run: cargo test --workspace
+
+  # The engine ships a windows-x64 binary (release-engine.yml), so the
+  # workspace has to build and pass its own tests there. Tests that need a
+  # browser or the oracle skip when those are absent.
+  rust-windows:
+    runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --all-targets
+      - run: cargo test --workspace --no-fail-fast
+
+  # Behavior gate: replays the tests/oracle/ goldens against a release build
+  # of the engine from THIS checkout (so a PR is judged on its own source,
+  # not on the last published binary). Without this job the oracle only ever
+  # runs on developer laptops: tests/oracle.test.mjs skips cleanly when no
+  # binary is present, so the default suite is silent about it on CI.
+  oracle:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.oracle == 'true' || needs.changes.outputs.rust == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install the pinned toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the engine from source
+        run: cargo build --release -p impeccable
+
+      - name: Replay oracle goldens
+        env:
+          IMPECCABLE_BIN: ${{ github.workspace }}/target/release/impeccable
+        run: node tests/oracle/run.mjs
+
+  # Release-order guard (triage decision D4). Verifies that the engine release for
+  # the pinned ENGINE_VERSION is fully published — the five dist binaries + .sha256
+  # AND the five @impeccable/cli-<os>-<arch> npm platform packages — before a skill
+  # release/merge that depends on them. The launcher, npm shim, and
+  # `impeccable install` all dead-end without those assets.
+  #
+  # continue-on-error is a release-time toggle: until the first engine release is
+  # published, the assets cannot exist and this job would block
+  # every PR. It emits a loud ::warning instead. Once v<ENGINE_VERSION> is live,
+  # flip `continue-on-error` to false so a MIS-ORDERED release (skill/CLI ahead of
+  # the engine) fails CI. release.mjs already hard-fails `release:skill`/`release:cli`.
+  engine-release-ready:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Check engine release assets for pinned ENGINE_VERSION
+        id: check
+        continue-on-error: true
+        run: node scripts/check-engine-release.mjs
+
+      - name: Annotate missing engine release
+        if: steps.check.outcome != 'success'
+        run: |
+          echo "::warning title=Engine release not ready::The engine release for v$(cat ENGINE_VERSION) is not fully published (engine-v$(cat ENGINE_VERSION) release) and/or the @impeccable/cli-<os>-<arch> npm platform packages. Releasing the skill/CLI (or merging) now would dead-end the launcher, the npm shim, and impeccable install. Expected until the first engine release exists; after that, publish the engine + platform packages and flip this job's continue-on-error to false so a mis-ordered release fails CI."
 
   test:
     runs-on: ubuntu-latest
@@ -156,6 +279,16 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      # The live verbs are the engine binary; build it from this checkout so the
+      # suite tests the branch, not the last published release.
+      - name: Install the pinned toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the engine
+        run: cargo build --release -p impeccable
 
       - name: Run remote CLI E2E smoke
         run: bun run test:cli-remote-e2e
@@ -211,6 +344,16 @@ jobs:
 
       - name: Install Playwright Chromium
         run: npx playwright install chromium
+
+      # The live verbs are the engine binary; build it from this checkout so the
+      # suite tests the branch, not the last published release.
+      - name: Install the pinned toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the engine
+        run: cargo build --release -p impeccable
 
       - name: Run live E2E tests
         run: bun run test:live-e2e
@@ -288,6 +431,16 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install chromium
 
+      # The live verbs are the engine binary; build it from this checkout so the
+      # suite tests the branch, not the last published release.
+      - name: Install the pinned toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the engine
+        run: cargo build --release -p impeccable
+
       - name: Run live E2E tests
         run: bun run test:live-e2e
         env:
@@ -360,6 +513,19 @@ jobs:
         if: ${{ env.ANTHROPIC_API_KEY != '' || env.DEEPSEEK_API_KEY != '' }}
         run: npx playwright install chromium
 
+      # The live verbs are the engine binary; build it from this checkout so the
+      # suite tests the branch, not the last published release.
+      - name: Install the pinned toolchain
+        if: ${{ env.ANTHROPIC_API_KEY != '' || env.DEEPSEEK_API_KEY != '' }}
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ env.ANTHROPIC_API_KEY != '' || env.DEEPSEEK_API_KEY != '' }}
+
+      - name: Build the engine
+        if: ${{ env.ANTHROPIC_API_KEY != '' || env.DEEPSEEK_API_KEY != '' }}
+        run: cargo build --release -p impeccable
+
       - name: Run accept cleanup regression
         if: ${{ env.ANTHROPIC_API_KEY != '' || env.DEEPSEEK_API_KEY != '' }}
         run: |
@@ -423,6 +589,19 @@ jobs:
       - name: Install Playwright Chromium
         if: ${{ env.DEEPSEEK_API_KEY != '' }}
         run: npx playwright install chromium
+
+      # The live verbs are the engine binary; build it from this checkout so the
+      # suite tests the branch, not the last published release.
+      - name: Install the pinned toolchain
+        if: ${{ env.DEEPSEEK_API_KEY != '' }}
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ env.DEEPSEEK_API_KEY != '' }}
+
+      - name: Build the engine
+        if: ${{ env.DEEPSEEK_API_KEY != '' }}
+        run: cargo build --release -p impeccable
 
       - name: Run Svelte adapter DeepSeek sweep
         if: ${{ env.DEEPSEEK_API_KEY != '' }}
