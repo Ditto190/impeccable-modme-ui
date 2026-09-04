@@ -16,21 +16,41 @@
 function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = {}) {
   // Kinpaku gold — pinned to the site's brand token (see
   // site/styles/kinpaku-tokens.css --ks-kinpaku). Keep this in sync with
-  // the picker's C.brand in skill/scripts/live-browser.js and the kit's
-  // picker section in site/styles/kinpaku-kit.css.
+  // the picker's C.brand in skill/scripts/live-browser.js, the extension's
+  // extension/shared/kinpaku.css, and the kit's picker section in
+  // site/styles/kinpaku-kit.css.
   //
-  // One color across both light and dark host pages. The outline is a
-  // 2px gesture pointing at an element + a labeled tag — it's a marker,
-  // not body text, so it doesn't need WCAG AA against the page. The
-  // label text inside the gold tag is dark (LABEL_INK) which has ~16:1
-  // against the leaf gold, so reading the rule name is solid in both
-  // modes. Hover deepens the gold (preserves chroma — never drops it,
+  // One color across both light and dark host pages. The marker is a gold
+  // hairline plus a soft outer glow: the hairline holds its shape on a
+  // light page, the glow carries it on a dark one, and neither reads as
+  // body text, so the pair doesn't need WCAG AA against the page. The
+  // label is the detector's tag: dark ink (LABEL_INK, --ks-on-gold) on
+  // leaf gold, about 11.8:1, in the mono face the tag uses everywhere
+  // else. Hover deepens the gold (preserves chroma, never drops it:
   // dropping chroma washes the gold into a sand/olive tone).
   const BRAND_COLOR = 'oklch(84% 0.19 80.46)';
   const BRAND_COLOR_HOVER = 'oklch(74% 0.18 80)';
-  const LABEL_INK = 'oklch(4% 0.004 95)';
+  const LABEL_INK = 'oklch(14% 0.018 95)';
   const LABEL_BG = BRAND_COLOR;
   const OUTLINE_COLOR = BRAND_COLOR;
+  const GLOW = '0 0 0 3px oklch(84% 0.19 80.46 / 0.20), 0 0 12px oklch(84% 0.19 80.46 / 0.45)';
+  const GLOW_HOVER = '0 0 0 3px oklch(74% 0.18 80 / 0.28), 0 0 16px oklch(74% 0.18 80 / 0.6)';
+
+  // The page-level banner is a paper bar, not a gold one: gold is the mark,
+  // the tag and the lit dot, and a full-width gold fill across someone's page
+  // is the one place it was still upholstery. Paper with ink text, a gold
+  // hairline along the bottom edge, a lit gold dot at the head, and each
+  // finding wearing the same tag the panel gives it (gold for an AI tell,
+  // gray for a quality issue). The bar carries its own shadow so it still
+  // separates from a dark host page.
+  const PAPER = 'oklch(97.8% 0 0)';
+  const PAPER_INK = 'oklch(13% 0 0)';
+  const PAPER_MUTED = 'oklch(46% 0 0)';
+  const PAPER_GRAY = 'oklch(92% 0 0)';
+  const GOLD_LINE = 'oklch(77% 0.13 82)';
+  const BANNER_LIFT = '0 1px 0 oklch(13% 0 0 / 0.10), 0 6px 18px oklch(0% 0 0 / 0.35)';
+  const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+  const SANS = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
   // Inject hover styles via CSS (more reliable than JS event listeners)
   const styleEl = document.createElement('style');
@@ -41,9 +61,10 @@ function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = 
     }
     .impeccable-overlay:not(.impeccable-banner) {
       pointer-events: none;
-      outline: 2px solid ${OUTLINE_COLOR};
+      outline: 1px solid ${OUTLINE_COLOR};
+      box-shadow: ${GLOW};
       border-radius: 4px;
-      transition: outline-color 0.15s ease;
+      transition: outline-color 0.15s ease, box-shadow 0.15s ease;
       animation: impeccable-reveal 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
       animation-play-state: paused;
       border-top-left-radius: 0;
@@ -53,6 +74,7 @@ function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = 
     }
     .impeccable-overlay.impeccable-hover {
       outline-color: ${BRAND_COLOR_HOVER};
+      box-shadow: ${GLOW_HOVER};
       z-index: 100001 !important;
     }
     .impeccable-overlay.impeccable-hover .impeccable-label {
@@ -104,9 +126,9 @@ function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = 
   function updateSpotlightClipPath() {
     if (!spotlightBackdrop || !spotlightTarget) return;
     const r = spotlightTarget.getBoundingClientRect();
-    // Match the overlay's outer edge: element rect + 4px (2px overlay offset + 2px outline width)
-    const inset = 4;
-    const radius = 6; // outline border-radius (4) + outline width (2)
+    // Match the overlay's outer edge: element rect + 3px (2px overlay offset + 1px hairline)
+    const inset = 3;
+    const radius = 5; // outline border-radius (4) + hairline width (1)
     const x1 = r.left - inset;
     const y1 = r.top - inset;
     const x2 = r.right + inset;
@@ -298,11 +320,12 @@ function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = 
       position: 'absolute', bottom: '100%', left: '-2px',
       display: 'flex', alignItems: 'center',
       whiteSpace: 'nowrap',
-      fontSize: '11px', fontWeight: '600', letterSpacing: '0.02em',
+      fontSize: '10px', fontWeight: '600', letterSpacing: '0.06em',
+      textTransform: 'uppercase',
       color: LABEL_INK, lineHeight: '14px',
       background: LABEL_BG,
-      fontFamily: 'system-ui, sans-serif',
-      borderRadius: '4px 4px 0 0',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      borderRadius: '3px 3px 0 0',
     });
 
     const textSpan = document.createElement('span');
@@ -326,9 +349,9 @@ function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = 
       cycleMode = true;
 
       const btnStyle = {
-        background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)',
+        background: 'none', border: 'none', color: 'oklch(14% 0.018 95 / 0.7)',
         fontSize: '11px', cursor: 'pointer', padding: '3px 4px',
-        fontFamily: 'system-ui, sans-serif', lineHeight: '14px',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', lineHeight: '14px',
         pointerEvents: 'auto',
       };
 
@@ -419,8 +442,10 @@ function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = 
     banner.className = 'impeccable-overlay impeccable-banner';
     Object.assign(banner.style, {
       position: 'fixed', top: '0', left: '0', right: '0', zIndex: '100000',
-      background: LABEL_BG, color: LABEL_INK,
-      fontFamily: 'system-ui, sans-serif', fontSize: '13px',
+      background: PAPER, color: PAPER_INK,
+      borderBottom: `1px solid ${GOLD_LINE}`,
+      boxShadow: BANNER_LIFT,
+      fontFamily: SANS, fontSize: '12px',
       display: 'flex', alignItems: 'center', pointerEvents: 'auto',
       height: '36px', overflow: 'hidden', maxWidth: '100vw',
       transform: 'translateY(-100%)',
@@ -430,24 +455,52 @@ function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = 
       banner.style.transform = 'translateY(0)';
     }));
 
+    // The detector's indicator, the same lit gold dot the panel puts on a
+    // section head.
+    const dot = document.createElement('span');
+    Object.assign(dot.style, {
+      flexShrink: '0', width: '7px', height: '7px', margin: '0 0 0 12px',
+      borderRadius: '50%', background: BRAND_COLOR,
+      boxShadow: '0 0 0 1px oklch(13% 0 0 / 0.12), 0 0 4px oklch(84% 0.19 80 / 0.6)',
+    });
+    banner.appendChild(dot);
+
     // Scrollable findings area
     const scrollArea = document.createElement('div');
     Object.assign(scrollArea.style, {
       flex: '1', minWidth: '0', overflowX: 'auto', overflowY: 'hidden',
-      display: 'flex', gap: '8px', alignItems: 'center',
+      display: 'flex', gap: '12px', alignItems: 'center',
       padding: '0 12px', scrollSnapType: 'x mandatory',
       scrollbarWidth: 'none',
     });
     for (const f of findings) {
-      const prefix = RULE_CATEGORY[f.type] === 'slop' ? '\u2726 ' : '';
-      const tag = document.createElement('span');
-      tag.textContent = `${prefix}${TYPE_LABELS[f.type] || f.type}: ${f.detail}`;
-      Object.assign(tag.style, {
-        background: 'rgba(255,255,255,0.15)', padding: '2px 8px',
-        borderRadius: '3px', fontSize: '12px', fontFamily: 'ui-monospace, monospace',
+      const isSlop = RULE_CATEGORY[f.type] === 'slop';
+      const item = document.createElement('span');
+      Object.assign(item.style, {
+        display: 'inline-flex', alignItems: 'center', gap: '6px',
         whiteSpace: 'nowrap', flexShrink: '0', scrollSnapAlign: 'start',
       });
-      scrollArea.appendChild(tag);
+
+      const tag = document.createElement('span');
+      tag.textContent = TYPE_LABELS[f.type] || f.type;
+      Object.assign(tag.style, {
+        display: 'inline-flex', alignItems: 'center', minHeight: '16px',
+        padding: '0 6px', borderRadius: '3px',
+        background: isSlop ? BRAND_COLOR : PAPER_GRAY,
+        color: isSlop ? LABEL_INK : PAPER_MUTED,
+        fontFamily: MONO, fontSize: '10px', fontWeight: '600',
+        letterSpacing: '0.06em', lineHeight: '1', textTransform: 'uppercase',
+      });
+
+      const detail = document.createElement('span');
+      detail.textContent = f.detail;
+      Object.assign(detail.style, {
+        color: PAPER_INK, fontFamily: SANS, fontSize: '12px',
+      });
+
+      item.appendChild(tag);
+      item.appendChild(detail);
+      scrollArea.appendChild(item);
     }
     banner.appendChild(scrollArea);
 
@@ -465,7 +518,7 @@ function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = 
       toggle.title = 'Toggle overlay visibility';
       Object.assign(toggle.style, {
         background: 'none', border: 'none',
-        color: 'white', fontSize: '16px', cursor: 'pointer', padding: '0 4px',
+        color: PAPER_MUTED, fontSize: '16px', cursor: 'pointer', padding: '0 4px',
         opacity: '0.85', transition: 'opacity 0.15s',
       });
       let overlaysVisible = true;
@@ -483,7 +536,7 @@ function createImpeccableOverlay({ extensionMode = false, antipatterns = [] } = 
       close.title = 'Dismiss banner';
       Object.assign(close.style, {
         background: 'none', border: 'none',
-        color: 'white', fontSize: '18px', cursor: 'pointer', padding: '0 4px',
+        color: PAPER_MUTED, fontSize: '18px', cursor: 'pointer', padding: '0 4px',
       });
       close.addEventListener('click', () => banner.remove());
       controls.appendChild(close);

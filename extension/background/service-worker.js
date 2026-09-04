@@ -31,7 +31,21 @@ function updateBadge(tabId) {
   const count = state?.findings?.reduce((sum, f) => sum + (f.findings?.length || 0), 0) || 0;
   const text = count > 0 ? String(count) : '';
   chrome.action.setBadgeText({ text, tabId }).catch(() => {});
-  chrome.action.setBadgeBackgroundColor({ color: '#d6336c', tabId }).catch(() => {});
+  // The detector's own tag: kinpaku gold (--ks-kinpaku, oklch(84% 0.19 80.46))
+  // carrying dark ink (--ks-on-gold), the same pair the page overlay's label
+  // and the panel's count use. Chrome's default badge text is white, which
+  // does not clear 4.5:1 on gold; the ink pair measures about 11.8:1.
+  chrome.action.setBadgeBackgroundColor({ color: '#ffba00', tabId }).catch(() => {});
+  // setBadgeTextColor landed in Chrome 110 and is missing on older Chromium
+  // and on Firefox's action API, so both the method and its return value are
+  // checked: an optional call on a missing method returns undefined, and
+  // .catch on undefined raises a TypeError that would escape updateBadge
+  // into whatever asked for the update. The gold badge reads fine without
+  // this call; all it fixes is Chrome's default white badge text.
+  if (typeof chrome.action.setBadgeTextColor === 'function') {
+    const pending = chrome.action.setBadgeTextColor({ color: '#0b0903', tabId });
+    if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+  }
 }
 
 function notifyPanels(tabId, message) {
