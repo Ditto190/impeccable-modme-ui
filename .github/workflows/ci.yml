@@ -120,7 +120,21 @@ jobs:
         # errors here.
         run: npx --yes web-ext@10 lint --source-dir dist/extension-firefox
 
+      # Only meaningful right after the bundle was rebuilt, so it carries the
+      # same condition as that step rather than running unconditionally and
+      # comparing a committed artifact against an untouched tree. Every input
+      # `cargo xtask bundle` reads is in the detector trigger
+      # (scripts/test-suites.mjs), so a change to the registry rows or to how
+      # they are serialized lands here. The in-page bundle beside it is
+      # deliberately not checked: its bytes carry a wasm module built by
+      # whatever wasm-pack and wasm-opt the runner installed, so diffing it
+      # would fail on toolchain drift rather than on a real change.
+      - name: Verify the tracked rule registry is current
+        if: needs.changes.outputs.detector == 'true'
+        run: git diff --exit-code -- crates/live/assets/antipatterns.json
+
       - name: Verify generated tracked outputs
+        # What `bun run build` writes, which runs on every PR.
         # extension/detector/ is gitignored (built by `cargo xtask bundle`);
         # it stays listed so a stray tracked copy shows up here.
         run: git diff --exit-code -- .agents .claude .cursor .gemini .github/skills plugin extension/detector

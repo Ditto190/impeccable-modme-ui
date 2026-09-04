@@ -61,12 +61,12 @@ function generateCounts(rootDir, skills, buildDir) {
     commandCount = activeCommands.length;
   }
 
-  // Count detection rules from the engine's rule registry as vendored by
-  // build:extension (extension/detector/antipatterns.json). The registry
-  // lives in the engine repo now, so when that file is absent (fresh
-  // checkout, no extension build) the detection-count check is skipped
-  // rather than guessed.
-  const detectionCount = readDetectionRuleCount(rootDir);
+  // Count detection rules from the rule registry as `cargo xtask bundle`
+  // emits it. crates/live/assets/antipatterns.json is tracked, so a fresh
+  // checkout has it; extension/detector/antipatterns.json is the gitignored
+  // extension copy and only stands in for an older tree. With neither, the
+  // detection-count check is skipped rather than guessed.
+  const { count: detectionCount, reason: detectionReason } = readDetectionRuleCount(rootDir);
 
   // Validate counts in key files
   const filesToCheck = [
@@ -118,19 +118,52 @@ function generateCounts(rootDir, skills, buildDir) {
     console.error(`\n❌ ${errors} stale count reference(s) found. Update them to match source of truth.`);
   }
 
-  console.log(`✓ Generated counts: ${commandCount} commands, ${detectionCount == null ? 'detection rules unchecked (no extension/detector/antipatterns.json)' : `${detectionCount} detection rules`}`);
+  console.log(`✓ Generated counts: ${commandCount} commands, ${detectionCount == null ? `detection rules unchecked: ${detectionReason}` : `${detectionCount} detection rules`}`);
   return errors;
 }
 
+const RULE_REGISTRY_PATHS = [
+  ['crates', 'live', 'assets', 'antipatterns.json'],
+  ['extension', 'detector', 'antipatterns.json'],
+];
+
+/**
+ * The number of distinct rule ids in the registry, or `{ count: null, reason }`
+ * when no location yields one. The reason names the actual condition and the
+ * path it applies to: a registry that is present but unparseable reads very
+ * differently from one that was never generated, and "no antipatterns.json"
+ * for both sends anyone debugging a count failure to the wrong place.
+ */
 function readDetectionRuleCount(rootDir) {
-  const registry = path.join(rootDir, 'extension', 'detector', 'antipatterns.json');
-  if (!fs.existsSync(registry)) return null;
-  try {
-    const rules = JSON.parse(fs.readFileSync(registry, 'utf-8'));
-    return new Set((Array.isArray(rules) ? rules : []).map(rule => rule.id)).size || null;
-  } catch {
-    return null;
+  const problems = [];
+  for (const parts of RULE_REGISTRY_PATHS) {
+    const rel = parts.join('/');
+    const registry = path.join(rootDir, ...parts);
+    if (!fs.existsSync(registry)) continue;
+    let rules;
+    try {
+      rules = JSON.parse(fs.readFileSync(registry, 'utf-8'));
+    } catch (err) {
+      problems.push(`${rel} is not readable as JSON (${err.message})`);
+      continue;
+    }
+    // Only string ids count. A shape change (a wrapper object, a row without
+    // an id) would otherwise collapse to a Set of one `undefined` and read as
+    // a one-rule registry, which validates every count claim as stale.
+    const ids = (Array.isArray(rules) ? rules : [])
+      .map(rule => rule?.id)
+      .filter(id => typeof id === 'string' && id.length > 0);
+    if (ids.length === 0) {
+      problems.push(`${rel} carries no rule ids`);
+      continue;
+    }
+    return { count: new Set(ids).size };
   }
+  const where = RULE_REGISTRY_PATHS.map(parts => parts.join('/')).join(' or ');
+  return {
+    count: null,
+    reason: problems.length > 0 ? problems.join('; ') : `no antipatterns.json at ${where}`,
+  };
 }
 
 /**
