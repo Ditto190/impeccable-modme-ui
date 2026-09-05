@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkEngineRelease } from './check-engine-release.mjs';
 import { readEngineVersion } from './fetch-engine.mjs';
+import { signReleaseBundle } from './sign-bundle.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -253,6 +254,25 @@ for (const artifact of cfg.artifacts) {
   const abs = path.join(repoRoot, artifact);
   if (!existsSync(abs)) fail(`Missing artifact: ${artifact}`);
   ok(artifact);
+}
+
+// Sign the final rebuilt bytes before any tag or upload. Dry runs do not
+// unlock 1Password or write a signature; they only show the publishing plan.
+if (component === 'skill') {
+  const signatureArtifact = 'dist/universal.zip.sig.json';
+  step('Signing universal.zip with the trusted 1Password release key');
+  if (dryRun) {
+    console.log('  [dry-run] Sign dist/universal.zip (1Password is not accessed)');
+  } else {
+    try {
+      signReleaseBundle({ zipPath: path.join(repoRoot, 'dist/universal.zip'), version });
+    } catch (error) {
+      fail(error.message);
+    }
+    if (!existsSync(path.join(repoRoot, signatureArtifact))) fail(`Missing artifact: ${signatureArtifact}`);
+    ok('signature verified locally');
+  }
+  cfg.artifacts.push(signatureArtifact);
 }
 
 console.log('\n--- Release notes preview ---');

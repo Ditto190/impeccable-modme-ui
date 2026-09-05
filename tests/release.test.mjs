@@ -88,7 +88,7 @@ describe('release.mjs guards', () => {
     // (and check-engine-release.mjs imports fetch-engine.mjs), so stage them
     // too or the dry runs fail to resolve the modules instead of exercising
     // the guard.
-    for (const dep of ['check-engine-release.mjs', 'fetch-engine.mjs']) {
+    for (const dep of ['check-engine-release.mjs', 'fetch-engine.mjs', 'sign-bundle.mjs', 'bundle-signing-keys.json']) {
       fs.copyFileSync(path.join(REPO_ROOT, 'scripts', dep), path.join(workDir, 'scripts', dep));
     }
     write('.claude-plugin/plugin.json', JSON.stringify({ name: 'impeccable', version: '1.2.3' }));
@@ -171,6 +171,57 @@ describe('release.mjs guards', () => {
     assert.match(stdout, /tag is free/);
     assert.match(stdout, /\[dry-run\] git tag -a skill-v1\.2\.3/);
     assert.match(stdout, /\[dry-run\] gh release create skill-v1\.2\.3/);
+    assert.match(stdout, /1Password is not accessed/);
+    assert.match(stdout, /gh release create[^\n]+universal\.zip\.sig\.json/);
+    assert.equal(fs.existsSync(path.join(workDir, 'dist/universal.zip.sig.json')), false);
+  });
+
+  it('refuses a real release before tagging when signing is not configured', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(workDir, 'package.json'), 'utf8'));
+    pkg.scripts = { 'build:release': 'node -e "process.exit(0)"' };
+    write('package.json', JSON.stringify(pkg));
+    git(workDir, 'add', 'package.json');
+    git(workDir, 'commit', '-m', 'fixture build command');
+    git(workDir, 'push', 'origin', 'main');
+    assert.throws(() => execFileSync(process.execPath, ['scripts/release.mjs', 'skill'], {
+      cwd: workDir, encoding: 'utf8', stdio: 'pipe',
+      env: { ...process.env, IMPECCABLE_SKIP_ENGINE_CHECK: '1', IMPECCABLE_SIGNING_KEY_REF: '' },
+    }), error => {
+      assert.match(error.stderr, /Set IMPECCABLE_SIGNING_KEY_REF/);
+      assert.doesNotMatch(error.stdout, /Creating annotated tag|Creating GitHub release/);
+      return true;
+    });
+    assert.equal(git(workDir, 'tag'), '');
+    assert.equal(git(workDir, 'ls-remote', '--tags', 'origin'), '');
+  });
+
+  it('refuses before tagging when the signer returns without creating the sidecar', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(workDir, 'package.json'), 'utf8'));
+    pkg.scripts = { 'build:release': 'node -e "process.exit(0)"' };
+    write('package.json', JSON.stringify(pkg));
+    // Stub only inside this disposable repository. No 1Password access, tags,
+    // or real GitHub publication can occur even if the assertion regresses.
+    write('scripts/sign-bundle.mjs', 'export function signReleaseBundle() {}\n');
+    const releaseSource = fs.readFileSync(RELEASE_SCRIPT, 'utf8');
+    const tagStep = 'step(`Creating annotated tag ${tag}`);';
+    assert.ok(releaseSource.includes(tagStep), 'fixture must intercept the tag step');
+    write('scripts/release.mjs', releaseSource.replace(
+      tagStep,
+      'throw new Error("UNEXPECTED_TAG_STEP");'
+    ));
+    git(workDir, 'add', 'package.json', 'scripts/sign-bundle.mjs', 'scripts/release.mjs');
+    git(workDir, 'commit', '-m', 'fixture signer with missing output');
+    git(workDir, 'push', 'origin', 'main');
+    assert.throws(() => execFileSync(process.execPath, ['scripts/release.mjs', 'skill'], {
+      cwd: workDir, encoding: 'utf8', stdio: 'pipe',
+      env: { ...process.env, IMPECCABLE_SKIP_ENGINE_CHECK: '1' },
+    }), error => {
+      assert.match(error.stderr, /Missing artifact: dist\/universal\.zip\.sig\.json/);
+      assert.doesNotMatch(error.stderr, /UNEXPECTED_TAG_STEP/);
+      return true;
+    });
+    assert.equal(git(workDir, 'tag'), '');
+    assert.equal(git(workDir, 'ls-remote', '--tags', 'origin'), '');
   });
 
   it('converts the changelog entry to markdown release notes', () => {
