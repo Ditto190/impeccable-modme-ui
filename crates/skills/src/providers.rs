@@ -8,7 +8,7 @@ use crate::util::{self, jsp, Env};
 pub const API_BASE: &str = "https://impeccable.style";
 
 pub const PROVIDER_DIRS: &[&str] = &[
-    ".claude", ".cursor", ".gemini", ".agents", ".agent", ".github", ".grok", ".hermes", ".kiro",
+    ".claude", ".cursor", ".dsh", ".gemini", ".agents", ".agent", ".github", ".grok", ".hermes", ".kiro",
     ".opencode", ".pi", ".qoder", ".trae", ".trae-cn", ".rovodev", ".vibe",
 ];
 
@@ -21,6 +21,9 @@ const PROVIDER_ALIASES: &[(&str, &str)] = &[
     ("codex", ".agents"),
     ("copilot", ".github"),
     ("cursor", ".cursor"),
+    ("deepseek", ".dsh"),
+    ("deepseek-harness", ".dsh"),
+    ("dsh", ".dsh"),
     ("gemini", ".gemini"),
     ("github", ".github"),
     ("grok", ".grok"),
@@ -43,6 +46,7 @@ const PROVIDER_DISPLAY: &[(&str, &str, &str)] = &[
     (".agents", "Codex CLI", "codex"),
     (".claude", "Claude Code", "claude"),
     (".cursor", "Cursor", "cursor"),
+    (".dsh", "DeepSeek Harness", "dsh"),
     (".gemini", "Gemini CLI", "gemini"),
     (".github", "GitHub Copilot", "github"),
     (".grok", "Grok Build", "grok"),
@@ -58,7 +62,7 @@ const PROVIDER_DISPLAY: &[(&str, &str, &str)] = &[
 ];
 
 pub const PROVIDER_INPUT_ORDER: &[&str] = &[
-    "antigravity", "claude", "codex", "cursor", "gemini", "github", "grok", "hermes", "kiro",
+    "antigravity", "claude", "codex", "cursor", "dsh", "gemini", "github", "grok", "hermes", "kiro",
     "opencode", "pi", "qoder", "trae", "trae-cn", "rovo-dev", "vibe",
 ];
 
@@ -89,10 +93,30 @@ pub fn hermes_global_home(env: &Env, cwd: &str, home: &str) -> String {
     jsp::join(&[home, ".hermes"])
 }
 
+/// JS: dshGlobalHome(home): honor $DSH_HOME only when it sits under `home`
+/// (resolved against cwd like `path.resolve`), mirroring hermesGlobalHome.
+pub fn dsh_global_home(env: &Env, cwd: &str, home: &str) -> String {
+    if let Some(env_home) = env.get("DSH_HOME").filter(|v| !v.is_empty()) {
+        let resolved_env = jsp::resolve(cwd, &[env_home]);
+        let resolved_home = jsp::resolve(cwd, &[home]);
+        // Native path.relative handles Windows separators, drive/UNC roots,
+        // and case folding without accepting a sibling with the same prefix.
+        let relative = jsp::relative(cwd, &resolved_home, &resolved_env);
+        if !jsp::is_absolute(&relative)
+            && relative != ".."
+            && !relative.starts_with(&format!("..{}", jsp::SEP))
+        {
+            return resolved_env;
+        }
+    }
+    jsp::join(&[home, ".dsh"])
+}
+
 /// JS: HOME_SKILLS_DIR_OVERRIDES[provider]?.(home)
 fn home_skills_dir_override(env: &Env, cwd: &str, provider: &str, home: &str) -> Option<String> {
     match provider {
         ".agent" => Some(jsp::join(&[home, ".gemini", "config", "skills"])),
+        ".dsh" => Some(jsp::join(&[&dsh_global_home(env, cwd, home), "skills"])),
         ".hermes" => Some(jsp::join(&[&hermes_global_home(env, cwd, home), "skills"])),
         ".pi" => Some(jsp::join(&[home, ".pi", "agent", "skills"])),
         ".opencode" => Some(jsp::join(&[&opencode_global_config_dir(env, home), "skills"])),
@@ -101,7 +125,7 @@ fn home_skills_dir_override(env: &Env, cwd: &str, provider: &str, home: &str) ->
 }
 
 fn has_home_override(provider: &str) -> bool {
-    matches!(provider, ".agent" | ".hermes" | ".pi" | ".opencode")
+    matches!(provider, ".agent" | ".dsh" | ".hermes" | ".pi" | ".opencode")
 }
 
 /// Everything the scans need from the process: env, cwd, and the resolved
@@ -309,6 +333,16 @@ impl Sys {
                 has_real_skills: has_real_skill_entries(&jsp::join(&[root, provider, "skills"])),
             });
         }
+        // Shared probe pair for env-relocated config dirs (OpenCode, DSH):
+        // the harness-specific user skills dir plus a direct
+        // `<config-dir>/skills` fallback.
+        let config_dir_detection = |provider: &'static str, found: String| {
+            let probes = unique_paths(vec![
+                self.user_provider_skills_dir(home, provider),
+                jsp::join(&[&found, "skills"]),
+            ]);
+            (found, probes)
+        };
         for hint in GLOBAL_HARNESS_HINTS {
             let (found_path, probe_paths) = match hint {
                 Hint::Home(rel, provider) => {
@@ -320,12 +354,10 @@ impl Sys {
                     (found, probes)
                 }
                 Hint::OpencodeConfig(provider) => {
-                    let found = opencode_global_config_dir(&self.env, home);
-                    let probes = unique_paths(vec![
-                        self.user_provider_skills_dir(home, provider),
-                        jsp::join(&[&found, "skills"]),
-                    ]);
-                    (found, probes)
+                    config_dir_detection(provider, opencode_global_config_dir(&self.env, home))
+                }
+                Hint::DshHome(provider) => {
+                    config_dir_detection(provider, dsh_global_home(&self.env, &self.cwd, home))
                 }
             };
             if !util::exists(&found_path) {
@@ -415,12 +447,16 @@ pub enum UpdateTarget {
 enum Hint {
     Home(&'static str, &'static str),
     OpencodeConfig(&'static str),
+    /// `$DSH_HOME` relocates the whole config root, so detection must probe
+    /// the resolved home (which falls back to `~/.dsh`) rather than a fixed
+    /// relative path; a plain `Home` hint would miss a DSH_HOME-only setup.
+    DshHome(&'static str),
 }
 
 impl Hint {
     fn provider(&self) -> &'static str {
         match self {
-            Hint::Home(_, p) | Hint::OpencodeConfig(p) => p,
+            Hint::Home(_, p) | Hint::OpencodeConfig(p) | Hint::DshHome(p) => p,
         }
     }
 }
@@ -433,6 +469,7 @@ const GLOBAL_HARNESS_HINTS: &[Hint] = &[
     Hint::Home(".claude", ".claude"),
     Hint::Home(".codex", ".agents"),
     Hint::Home(".cursor", ".cursor"),
+    Hint::DshHome(".dsh"),
     Hint::Home(".gemini", ".gemini"),
     Hint::Home(".grok", ".grok"),
     Hint::Home(".hermes", ".hermes"),
@@ -756,6 +793,66 @@ mod tests {
         let (p, invalid) = parse_provider_list("claude, codex,claude,zzz");
         assert_eq!(p, vec![".claude", ".agents"]);
         assert_eq!(invalid, vec!["zzz"]);
+    }
+
+    #[test]
+    fn dsh_provider_resolves() {
+        assert_eq!(normalize_provider_name("dsh"), Some(".dsh"));
+        assert_eq!(normalize_provider_name("deepseek"), Some(".dsh"));
+        assert_eq!(normalize_provider_name("deepseek-harness"), Some(".dsh"));
+        assert_eq!(normalize_provider_name(".dsh"), Some(".dsh"));
+        assert_eq!(provider_display_name(".dsh"), "DeepSeek Harness");
+        assert_eq!(provider_input_name(".dsh"), "dsh");
+
+        // Default global skills dir is ~/.dsh/skills; $DSH_HOME wins only
+        // when it sits under home, like $HERMES_HOME for .hermes.
+        let cwd = if cfg!(windows) { r"C:\work" } else { "/work" };
+        let home = if cfg!(windows) { r"C:\Users\u" } else { "/home/u" };
+        let default = jsp::join(&[home, ".dsh"]);
+        let custom = jsp::join(&[home, "custom-dsh"]);
+        let env = Env::new();
+        assert_eq!(dsh_global_home(&env, cwd, home), default);
+        let mut env = Env::new();
+        env.insert("DSH_HOME".into(), custom.clone());
+        assert_eq!(dsh_global_home(&env, cwd, home), custom);
+        env.insert("DSH_HOME".into(), "/elsewhere/dsh".into());
+        assert_eq!(dsh_global_home(&env, cwd, home), default);
+    }
+
+    #[test]
+    fn dsh_home_respects_resolved_path_boundaries() {
+        let home = if cfg!(windows) { r"C:\Users\Test User" } else { "/home/Test User" };
+        let cwd = jsp::join(&[home, "project"]);
+        let default = jsp::join(&[home, ".dsh"]);
+        for (value, expected) in [
+            ("../custom dsh".to_string(), jsp::join(&[home, "custom dsh"])),
+            (home.to_string(), home.to_string()),
+            (String::new(), default.clone()),
+            (format!("{home}-other/dsh"), default.clone()),
+            (format!("{home}/../outside"), default),
+        ] {
+            let env = Env::from([("DSH_HOME".into(), value.clone())]);
+            assert_eq!(dsh_global_home(&env, &cwd, home), expected, "DSH_HOME={value}");
+        }
+        // A drive/filesystem root has no extra separator to append.
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        let child = jsp::join(&[root, "custom dsh"]);
+        let env = Env::from([("DSH_HOME".into(), child.clone())]);
+        assert_eq!(dsh_global_home(&env, root, root), child);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dsh_home_handles_windows_case_separators_and_devices() {
+        for (home, value, expected) in [
+            (r"C:\Users\Alice", "c:/users/alice/custom", r"c:\users\alice\custom"),
+            (r"C:\Users\Alice", r"D:\Users\Alice\custom", r"C:\Users\Alice\.dsh"),
+            (r"\\server\share\Alice", r"\\server\share\Alice\custom", r"\\server\share\Alice\custom"),
+            (r"\\server\share\Alice", r"\\server\other\Alice\custom", r"\\server\share\Alice\.dsh"),
+        ] {
+            let env = Env::from([("DSH_HOME".into(), value.into())]);
+            assert_eq!(dsh_global_home(&env, home, home), expected);
+        }
     }
 
     #[test]
