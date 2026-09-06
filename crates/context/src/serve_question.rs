@@ -1264,6 +1264,18 @@ impl ServerState {
 mod tests {
     use super::*;
 
+    #[test]
+    fn question_page_uses_system_fonts_and_inline_branding() {
+        assert!(!PAGE.contains("fonts.googleapis.com"));
+        assert!(!PAGE.contains("fonts.gstatic.com"));
+        assert!(!PAGE.contains("@font-face"));
+        assert!(!PAGE.contains("/fonts/"));
+        assert!(PAGE.contains("--ks-font: system-ui,"));
+        assert!(PAGE.contains("aria-label=\"Impeccable\""));
+        assert!(PAGE.contains("color-scheme: light"));
+        assert!(!PAGE.contains("color-scheme: dark"));
+    }
+
     // JS scenarios: tests/serve-question.test.mjs (public repo main,
     // eaaecbd1 + 2e075dc5 + 7982002d).
 

@@ -129,6 +129,76 @@ function spawnSyncGen(prompt, out, size = null) {
 // serve-question interactive cycles
 // --------------------------------------------------------------------------
 describe('new-work-e2e: serve-question decision page', () => {
+  it('renders a light system-font picker without font or external requests', async () => {
+    const cwd = makeWorkspace();
+    const key = 'system-fonts';
+    const context = await browser.newContext({ colorScheme: 'dark' });
+    const externalRequests = [];
+    const fontResponses = [];
+    try {
+      const { url } = await startDaemon(cwd, {
+        title: 'Choose the visual world',
+        options: [{ id: 'assigned', label: 'Local typography' }],
+        buildPath: { value: 'code', toggle: true },
+      }, key);
+      const origin = new URL(url).origin;
+      await context.route('**/*', (route) => {
+        if (new URL(route.request().url()).origin !== origin) {
+          externalRequests.push(route.request().url());
+          return route.abort();
+        }
+        return route.continue();
+      });
+      const page = await context.newPage();
+      page.on('response', (response) => {
+        if (response.request().resourceType() === 'font') {
+          fontResponses.push({ url: response.url(), status: response.status(), type: response.headers()['content-type'] });
+        }
+      });
+      await page.goto(url);
+      const appearance = await page.evaluate(async () => {
+        await document.fonts.ready;
+        const tokenColor = (token) => {
+          const probe = document.createElement('span');
+          probe.style.color = `var(${token})`;
+          document.body.append(probe);
+          const color = getComputedStyle(probe).color;
+          probe.remove();
+          return color;
+        };
+        return {
+          fonts: document.fonts.size,
+          family: getComputedStyle(document.body).fontFamily,
+          scheme: getComputedStyle(document.documentElement).colorScheme,
+          logoPaths: document.querySelectorAll('.brand svg path').length,
+          logoText: document.querySelectorAll('.brand svg text').length,
+          kinpaku: tokenColor('--ks-kinpaku'),
+          rule: tokenColor('--ks-rule'),
+          leadBorder: getComputedStyle(document.querySelector('.face.lead')).borderTopColor,
+          switchBorder: getComputedStyle(document.querySelector('.bp-switch')).borderTopColor,
+          activeDot: getComputedStyle(document.querySelector('.bp-opt.active'), '::before').backgroundColor,
+        };
+      });
+      assert.equal(appearance.fonts, 0, 'no custom font faces');
+      assert.match(appearance.family, /^system-ui,/);
+      assert.equal(appearance.scheme, 'light', 'picker stays light even with a dark OS preference');
+      assert.ok(appearance.logoPaths > 2, 'the brand mark and wordmark are vector outlines');
+      assert.equal(appearance.logoText, 0, 'the logo does not depend on a font');
+      assert.equal(appearance.leadBorder, appearance.kinpaku, 'lead outline uses default Kinpaku');
+      assert.equal(appearance.activeDot, appearance.kinpaku, 'active switch dot uses default Kinpaku');
+      assert.equal(appearance.switchBorder, appearance.rule, 'switch track has a quiet border');
+      await page.locator('.card').first().hover();
+      assert.equal(await page.locator('.face.lead').evaluate((el) => getComputedStyle(el).borderTopColor), appearance.kinpaku, 'hover preserves the default Kinpaku outline');
+      await page.getByRole('img', { name: 'Impeccable', exact: true }).waitFor();
+      assert.deepEqual(externalRequests, [], 'dialog must not request third-party resources');
+      assert.deepEqual(fontResponses, [], 'no bundled or remote font downloads');
+    } finally {
+      await context.close();
+      await stopDaemon(cwd, key);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('(a) pick assigned returns the option, hero/board fields, and the CHOSEN CARD directive', async () => {
     const cwd = makeWorkspace();
     const key = 'pick';

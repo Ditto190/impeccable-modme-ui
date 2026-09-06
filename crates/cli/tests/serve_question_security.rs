@@ -106,6 +106,16 @@ fn detached_posts_require_key_and_loopback_host_origin() {
         assert!(page.contains("/heartbeat' + keyQ"));
         assert!(page.contains("/build-path' + keyQ"));
 
+        // The picker is self-contained: system fonts and an outlined SVG
+        // wordmark, with no bundled font routes or external stylesheet.
+        assert!(!page.contains("@font-face"));
+        assert!(page.contains("--ks-font: system-ui,"));
+        assert!(page.contains("aria-label=\"Impeccable\""));
+        for path in ["/fonts/albert-sans.woff2", "/fonts/alumni-sans.ttf", "/fonts/%2e%2e/q.json"] {
+            let (st, _) = raw_request(port, "GET", path, &[], None);
+            assert_eq!(st, 404, "no font asset routes");
+        }
+
         // The build-path flip takes the same gate as /answer.
         let flip = r#"{"value":"comp"}"#;
         let (st, _) = raw_request(port, "POST", "/build-path", &[json], Some(flip));
