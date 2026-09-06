@@ -6,7 +6,8 @@
  * `.claude/skills/impeccable/scripts`. Run from the plugin cache, that path
  * points into the user's project: a plugin-only user gets MODULE_NOT_FOUND,
  * and a dual-install user silently runs the project's older skill copy. The
- * rewrite swaps every markdown instruction to the `<skill-base-dir>` form
+ * rewrite uses `${CLAUDE_SKILL_DIR}` only in SKILL.md; raw references keep
+ * the explicit `<skill-base-dir>` placeholder. It removes allowed-tools
  * and drops the node pre-approval: no frontmatter rule can bind approval to
  * the loaded plugin root, and an unbound wildcard would auto-approve any
  * same-shaped path anywhere on disk.
@@ -15,6 +16,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { execFileSync } from 'node:child_process';
 import { parseFrontmatter } from '../scripts/lib/utils.js';
 import {
   rewritePluginMarkdown,
@@ -27,10 +29,10 @@ import {
 } from '../scripts/lib/plugin-paths.js';
 
 describe('rewritePluginMarkdown', () => {
-  test('rewrites a script instruction to the quoted skill-base-dir form', () => {
+  test('rewrites a script instruction to the quoted CLAUDE_SKILL_DIR form', () => {
     const input = 'Run `node .claude/skills/impeccable/scripts/context.mjs` once per session.';
     expect(rewritePluginMarkdown(input)).toBe(
-      'Run `node "<skill-base-dir>/scripts/context.mjs"` once per session.',
+      'Run `node "${CLAUDE_SKILL_DIR}/scripts/context.mjs"` once per session.',
     );
   });
 
@@ -41,8 +43,8 @@ describe('rewritePluginMarkdown', () => {
     ].join('\n');
     const output = rewritePluginMarkdown(input);
     expect(output).not.toContain(CLAUDE_PROJECT_SCRIPTS_PATH);
-    expect(output).toContain('node "<skill-base-dir>/scripts/live.mjs"');
-    expect(output).toContain('node "<skill-base-dir>/scripts/live-poll.mjs" --reply EVENT_ID done');
+    expect(output).toContain('node "${CLAUDE_SKILL_DIR}/scripts/live.mjs"');
+    expect(output).toContain('node "${CLAUDE_SKILL_DIR}/scripts/live-poll.mjs" --reply EVENT_ID done');
   });
 
   test('quotes the engine launcher path and leaves the verb outside the quotes', () => {
@@ -50,9 +52,9 @@ describe('rewritePluginMarkdown', () => {
       'Run `<skill-base-dir>/scripts/impeccable context` once, then `<skill-base-dir>/scripts/impeccable.cmd doctor --json`; ' +
       'already quoted: `"<skill-base-dir>/scripts/impeccable" hooks on`.',
     );
-    expect(output).toContain('`"<skill-base-dir>/scripts/impeccable" context`');
-    expect(output).toContain('`"<skill-base-dir>/scripts/impeccable.cmd" doctor --json`');
-    expect(output).not.toContain('""<skill-base-dir>');
+    expect(output).toContain('`"${CLAUDE_SKILL_DIR}/scripts/impeccable" context`');
+    expect(output).toContain('`"${CLAUDE_SKILL_DIR}/scripts/impeccable.cmd" doctor --json`');
+    expect(output).not.toContain('""${CLAUDE_SKILL_DIR}');
   });
 
   test('quotes commands already in the skill-base-dir form without double-quoting', () => {
@@ -62,8 +64,8 @@ describe('rewritePluginMarkdown', () => {
       'Run `node <skill-base-dir>/scripts/context.mjs` once per session. ' +
       'Already quoted: `node "<skill-base-dir>/scripts/detect.mjs"`.';
     expect(rewritePluginMarkdown(input)).toBe(
-      'Run `node "<skill-base-dir>/scripts/context.mjs"` once per session. ' +
-      'Already quoted: `node "<skill-base-dir>/scripts/detect.mjs"`.',
+      'Run `node "${CLAUDE_SKILL_DIR}/scripts/context.mjs"` once per session. ' +
+      'Already quoted: `node "${CLAUDE_SKILL_DIR}/scripts/detect.mjs"`.',
     );
   });
 
@@ -96,7 +98,7 @@ describe('rewritePluginMarkdown', () => {
       'reports no base directory. Pass a named source file or route as `--target <path>`.';
     const output = rewritePluginMarkdown(input);
     expect(output).toContain(
-      'Every `"<skill-base-dir>/scripts/impeccable" <verb>` command in this skill and its references resolves against that base directory.',
+      'Every `"${CLAUDE_SKILL_DIR}/scripts/impeccable" <verb>` command in this skill and its references resolves against that base directory.',
     );
     // The naive rewrite would keep the fallback clause and name the token as
     // its own fallback for when there is no base directory to resolve it.
@@ -213,7 +215,7 @@ describe('rewritePluginMarkdownTree', () => {
     rewritePluginMarkdownTree(root);
 
     expect(fs.readFileSync(path.join(root, 'SKILL.md'), 'utf-8')).toBe(
-      'Run `node "<skill-base-dir>/scripts/context.mjs"`.',
+      'Run `node "${CLAUDE_SKILL_DIR}/scripts/context.mjs"`.',
     );
     expect(fs.readFileSync(path.join(root, 'reference/live.md'), 'utf-8')).toBe(
       'node "<skill-base-dir>/scripts/live.mjs"',
@@ -221,6 +223,27 @@ describe('rewritePluginMarkdownTree', () => {
     expect(fs.readFileSync(path.join(root, 'scripts/hook-admin.mjs'), 'utf-8')).toContain(
       '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scripts/hook.mjs',
     );
+  });
+
+  test('raw references retain an explicit base-directory placeholder, including Windows commands', () => {
+    const input = 'Run `.claude/skills/impeccable/scripts/impeccable context` or `<skill-base-dir>/scripts/impeccable.cmd context`.';
+    const output = rewritePluginMarkdown(input, { isSkillEntrypoint: false });
+    expect(output).toBe('Run `"<skill-base-dir>/scripts/impeccable" context` or `"<skill-base-dir>/scripts/impeccable.cmd" context`.');
+    expect(output).not.toContain('${CLAUDE_SKILL_DIR}');
+    expect(rewritePluginMarkdown(output, { isSkillEntrypoint: false })).toBe(output);
+  });
+
+  test('entrypoint and explicitly resolved reference commands work from a cache path with spaces', () => {
+    const skillDir = path.join(root, 'plugin cache', 'skills', 'impeccable');
+    fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'scripts/probe.mjs'), 'console.log(process.argv[2]);');
+    const env = { ...process.env };
+    delete env.CLAUDE_SKILL_DIR;
+    for (const isSkillEntrypoint of [true, false]) {
+      const command = rewritePluginMarkdown('node .claude/skills/impeccable/scripts/probe.mjs resolved', { isSkillEntrypoint })
+        .replaceAll(isSkillEntrypoint ? '${CLAUDE_SKILL_DIR}' : '<skill-base-dir>', skillDir);
+      expect(execFileSync('sh', ['-c', command], { env, encoding: 'utf8' }).trim()).toBe('resolved');
+    }
   });
 
   test('applies the agent rewrite when passed for an agents tree', () => {
@@ -284,7 +307,7 @@ describe('verifyPluginSkillRewrite', () => {
 
   test('fails the build when a launcher pre-approval survives the removal', () => {
     const p = writeSkill(
-      rewritePluginMarkdown(goodSkill) + '\n  - Bash(<skill-base-dir>/scripts/impeccable.cmd *)\n',
+      rewritePluginMarkdown(goodSkill) + '\n  - Bash(${CLAUDE_SKILL_DIR}/scripts/impeccable.cmd *)\n',
     );
     expect(() => verifyPluginSkillRewrite(p)).toThrow(/pre-approves an engine launcher/);
   });
@@ -307,7 +330,7 @@ describe('verifyPluginSkillRewrite', () => {
     // A copy that still carries a node pre-approval must fail the same way as
     // a surviving launcher line, even outside an allowed-tools block.
     const p = writeSkill(
-      rewritePluginMarkdown(goodSkill) + '\n  - Bash(node <skill-base-dir>/scripts/*)\n',
+      rewritePluginMarkdown(goodSkill) + '\n  - Bash(node ${CLAUDE_SKILL_DIR}/scripts/*)\n',
     );
     expect(() => verifyPluginSkillRewrite(p)).toThrow(/pre-approves an engine launcher or node script path/);
   });
@@ -321,6 +344,11 @@ describe('verifyPluginSkillRewrite', () => {
     );
     expect(() => verifyPluginSkillRewrite(p)).toThrow(/still contains the project-relative scripts path/);
   });
+
+  test('fails the build when the skill-base-dir token survives the rewrite', () => {
+    const p = writeSkill(rewritePluginMarkdown(goodSkill).replace('${CLAUDE_SKILL_DIR}', '<skill-base-dir>'));
+    expect(() => verifyPluginSkillRewrite(p)).toThrow(/still contains the <skill-base-dir> token/);
+  });
 });
 
 describe('SKILL.src.md frontmatter', () => {
@@ -331,5 +359,16 @@ describe('SKILL.src.md frontmatter', () => {
     );
     const { frontmatter } = parseFrontmatter(src);
     expect(frontmatter['allowed-tools']).toBeDefined();
+  });
+});
+
+describe('SKILL.src.md Setup step 1 authoring contract (issue #744)', () => {
+  test('disambiguates the skill-base-dir token', () => {
+    const setup = fs.readFileSync(
+      path.join(import.meta.dirname, '../skill/SKILL.src.md'),
+      'utf-8',
+    ).replace(/\r\n?/g, '\n');
+    const step1 = setup.match(/^1\. .+$/m)?.[0] ?? '';
+    expect(step1).toMatch(/skill folder, not a plugin root/);
   });
 });
